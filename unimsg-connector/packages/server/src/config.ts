@@ -22,7 +22,9 @@ import {
   MODE_ENV_KEYS,
   parseMailAccounts,
   readPlatformCredentials,
+  resolveLlmRuntime,
   resolveModePolicies,
+  type LlmRuntime,
   type MailAccount,
   type MailAccountIssue,
   type ModePolicy,
@@ -35,9 +37,9 @@ const here = dirname(fileURLToPath(import.meta.url));
 loadEnv({ path: resolve(here, '../../../.env') });
 loadEnv({ path: resolve(process.cwd(), '.env') });
 
-export type LlmProvider = 'mock' | 'wenxin' | 'qwen';
+export type LlmProvider = LlmRuntime['policy'];
 export type OcrProvider = 'mock' | 'tencent';
-export type { MailAccount, MailAccountIssue, ModePolicy, PlatformRuntime };
+export type { LlmRuntime, MailAccount, MailAccountIssue, ModePolicy, PlatformRuntime };
 export { MODE_ENV_KEYS };
 
 function bool(v: string | undefined, def = false): boolean {
@@ -81,6 +83,10 @@ if (process.env.API_TOKEN !== undefined && !rawApiToken) {
 const dataDir = (process.env.DATA_DIR ?? '').trim();
 const explicitDataFile = (process.env.DATA_FILE ?? '').trim();
 
+// 大模型按「凭据够就真实、不够就规则」解析；单测环境强制规则，绝不在测试里外呼
+const llmRuntime = resolveLlmRuntime(underTest ? { ...process.env, LLM_PROVIDER: 'mock' } : process.env);
+const llmApiKey = (process.env.LLM_API_KEY ?? '').trim();
+
 export const config = {
   port: Number(process.env.SERVER_PORT ?? 3001),
 
@@ -116,13 +122,14 @@ export const config = {
   ocrThreshold: Number(process.env.OCR_CONFIDENCE_THRESHOLD ?? 0.7),
   sendMaxRetry: Number(process.env.SEND_MAX_RETRY ?? 3),
   retryBaseMs: Number(process.env.RETRY_BASE_MS ?? 1000),
-  llmTimeoutMs: Number(process.env.LLM_TIMEOUT_MS ?? 8000),
 
-  // 大模型（意图识别/摘要/回复草稿）。密钥仅服务端使用。
+  /** 平台 HTTP 调用超时（与 LLM 超时解耦：LLM 长尾 9s+，不能传染给平台接口） */
+  platformTimeoutMs: Number(process.env.PLATFORM_TIMEOUT_MS ?? 8000),
+
+  // 大模型（意图识别/摘要/回复草稿）。密钥仅服务端使用，解析规则见 config/runtime.ts。
   llm: {
-    provider: (process.env.LLM_PROVIDER ?? 'mock') as LlmProvider,
-    apiKey: process.env.LLM_API_KEY ?? '',
-    endpoint: process.env.LLM_ENDPOINT ?? '',
+    ...llmRuntime,
+    apiKey: llmApiKey,
   },
 
   // OCR（图片/文件消息文字提取）。密钥仅服务端使用。

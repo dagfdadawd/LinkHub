@@ -10,6 +10,7 @@ import {
   inferMailProvider,
   parseMailAccounts,
   readPlatformCredentials,
+  resolveLlmRuntime,
   resolveModePolicies,
   type MailAccount,
   type PlatformCredentials,
@@ -288,4 +289,55 @@ test('readPlatformCredentials：旧钉钉变量名兼容 + baseUrl 可覆盖并�
   assert.equal(c.dingtalk.robotCode, 'old-key', 'ROBOT_CODE 缺省 = Client ID');
   assert.equal(c.feishu.baseUrl, 'https://open.larksuite.com');
   assert.equal(c.dingtalk.baseUrl, 'https://api.dingtalk.com');
+});
+
+// ---------- 大模型运行模式（LLM 也走「绝不静默假装成功」的解析规则） ----------
+
+test('LLM：未配置 provider 时走规则 Mock，并说明原因', () => {
+  const r = resolveLlmRuntime({});
+  assert.equal(r.mode, 'mock');
+  assert.equal(r.ready, false);
+  assert.match(r.reason, /mock/i);
+});
+
+test('LLM：provider=openai 但缺 API Key → 降级 Mock 且列出缺失项', () => {
+  const r = resolveLlmRuntime({ LLM_PROVIDER: 'openai' });
+  assert.equal(r.mode, 'mock');
+  assert.equal(r.ready, false);
+  assert.ok(r.missing.includes('LLM_API_KEY'));
+  assert.match(r.reason, /LLM_API_KEY|降级/);
+});
+
+test('LLM：provider=openai + Key → 真实模式，默认 MiMo flash 端点与 15s 超时', () => {
+  const r = resolveLlmRuntime({ LLM_PROVIDER: 'openai', LLM_API_KEY: 'sk-test' });
+  assert.equal(r.mode, 'real');
+  assert.equal(r.ready, true);
+  assert.equal(r.provider, 'mimo');
+  assert.equal(r.model, 'mimo-v2.6-flash');
+  assert.equal(r.endpoint, 'https://api.xiaomimimo.com/v1');
+  assert.equal(r.timeoutMs, 15000);
+  assert.equal(r.minConfidence, 0.6);
+  assert.deepEqual(r.missing, []);
+});
+
+test('LLM：model / endpoint / 超时 / 置信阈值均可覆盖，endpoint 去尾斜杠', () => {
+  const r = resolveLlmRuntime({
+    LLM_PROVIDER: 'openai',
+    LLM_API_KEY: 'sk-test',
+    LLM_MODEL: 'mimo-v2.6-pro',
+    LLM_ENDPOINT: 'https://api.deepseek.com/v1/',
+    LLM_TIMEOUT_MS: '20000',
+    LLM_MIN_CONFIDENCE: '0.8',
+  });
+  assert.equal(r.model, 'mimo-v2.6-pro');
+  assert.equal(r.endpoint, 'https://api.deepseek.com/v1');
+  assert.equal(r.timeoutMs, 20000);
+  assert.equal(r.minConfidence, 0.8);
+});
+
+test('LLM：不支持的 provider 明确降级，不静默当成真实', () => {
+  const r = resolveLlmRuntime({ LLM_PROVIDER: 'wenxin', LLM_API_KEY: 'sk-test' });
+  assert.equal(r.mode, 'mock');
+  assert.equal(r.ready, false);
+  assert.match(r.reason, /wenxin|不支持/);
 });

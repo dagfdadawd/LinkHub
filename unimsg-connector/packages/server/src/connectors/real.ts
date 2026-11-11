@@ -45,7 +45,7 @@ export async function postMultipart(
   fields: Array<{ name: string; value: string }>,
   part: MultipartPart,
   headers: Record<string, string> = {},
-  timeoutMs = config.llmTimeoutMs,
+  timeoutMs = config.platformTimeoutMs,
 ): Promise<any> {
   const { body, contentType } = buildMultipart(fields, part);
   const res = await fetch(url, {
@@ -80,7 +80,7 @@ export async function postJson(
   url: string,
   body: unknown,
   headers: Record<string, string> = {},
-  timeoutMs = config.llmTimeoutMs,
+  timeoutMs = config.platformTimeoutMs,
 ): Promise<any> {
   const res = await fetch(url, {
     method: 'POST',
@@ -100,7 +100,7 @@ export async function postJson(
 }
 
 /** GET 取 JSON（企业微信 gettoken 一类只认 GET 的接口）。 */
-export async function getJson(url: string, timeoutMs = config.llmTimeoutMs): Promise<any> {
+export async function getJson(url: string, timeoutMs = config.platformTimeoutMs): Promise<any> {
   const res = await fetch(url, { method: 'GET', signal: AbortSignal.timeout(timeoutMs) });
   const text = await res.text();
   let data: any = {};
