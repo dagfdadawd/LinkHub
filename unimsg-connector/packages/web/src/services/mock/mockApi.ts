@@ -6,6 +6,7 @@ import type {
 import type {
   AccountInfo,
   DemoApi,
+  FeishuOAuthStart,
   HealthInfo,
   MessageFilter,
   ReplyAck,
@@ -140,16 +141,24 @@ export class MockApi implements DemoApi {
     const traceId = `demo-compose-${Date.now().toString(16)}-${String(this.seq).padStart(4, '0')}`;
     const info = describeOutbound(req.attachments);
     const display = req.text || `[附件] ${info.map((a) => a.name).join(', ')}`;
+    // 与后端一致：邮箱主动发送落到所选账号，未指定则用首个已配置账号
+    const demoMailAccounts = ACCOUNTS.find((a) => a.platform === Platform.MAIL)?.accounts ?? [];
+    const mailKey = req.platform === Platform.MAIL
+      ? (req.mailAccount ?? demoMailAccounts[0]?.key)
+      : undefined;
     const message: UnifiedMessage = {
       traceId,
       platform: req.platform,
-      externalId: `compose:${traceId}`,
+      externalId: mailKey ? `${mailKey}:compose:${traceId}` : `compose:${traceId}`,
       sender: { id: 'linkhub', name: 'LinkHub 统一入口' },
       conversation: { id: req.conversationId || 'mock-conversation', type: req.conversationType ?? 'group' },
       type: 'text',
       body: display,
       reply: req.text,
       ...(info.length > 0 ? { attachments: info } : {}),
+      ...(mailKey
+        ? { mailMeta: { account: mailKey, inReplyTo: '', subject: req.text.slice(0, 60) || 'LinkHub 文件' } }
+        : {}),
       status: MsgStatus.RECEIVED,
       createdAt: now,
       updatedAt: now,
@@ -191,6 +200,10 @@ export class MockApi implements DemoApi {
         ? { note: '钉钉机器人发送文件需要媒体上传权限；Mock 通道可完整演示' }
         : {}),
     }));
+  }
+
+  async feishuOAuthStart(): Promise<FeishuOAuthStart> {
+    throw new Error('演示模式未接入真实后端，无法发起飞书用户授权');
   }
 
   async markDone(id: string): Promise<UnifiedMessage> {

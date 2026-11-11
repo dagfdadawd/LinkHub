@@ -81,6 +81,7 @@ cd unimsg-connector
 cp .env.example .env                 # Windows PowerShell：Copy-Item .env.example .env
 # 2) 只填“目标平台”那一段，其他平台留空 = auto 自动 Mock：
 #    飞书：FEISHU_APP_ID / FEISHU_APP_SECRET / FEISHU_VERIFY_TOKEN
+#          想出站显示为你本人：保持 FEISHU_SEND_AS=auto，在账号页点「连接飞书用户身份」
 #    钉钉：DINGTALK_CLIENT_ID / DINGTALK_CLIENT_SECRET / DINGTALK_ROBOT_CODE / DINGTALK_STREAM=true
 #    企微：WECOM_CORP_ID / WECOM_AGENT_ID / WECOM_SECRET（要收消息再加 WECOM_TOKEN / WECOM_AES_KEY）
 #    邮箱：MAIL_QQ_ADDRESS / MAIL_QQ_AUTH_CODE（授权码，不是登录密码；可配多个账号）

@@ -2640,6 +2640,57 @@ button {
   font-family: var(--mono);
 }
 
+/* 飞书发送身份：机器人 / 本人 + 一键授权（授权失效时 hint 变橙提醒） */
+.feishu-identity {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-10);
+  background: var(--surface-2);
+  display: grid;
+  gap: 6px;
+}
+
+.feishu-identity__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.feishu-identity__label {
+  font-size: 0.75rem;
+  color: var(--text-3);
+}
+
+.feishu-identity__policy {
+  margin-left: auto;
+  font-size: 0.6875rem;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.feishu-identity__hint {
+  font-size: 0.75rem;
+  line-height: 1.6;
+  color: var(--text-2);
+}
+
+.feishu-identity__hint--warn {
+  color: var(--warning);
+}
+
+.feishu-identity__expiry {
+  font-size: 0.6875rem;
+  color: var(--text-3);
+  word-break: break-all;
+}
+
+.feishu-identity__btn {
+  justify-self: start;
+  margin-top: 2px;
+}
+
 /* 能力缺口 / 配置问题：每条一行小字，warn 橙 / error 红（与 missing 区分，不重复堆叠） */
 .account-card__alerts {
   margin: 10px 0 0;
@@ -4049,4 +4100,10 @@ html.vt-morph .detail {
   color: var(--text-2);
   font-size: 0.8125rem;
   font-weight: 500;
+}
+
+.compose-field__hint {
+  margin-top: 6px;
+  color: var(--text-3);
+  font-size: 0.75rem;
 }

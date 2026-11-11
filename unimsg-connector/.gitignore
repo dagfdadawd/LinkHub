@@ -7,6 +7,8 @@ dist/
 .DS_Store
 # 邮箱 UID 水位状态文件（运行期原子写，重启续传用，不进仓库）
 .mail-watermarks.json
+# 飞书用户身份令牌（user_access_token / refresh_token，运行期授权产物）
+.feishu-user-token.json
 *.tmp
 
 # 视觉走查截图（本地临时产物）

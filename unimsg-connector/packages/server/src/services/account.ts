@@ -7,6 +7,7 @@
 import { Platform, type DeliveryMode } from '@unimsg/shared';
 import { config } from '../config';
 import { mailAccountSummary } from '../config/runtime';
+import { feishuUserAuth, type FeishuIdentityView } from '../connectors/feishuUserAuth';
 
 export interface MailAccountView {
   key: string;
@@ -45,6 +46,8 @@ export interface AccountView {
   accounts?: MailAccountView[];
   /** 邮箱配置问题（缺授权码、host 未填等） */
   issues?: { level: 'error' | 'warn'; message: string }[];
+  /** 仅飞书：出站发送身份与用户授权状态（不含令牌） */
+  feishuIdentity?: FeishuIdentityView;
 }
 
 /** 脱敏邮箱地址：只保留首字符与域名，避免把账号明文贴进截图/日志 */
@@ -71,6 +74,9 @@ export function listAccounts(): AccountView[] {
       warnings: [...r.warnings],
       reason: r.reason,
     };
+    if (platform === Platform.FEISHU) {
+      view.feishuIdentity = feishuUserAuth().identityView();
+    }
     if (platform === Platform.MAIL) {
       view.accounts = config.mail.accounts.map((a) => ({
         ...mailAccountSummary(a),

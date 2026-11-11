@@ -53,6 +53,8 @@ export interface SendResult {
   ok: boolean;
   platformReply?: string;
   mode: DeliveryMode;
+  /** 真实发送时实际使用的身份（机器人 / 用户本人）；Mock 不填 */
+  identity?: 'bot' | 'user';
 }
 
 /**
@@ -114,6 +116,8 @@ export interface ComposeRequest {
   /** 目标会话：飞书 chat_id / 钉钉 openConversationId / 企微 userid / 邮箱收件地址 */
   conversationId?: string;
   conversationType?: 'group' | 'p2p';
+  /** 邮箱平台专用：从哪个邮箱账号发出（MAIL_<KEY> 的 key）；不填则用首个已配置账号 */
+  mailAccount?: string;
   text: string;
   attachments?: OutboundAttachment[];
 }
@@ -194,6 +198,12 @@ export interface PlatformConnector {
    * 完成「上传媒体 → 发送文件消息」的格式转换；不支持时显式报错，绝不静默丢文件。
    */
   send(msg: UnifiedMessage, attachments?: OutboundAttachment[]): Promise<SendResult>;
+  /**
+   * 是否为「本进程刚发出的消息」被机器人作为入站事件收回。
+   * 飞书用用户身份发送时，单聊里的消息会再次触发 im.message.receive_v1；
+   * 中枢据此丢弃自环事件，避免自己给自己造一条新消息。
+   */
+  isSelfEcho?(raw: unknown): boolean;
   /** 统一消息 → 平台外部格式（回写前的格式转换） */
   convert(msg: UnifiedMessage): unknown;
 }

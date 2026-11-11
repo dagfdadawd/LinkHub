@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { Platform } from '@unimsg/shared';
 import { config } from './config';
 import { mailAccountSummary } from './config/runtime';
+import { feishuUserAuth } from './connectors/feishuUserAuth';
 import { runProbes, PROBE_TIMEOUT_MS, type ProbeInput } from './doctor/probes';
 import { parseCliArgs, type CliOptions } from './doctor/cli';
 import { findSuspiciousEnvVars } from './doctor/env-check';
@@ -136,6 +137,12 @@ function collectPlatformReports(filter?: Platform[]): PlatformReport[] {
     if (platform === Platform.MAIL) {
       report.mailAccounts = config.mail.accounts.map((account) => mailAccountSummary(account));
       report.mailIssues = config.mail.issues.map((issue) => ({ level: issue.level, message: issue.message }));
+    }
+    if (platform === Platform.FEISHU && runtime.mode === 'real') {
+      const identity = feishuUserAuth().identityView();
+      if (identity.sendAs !== 'bot' && identity.effective === 'user' && identity.tokenState !== 'active' && identity.tokenState !== 'refreshable') {
+        report.warnings.push(`出站身份=用户本人，但${identity.tokenState === 'none' ? '尚未连接用户身份' : '授权不可用'}：发送会失败；${identity.hint}`);
+      }
     }
     reports.push(report);
   }

@@ -14,8 +14,67 @@ import {
 import { config } from '../config';
 import { genTraceId, mockSend, verifyMock, inferType, inferDueAt, isMock, assertRealSendable } from './base';
 import { feishuDecrypt } from './crypto';
+import { feishuUserAuth } from './feishuUserAuth';
 import { feishuTenantToken, postJson, postMultipart } from './real';
 import { decodeAttachment, describeAttachments } from '../services/outbound';
+
+/**
+ * 自环登记：用户身份发出的消息可能再次触发 im.message.receive_v1（单聊必现）。
+ * 用 message_id 精确识别本进程刚发出的消息，只保留有限时间窗口，避免无限增长。
+ */
+const ECHO_TTL_MS = 10 * 60_000;
+const ECHO_MAX_ENTRIES = 200;
+const recentOutbound = new Map<string, number>();
+
+function pruneEchoRegistry(now = Date.now()): void {
+  for (const [id, at] of recentOutbound) {
+    if (now - at > ECHO_TTL_MS) recentOutbound.delete(id);
+  }
+  while (recentOutbound.size > ECHO_MAX_ENTRIES) {
+    const oldest = recentOutbound.keys().next().value;
+    if (oldest === undefined) break;
+    recentOutbound.delete(oldest);
+  }
+}
+
+function rememberOutboundMessageId(id: string): void {
+  const now = Date.now();
+  pruneEchoRegistry(now);
+  recentOutbound.set(id, now);
+}
+
+/** 单测用：清空自环登记，避免不同用例互相影响 */
+export function resetFeishuEchoRegistry(): void {
+  recentOutbound.clear();
+}
+
+/** 入站事件是否为本进程刚以用户身份发出的消息（TTL 窗口内持续命中，平台重投也不会漏） */
+export function isSelfEcho(raw: unknown): boolean {
+  const r = raw as any;
+  const event = r?.event ?? r;
+  const id = event?.message?.message_id;
+  if (typeof id !== 'string' || !id) return false;
+  const at = recentOutbound.get(id);
+  if (!at) return false;
+  // 不删除：平台可能重投同一事件，重复投递仍必须被识别为自环；
+  // 条目由 TTL + 数量上限自动淘汰，不会无限增长。
+  return Date.now() - at <= ECHO_TTL_MS;
+}
+
+/** 按 FEISHU_SEND_AS 选出本次发送的身份与令牌 */
+async function resolveSendToken(): Promise<{ token: string; identity: 'bot' | 'user' }> {
+  const auth = feishuUserAuth();
+  const identity = auth.effectiveIdentity();
+  if (identity === 'user') {
+    try {
+      return { token: await auth.accessToken(), identity };
+    } catch (e) {
+      const reason = e instanceof Error ? e.message : String(e);
+      throw new Error(`飞书用户身份发送失败：${reason}`);
+    }
+  }
+  return { token: await feishuTenantToken(), identity: 'bot' };
+}
 
 /** 飞书 im/v1/files 允许的 file_type：按扩展名归类，其余统一走 stream */
 function feishuFileType(a: OutboundAttachment): string {
@@ -27,6 +86,17 @@ function feishuFileType(a: OutboundAttachment): string {
   if (ext === 'mp4') return 'mp4';
   if (['mp3', 'wav', 'opus'].includes(ext)) return 'opus';
   return 'stream';
+}
+
+/**
+ * receive_id_type 由 ID 前缀决定，而不是会话类型：
+ * 入站消息的 conversation.id 始终是 chat_id（oc_，单聊/群聊通用），
+ * 主动发送若显式传 open_id（ou_）/union_id（on_）也能正确投递。
+ */
+function feishuReceiveIdType(id: string): string {
+  if (id.startsWith('ou_')) return 'open_id';
+  if (id.startsWith('on_')) return 'union_id';
+  return 'chat_id';
 }
 
 function safeParse(content: unknown): any {
@@ -46,7 +116,9 @@ export function receive(raw: unknown): UnifiedMessage {
   const m = e?.message ?? {};
   const content = safeParse(m.content);
   const text = pickText(content);
-  const senderId = m.sender?.sender_id?.user_id ?? m.sender?.sender_id?.open_id ?? 'unknown';
+  // 真实飞书事件 sender 与 message 平级（在 event 层）；旧样例把 sender 放在 message 内，两者都兼容
+  const sender = e?.sender ?? m?.sender ?? {};
+  const senderId = sender?.sender_id?.open_id ?? sender?.sender_id?.user_id ?? 'unknown';
   const now = new Date().toISOString();
   const kind = m.message_type;
   const type = kind === 'image' ? 'image' : kind === 'file' ? 'file' : inferType(text);
@@ -120,17 +192,21 @@ export async function send(msg: UnifiedMessage, attachments: OutboundAttachment[
   const chatId = msg.conversation?.id;
   if (!chatId) throw new Error('飞书真实发送缺少 conversation.id（需先收到该会话的消息）');
 
-  const token = await feishuTenantToken();
+  const { token, identity } = await resolveSendToken();
   const auth = { Authorization: `Bearer ${token}` };
   const base = config.platforms.feishu.baseUrl;
-  const receiveIdType = msg.conversation?.type === 'p2p' ? 'open_id' : 'chat_id';
+  const receiveIdType = feishuReceiveIdType(chatId);
   const sendUrl = `${base}/open-apis/im/v1/messages?receive_id_type=${receiveIdType}`;
   const receipts: string[] = [];
 
   if (text) {
     const data = await postJson(sendUrl, payload, auth);
     if (data.code !== 0) throw new Error(`飞书文本发送失败: ${data.code} ${data.msg ?? ''}`);
-    if (data.data?.message_id) receipts.push(String(data.data.message_id));
+    if (data.data?.message_id) {
+      const id = String(data.data.message_id);
+      receipts.push(id);
+      rememberOutboundMessageId(id);
+    }
   }
 
   for (const a of attachments) {
@@ -152,10 +228,16 @@ export async function send(msg: UnifiedMessage, attachments: OutboundAttachment[
       auth,
     );
     if (data.code !== 0) throw new Error(`飞书文件消息发送失败: ${data.code} ${data.msg ?? ''}`);
-    if (data.data?.message_id) receipts.push(String(data.data.message_id));
+    if (data.data?.message_id) {
+      const id = String(data.data.message_id);
+      receipts.push(id);
+      rememberOutboundMessageId(id);
+    }
   }
 
-  return { ok: true, mode: 'real', platformReply: receipts.join(',') || undefined };
+  return { ok: true, mode: 'real', platformReply: receipts.join(',') || undefined, identity };
 }
 
-export const feishuConnector: PlatformConnector = { verify, decrypt, challenge, receive, send, convert };
+export const feishuConnector: PlatformConnector = {
+  verify, decrypt, challenge, receive, send, isSelfEcho, convert,
+};

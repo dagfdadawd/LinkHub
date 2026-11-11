@@ -14,16 +14,19 @@
  */
 import 'dotenv/config';
 import { config as loadEnv } from 'dotenv';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Platform, type DeliveryMode } from '@unimsg/shared';
 import {
   buildPlatformRuntime,
+  DEFAULT_FEISHU_ACCOUNTS_BASE_URL,
   MODE_ENV_KEYS,
+  parseFeishuSendAs,
   parseMailAccounts,
   readPlatformCredentials,
   resolveLlmRuntime,
   resolveModePolicies,
+  type FeishuSendAs,
   type LlmRuntime,
   type MailAccount,
   type MailAccountIssue,
@@ -72,6 +75,26 @@ const runtime = buildPlatformRuntime({
 // 模式相关的全局警告（旧 MOCK 变量、非法 *_MODE 值等），启动日志与 doctor 会打印
 const modeWarnings = resolveModePolicies(process.env, { underTest }).warnings;
 
+const port = Number(process.env.SERVER_PORT ?? 3001);
+const feishuSendAs: FeishuSendAs = parseFeishuSendAs(process.env.FEISHU_SEND_AS, modeWarnings);
+
+const dataDir = (process.env.DATA_DIR ?? '').trim();
+
+// 用户身份令牌默认落在 unimsg-connector/.feishu-user-token.json（已 gitignore）。
+// 设置了 DATA_DIR（Docker 固定为 /app/data）时默认放进去，容器重建后授权不丢。
+// 相对路径按 unimsg-connector 根目录解析，避免 pnpm --filter 切 cwd 后写错位置。
+const feishuTokenFileRaw = (process.env.FEISHU_USER_TOKEN_FILE ?? '').trim();
+const feishuTokenFile = feishuTokenFileRaw
+  ? (isAbsolute(feishuTokenFileRaw) ? feishuTokenFileRaw : resolve(here, '../../../', feishuTokenFileRaw))
+  : dataDir
+    ? join(dataDir, 'feishu-user-token.json')
+    : resolve(here, '../../../.feishu-user-token.json');
+const feishuRedirectUri = (process.env.FEISHU_REDIRECT_URI ?? '').trim()
+  || `http://localhost:${port}/api/feishu/oauth/callback`;
+if (!/^https?:\/\//i.test(feishuRedirectUri)) {
+  modeWarnings.push(`FEISHU_REDIRECT_URI=${feishuRedirectUri} 不是 http(s) 地址；飞书 OAuth 回调必须与开放平台登记值完全一致`);
+}
+
 // 入口令牌：空串不能当"未配置"处理——那会让鉴权中间件拿到空 token，
 // 历史上可能被误判成"跳过鉴权"。这里统一归一化：空 → dev-token + 启动警告。
 const rawApiToken = (process.env.API_TOKEN ?? '').trim();
@@ -80,7 +103,6 @@ if (process.env.API_TOKEN !== undefined && !rawApiToken) {
   modeWarnings.push('API_TOKEN 被显式设置为空，已回退 dev-token；默认令牌仅适合本地演示，对外暴露前务必设置强令牌');
 }
 
-const dataDir = (process.env.DATA_DIR ?? '').trim();
 const explicitDataFile = (process.env.DATA_FILE ?? '').trim();
 
 // 大模型按「凭据够就真实、不够就规则」解析；单测环境强制规则，绝不在测试里外呼
@@ -88,7 +110,7 @@ const llmRuntime = resolveLlmRuntime(underTest ? { ...process.env, LLM_PROVIDER:
 const llmApiKey = (process.env.LLM_API_KEY ?? '').trim();
 
 export const config = {
-  port: Number(process.env.SERVER_PORT ?? 3001),
+  port,
 
   // 留空 → 后端自动使用内存存储（不依赖 Docker 即可本地验证）；
   // 填入真实连接串 → 自动切换 Postgres（部署评审环境时用）。
@@ -166,6 +188,19 @@ export const config = {
       secret: platforms.wecom.secret,
       baseUrl: platforms.wecom.baseUrl,
     },
+  },
+
+  /**
+   * 飞书用户身份（user_access_token）授权配置。
+   * 令牌文件只存服务端，绝不下发前端；status/account/doctor 只读过期时间与状态。
+   */
+  feishuAuth: {
+    sendAs: feishuSendAs,
+    redirectUri: feishuRedirectUri,
+    tokenFile: feishuTokenFile,
+    accountsBaseUrl: ((process.env.FEISHU_ACCOUNTS_BASE_URL ?? '').trim() || DEFAULT_FEISHU_ACCOUNTS_BASE_URL).replace(/\/+$/, ''),
+    /** 用户身份权限 + offline_access（refresh_token 必需）；顺序固定，便于排错 */
+    scopes: ['im:message', 'im:message.send_as_user', 'im:resource', 'offline_access'],
   },
 
   // 邮箱数据源：IMAP 轮询收信 + SMTP 回写。授权码只存服务端。可配任意数量/任意服务商。

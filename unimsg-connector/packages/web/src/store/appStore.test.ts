@@ -77,6 +77,7 @@ describe('AppStore', () => {
       reply: async () => Promise.reject(new Error('unused')),
       compose: async () => Promise.reject(new Error('unused')),
       capabilities: async () => [],
+      feishuOAuthStart: async () => ({ url: '' }),
       markDone: async () => Promise.reject(new Error('unused')),
       trace: async () => ({ data: [], log: [] }),
       accounts: async () => [],

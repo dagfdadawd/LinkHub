@@ -78,8 +78,25 @@ export interface PlatformCredentials {
 }
 
 export const DEFAULT_FEISHU_BASE_URL = 'https://open.feishu.cn';
+export const DEFAULT_FEISHU_ACCOUNTS_BASE_URL = 'https://accounts.feishu.cn';
 export const DEFAULT_DINGTALK_BASE_URL = 'https://api.dingtalk.com';
 export const DEFAULT_WECOM_BASE_URL = 'https://qyapi.weixin.qq.com';
+
+/**
+ * 飞书出站发送身份：
+ *  - auto：未连接用户身份时走机器人；连接后自动切换为本人（默认，升级不破坏现有行为）
+ *  - bot ：固定机器人，即使已授权用户身份
+ *  - user：固定本人，未授权/授权失效时发送会显式失败
+ */
+export type FeishuSendAs = 'auto' | 'bot' | 'user';
+
+export function parseFeishuSendAs(raw: string | undefined, warnings: string[] = []): FeishuSendAs {
+  const v = (raw ?? '').trim().toLowerCase();
+  if (!v) return 'auto';
+  if (v === 'auto' || v === 'bot' || v === 'user') return v;
+  warnings.push(`FEISHU_SEND_AS=${raw} 不是合法值（auto/bot/user），已回退 auto`);
+  return 'auto';
+}
 
 function trimBase(v: string | undefined, fallback: string): string {
   const raw = (v ?? '').trim();
