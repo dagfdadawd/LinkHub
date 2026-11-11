@@ -593,3 +593,106 @@ export function buildPlatformRuntime(input: RuntimeBuildInput): Record<Platform,
 export function isForcedPolicy(policy: ModePolicy): boolean {
   return policy !== 'auto';
 }
+
+// ---------------------------------------------------------------------------
+// 大模型运行模式
+// ---------------------------------------------------------------------------
+//
+// 与平台连接器同一套原则：凭据够就走真实接口，不够就走规则 Mock，并在
+// doctor / 启动日志 / 消息标注里说清楚本次是哪条通道，绝不静默假装成功。
+
+/** provider 只区分「规则」与「OpenAI 兼容协议」；MiMo / 通义 / DeepSeek / 智谱 共用后者 */
+export type LlmProviderPolicy = 'mock' | 'openai';
+export type LlmMode = 'mock' | 'real';
+
+export const DEFAULT_LLM_ENDPOINT = 'https://api.xiaomimimo.com/v1';
+export const DEFAULT_LLM_MODEL = 'mimo-v2.6-flash';
+/** 实测 MiMo flash 单次 2.9–9.3s，8s 会把长尾全部打成降级 */
+export const DEFAULT_LLM_TIMEOUT_MS = 15000;
+export const DEFAULT_LLM_MIN_CONFIDENCE = 0.6;
+
+export interface LlmRuntime {
+  /** 配置意图（用户填的 LLM_PROVIDER） */
+  policy: LlmProviderPolicy;
+  /** 实际生效通道 */
+  mode: LlmMode;
+  /** 真实 provider 标识（写进 trace / doctor，便于回放时辨认） */
+  provider: string;
+  model: string;
+  endpoint: string;
+  timeoutMs: number;
+  minConfidence: number;
+  ready: boolean;
+  /** 缺哪些环境变量（只含键名，绝不含密钥值） */
+  missing: string[];
+  reason: string;
+}
+
+function positiveInt(raw: string | undefined, def: number): number {
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : def;
+}
+
+function unitFloat(raw: string | undefined, def: number): number {
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 && n <= 1 ? n : def;
+}
+
+export function resolveLlmRuntime(env: NodeJS.ProcessEnv): LlmRuntime {
+  const rawPolicy = (env.LLM_PROVIDER ?? '').trim().toLowerCase();
+  const apiKey = (env.LLM_API_KEY ?? '').trim();
+  const model = (env.LLM_MODEL ?? '').trim() || DEFAULT_LLM_MODEL;
+  const endpoint = ((env.LLM_ENDPOINT ?? '').trim() || DEFAULT_LLM_ENDPOINT).replace(/\/+$/, '');
+  const timeoutMs = positiveInt(env.LLM_TIMEOUT_MS, DEFAULT_LLM_TIMEOUT_MS);
+  const minConfidence = unitFloat(env.LLM_MIN_CONFIDENCE, DEFAULT_LLM_MIN_CONFIDENCE);
+
+  const base = {
+    provider: 'mimo',
+    model,
+    endpoint,
+    timeoutMs,
+    minConfidence,
+  } as const;
+
+  if (!rawPolicy || rawPolicy === 'mock') {
+    return {
+      ...base,
+      policy: 'mock',
+      mode: 'mock',
+      ready: false,
+      missing: [],
+      reason: 'LLM_PROVIDER=mock：走内置规则识别（零密钥可演示）',
+    };
+  }
+
+  if (rawPolicy !== 'openai') {
+    return {
+      ...base,
+      policy: 'mock',
+      mode: 'mock',
+      ready: false,
+      missing: [],
+      reason: `不支持的 LLM_PROVIDER=${rawPolicy}，仅支持 mock | openai；已降级为规则识别`,
+    };
+  }
+
+  if (!apiKey) {
+    return {
+      ...base,
+      policy: 'openai',
+      mode: 'mock',
+      ready: false,
+      missing: ['LLM_API_KEY'],
+      reason: 'LLM_PROVIDER=openai 但缺少 LLM_API_KEY，已降级为规则识别',
+    };
+  }
+
+  return {
+    ...base,
+    policy: 'openai',
+    mode: 'real',
+    ready: true,
+    missing: [],
+    reason: `真实大模型已就绪：${model} @ ${endpoint}`,
+  };
+}
