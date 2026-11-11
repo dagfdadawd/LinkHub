@@ -19,6 +19,13 @@ export const KNOWN_ENV_KEYS: readonly string[] = [
   'REDIS_URL',
   'MOCK',
   'MAX_UPLOAD_MB',
+  'DATA_DIR',
+  'DATA_FILE',
+  'WEB_DIST',
+  'HOST_PORT',
+  'VITE_API_BASE',
+  'VITE_API_TOKEN',
+  'LINKHUB_DEPLOY_TOKEN',
   // 运行模式
   'FEISHU_MODE',
   'DINGTALK_MODE',
@@ -74,7 +81,20 @@ const MAIL_DYNAMIC_RE = /^MAIL_[A-Z0-9]+_(ADDRESS|AUTH_CODE|PROVIDER|LABEL|IMAP_
 const MAIL_SUFFIXES = ['ADDRESS', 'AUTH_CODE', 'PROVIDER', 'LABEL', 'IMAP_HOST', 'IMAP_PORT', 'IMAP_SECURE', 'SMTP_HOST', 'SMTP_PORT', 'SMTP_SECURE', 'FOLDERS'] as const;
 
 /** 只有这些前缀的变量才参与拼写检查，避免把系统变量（PATH 等）算进来 */
-const CHECK_PREFIXES = ['FEISHU_', 'DINGTALK_', 'WECOM_', 'MAIL_', 'LLM_', 'OCR_', 'SERVER_'];
+const CHECK_PREFIXES = [
+  'FEISHU_',
+  'DINGTALK_',
+  'WECOM_',
+  'MAIL_',
+  'LLM_',
+  'OCR_',
+  'SERVER_',
+  'DATA_',
+  'WEB_',
+  'HOST_',
+  'VITE_',
+  'LINKHUB_',
+];
 
 export interface SuspiciousEnvVar {
   name: string;

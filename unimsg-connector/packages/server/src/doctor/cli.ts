@@ -15,6 +15,7 @@ export interface CliOptions {
 /** 解析命令行参数（参数少，手写即可；不引入依赖） */
 export function parseCliArgs(argv: string[]): { options: CliOptions; error?: string } {
   const options: CliOptions = { json: false, help: false };
+  let platformSeen = false;
   for (const arg of argv) {
     // pnpm 会把 `pnpm run doctor -- --platform=...` 里的 `--` 原样透传给脚本，
     // 这里直接忽略：有没有分隔符都按同一套参数解析，避免新手照文档敲却报「未知参数」。
@@ -24,6 +25,10 @@ export function parseCliArgs(argv: string[]): { options: CliOptions; error?: str
     } else if (arg === '--json') {
       options.json = true;
     } else if (arg.startsWith('--platform=')) {
+      if (platformSeen) {
+        return { options, error: '重复指定 --platform；请合并为一个列表，例如 --platform=feishu,mail' };
+      }
+      platformSeen = true;
       const raw = arg.slice('--platform='.length).trim();
       // 逗号为主；同时容忍空格（部分 shell 会把 a,b 拆成 "a b" 再传进来）
       const items = raw

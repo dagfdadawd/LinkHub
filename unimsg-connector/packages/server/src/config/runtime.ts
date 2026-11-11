@@ -545,7 +545,7 @@ function reasonFor(
   mailEnabled: boolean,
 ): string {
   const label = PLATFORM_LABELS[platform];
-  if (platform === Platform.MAIL && policy === 'auto' && !mailEnabled) {
+  if (platform === Platform.MAIL && policy === 'auto' && !mailEnabled && cap.configured) {
     return 'MAIL_ENABLED=false：邮箱轮询已关闭 → 回退本地模拟（回写会标注"模拟发送"）';
   }
   if (mode === 'real') {

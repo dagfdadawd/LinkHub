@@ -35,8 +35,9 @@ const here = dirname(fileURLToPath(import.meta.url));
 const USAGE = `用法：pnpm run doctor [选项]
        （等价全路径：pnpm --filter @unimsg/server run doctor）
 
-注意：不要直接写 "pnpm doctor" —— pnpm 9 自带同名内置命令（诊断 pnpm 自身），
-      会命中内置命令而不是本工具；请用 "pnpm run doctor"（在 unimsg-connector/ 下）或上面的全路径形式。
+注意：不要直接写 "pnpm doctor" —— pnpm 9 会命中同名内置命令，
+      实测没有输出、退出码 0，看起来像成功但本项目自检根本没运行；
+      请用 "pnpm run doctor"（在 unimsg-connector/ 下）或上面的全路径形式。
 
 LinkHub 只读自检：检查 .env / 平台模式 / 凭据 / 网络连通 / 企业微信出口 IP，
 输出 PASS / FAIL / SKIP 与中文修复建议。不会发送任何业务消息。
