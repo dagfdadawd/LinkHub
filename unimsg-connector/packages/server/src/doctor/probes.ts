@@ -21,6 +21,8 @@ import {
 import { fetchNewMails } from '../connectors/mail/imapClient';
 import { verifySmtpAuth } from '../connectors/mail/smtpClient';
 import { maskAddress } from '../services/account';
+import { LlmService } from '../services/llm';
+import { MsgStatus } from '@unimsg/shared';
 import type { CheckResult } from './report';
 
 /** 单个探针的默认超时（任务要求 8s） */
@@ -32,6 +34,8 @@ export const PROBE_TIMEOUT_MS = 8_000;
 export const MAIL_PROBE_TIMEOUT_MS = 25_000;
 /** 出口 IP 探测的默认超时（附加信息，失败不影响主结论） */
 export const EGRESS_TIMEOUT_MS = 5_000;
+/** 大模型探针超时：真实 flash 实测 P100 约 9.3s，不能用 8s 的通用值 */
+export const LLM_PROBE_TIMEOUT_MS = 20_000;
 
 // ---------------------------------------------------------------------------
 // 探针输入
@@ -68,6 +72,18 @@ export interface MailProbeInput {
   enabled: boolean;
 }
 
+export interface LlmProbeInput {
+  /** 是否已具备真实调用条件（config.llm.ready） */
+  ready: boolean;
+  provider: string;
+  model: string;
+  endpoint: string;
+  apiKey: string;
+  minConfidence: number;
+  /** 未就绪时的原因（直接写进 SKIP 说明） */
+  reason?: string;
+}
+
 /** 探针只需要平台运行画像的这几个字段（config.runtime 的条目可直接传入） */
 export interface PlatformProbeRuntime {
   policy: ModePolicy;
@@ -83,15 +99,18 @@ export interface ProbeInput {
   dingtalk: DingtalkProbeInput;
   wecom: WecomProbeInput;
   mail: MailProbeInput;
+  llm: LlmProbeInput;
   runtime: Record<Platform, PlatformProbeRuntime>;
 }
 
 export interface RunProbesOptions {
-  /** 只探测指定平台（--platform 过滤） */
+  /** 只探测指定平台（--platform 过滤）；指定时跳过与大模型无关的全局探针 */
   platformFilter?: Platform[];
   timeoutMs?: number;
   /** 邮箱探针超时（默认 25s，比 HTTP 探针宽：要完成 TLS + IMAP/SMTP 登录往返） */
   mailTimeoutMs?: number;
+  /** 大模型探针超时（默认 20s，真实 flash P100 实测 9.3s） */
+  llmTimeoutMs?: number;
   /**
    * 无论是否有 60020，都额外采集一次本机出口公网 IP 放进报告：
    * 企业微信「可信 IP」绑定的是出口 IP，电脑重启/换网/开代理后可能变化，
@@ -894,6 +913,85 @@ export function skipProbe(platform: Platform, runtime: PlatformProbeRuntime): Ch
  * 执行全部探针（只读）。
  * 仅对 mode=real 或 policy=real 的平台执行；其余输出 SKIP 并说明原因。
  */
+// ---------------------------------------------------------------------------
+// 大模型探针
+// ---------------------------------------------------------------------------
+
+const LLM_PROBE_SAMPLE = '麻烦把 Q3 复盘的材料在周五下班前发我一份';
+
+function llmFailureHint(reason: string): string {
+  if (/401|403/.test(reason)) return '鉴权失败：检查 LLM_API_KEY 是否正确、是否已过期。';
+  if (/429/.test(reason)) return '被限流：稍后重试，或确认账户额度是否用尽。';
+  if (/timeout/i.test(reason)) return '超时：检查网络/代理是否可达，或调大 LLM_TIMEOUT_MS（真实 flash P100 约 9.3s）。';
+  if (/invalid_json|missing_fields|invalid_intent|invalid_confidence|empty_content/.test(reason)) {
+    return '模型没有按 JSON 约束输出：检查 LLM_MODEL 是否存在，或换用更强的模型。';
+  }
+  if (/network|ENOTFOUND|ECONNREFUSED|fetch failed/i.test(reason)) {
+    return '网络不可达：确认 LLM_ENDPOINT 正确、机器能直连该域名（必要时配置代理）。';
+  }
+  return '真实调用未成功，已自动回退规则识别；先确认 .env 的 LLM_* 配置与网络。';
+}
+
+/**
+ * 只用一条固定样例走一次真实调用，确认鉴权、协议与 JSON 输出约束。
+ * 复用生产 LlmService，保证自检结论与实际链路一致。
+ */
+export async function probeLlm(input: LlmProbeInput, timeoutMs = LLM_PROBE_TIMEOUT_MS): Promise<CheckResult> {
+  const base = { group: 'llm' as const, id: 'llm:chat', title: '大模型连通性（意图识别）' };
+
+  if (!input.ready) {
+    return {
+      ...base,
+      status: 'SKIP',
+      detail: `当前走内置规则识别，未调用大模型。${input.reason ?? ''}`.trim(),
+      hint: '启用真实大模型：在 .env 设 LLM_PROVIDER=openai 与 LLM_API_KEY；默认端点为 https://api.xiaomimimo.com/v1、模型 mimo-v2.6-flash。',
+    };
+  }
+
+  const svc = new LlmService({
+    mode: 'real',
+    provider: input.provider,
+    endpoint: input.endpoint,
+    model: input.model,
+    apiKey: input.apiKey,
+    timeoutMs,
+    minConfidence: input.minConfidence,
+  });
+
+  let r;
+  try {
+    r = await svc.analyze({
+      traceId: 'doctor-llm',
+      platform: Platform.FEISHU,
+      externalId: 'doctor-llm',
+      sender: { name: 'doctor', id: 'doctor' },
+      type: 'text',
+      body: LLM_PROBE_SAMPLE,
+      status: MsgStatus.RECEIVED,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+  } catch (e) {
+    return {
+      ...base,
+      status: 'FAIL',
+      detail: `调用异常：${errorMessage(e)}`,
+      hint: '检查网络/代理与 LLM_ENDPOINT 是否可达。',
+    };
+  }
+
+  if (r.ok && r.source === 'llm') {
+    return {
+      ...base,
+      status: 'PASS',
+      detail: `${input.model} 响应 ${r.latencyMs ?? 0}ms，示例「${LLM_PROBE_SAMPLE}」识别为「${r.intent}」（置信度 ${r.confidence}，${r.tokens ?? 0} tokens）`,
+    };
+  }
+
+  const reason = r.ok ? (r.fallbackReason ?? 'unknown') : r.reason;
+  return { ...base, status: 'FAIL', detail: `真实调用失败：${reason}`, hint: llmFailureHint(reason) };
+}
+
 export async function runProbes(input: ProbeInput, options: RunProbesOptions = {}): Promise<RunProbesResult> {
   const checks: CheckResult[] = [];
   let egressIp: string | undefined;
@@ -901,6 +999,11 @@ export async function runProbes(input: ProbeInput, options: RunProbesOptions = {
   const filter = options.platformFilter && options.platformFilter.length > 0 ? new Set(options.platformFilter) : undefined;
   const want = (platform: Platform): boolean => !filter || filter.has(platform);
   const runtimeOf = (platform: Platform): PlatformProbeRuntime => input.runtime[platform];
+
+  // 大模型不属于任何平台：未按平台过滤时才探测
+  if (!filter) {
+    checks.push(await probeLlm(input.llm, options.llmTimeoutMs ?? LLM_PROBE_TIMEOUT_MS));
+  }
 
   if (want(Platform.FEISHU)) {
     const runtime = runtimeOf(Platform.FEISHU);

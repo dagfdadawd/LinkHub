@@ -25,8 +25,8 @@ export type CheckStatus = 'PASS' | 'FAIL' | 'SKIP';
 
 /** 一条自检结果（环境检查或某个探针） */
 export interface CheckResult {
-  /** 归属：env / 具体平台（飞书、邮箱…） */
-  group: 'env' | Platform;
+  /** 归属：env / 大模型 / 具体平台（飞书、邮箱…） */
+  group: 'env' | 'llm' | Platform;
   /** 稳定标识，便于测试与机器消费，如 feishu:token / mail:qq:imap */
   id: string;
   /** 人类可读标题 */

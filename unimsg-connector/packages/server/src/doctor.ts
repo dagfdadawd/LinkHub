@@ -204,6 +204,15 @@ function collectProbeInput(): ProbeInput {
       accounts: config.mail.accounts,
       enabled: config.mail.enabled,
     },
+    llm: {
+      ready: config.llm.ready,
+      provider: config.llm.provider,
+      model: config.llm.model,
+      endpoint: config.llm.endpoint,
+      apiKey: config.llm.apiKey,
+      minConfidence: config.llm.minConfidence,
+      reason: config.llm.reason,
+    },
     // config.runtime 的条目天然满足 PlatformProbeRuntime（多出的字段不会进报告）
     runtime: config.runtime,
   };
