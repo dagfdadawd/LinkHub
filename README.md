@@ -155,10 +155,11 @@ MAIL_MODE=real
 | 安全：Bearer 鉴权 + WebSocket 握手校验 | ✅ 完成 |
 | 闭环日志（traceId 全链路可回放） | ✅ 完成（Mock 与真实通道分开描述） |
 | 边界降级：限流退避、OCR 置信度、意图失败回退、DLQ | ✅ 完成 |
-| 单元测试 / 端到端冒烟 | ✅ 2026-11-07 实测：server **227** 条、web **112** 条、e2e **20** 项断言、契约自检 **46** 项全绿 |
-| 上手与交付文档 | ✅ [quickstart.md](docs/quickstart.md)（5 分钟上手）/ [demo-script.md](docs/demo-script.md)（演示脚本）/ [delivery-checklist.md](docs/delivery-checklist.md)（交付打包）/ [risk-register.md](docs/risk-register.md)（风险台账）；README 顶部有「30 秒选路径」 |
+| 单元测试 / 端到端冒烟 | ✅ 2026-11-11 实测：server **270** 条、web **121** 条、e2e **20** 项断言、契约自检 **46** 项全绿 |
+| 上手与交付文档 | ✅ [quickstart.md](docs/quickstart.md)（5 分钟上手）/ [demo-script.md](docs/demo-script.md)（演示脚本）/ [delivery-checklist.md](docs/delivery-checklist.md)（交付打包）/ [ai-integration.md](docs/ai-integration.md)（AI 服务集成说明）/ [risk-register.md](docs/risk-register.md)（风险台账）；README 顶部有「30 秒选路径」 |
 | 健壮性加固（本轮） | ✅ webhook 空/畸形事件 400 不入库、端口占用中文提示、CORS 白名单、状态回流防倒退、日志脱敏、空 `API_TOKEN` 不关鉴权、邮箱嵌套 MIME/水位持久化/中文目录 |
-| 大模型 / OCR 真实调用 | 🚧 未实现：当前按关键词规则 Mock（配置项已预留） |
+| 大模型真实调用（意图 / 摘要 / 回复草稿） | ✅ OpenAI 兼容协议（默认小米 MiMo `mimo-v2.6-flash`）；失败一律回退规则识别并如实标注来源；见 [ai-integration.md](docs/ai-integration.md) |
+| OCR 真实调用 | 🚧 仍为占位实现（赛题 A 不依赖 OCR；配置项已预留） |
 | PostgreSQL / Redis 实装 | 🚧 仅有 DDL 与仓储接口，实际始终走内存 |
 | 前端统一入口 | ✅ 四类数据源版本：收件箱 / 待办 / 全链路回放 / 平台账号（含模式 Tag、缺失变量、模拟发送计数、首启 3 步引导、断连如实显示） |
 | 前端设计系统与可访问性 | ✅ 设计令牌化（标签色板从一个品牌色派生明暗两套、圆角与字号成尺阶）、标签文字对比度 ≥4.5 有回归测试锁定、移动端安全区 + 44px 命中区、`pnpm --filter @unimsg/web lint:css` 样式护栏 |
@@ -203,7 +204,7 @@ received → processing → replied → sent → synced
 - 前端：React 18 + Vite 5 + TypeScript + Ant Design 5（Mock / 真实后端双模式，由 `VITE_API_BASE` 切换）；设计令牌集中在 `packages/web/src/styles/app.css`，标签配色由 `utils/ink.ts` 按对比度推导
 - 真实接入：飞书 / 钉钉 / 企微适配器使用 Node 内置 `fetch` + 进程内 token 缓存；钉钉收消息使用官方 `dingtalk-stream`（唯一的额外依赖）；邮箱使用自研 IMAP/SMTP 客户端（`node:tls` / `node:net`，零额外依赖）
 - 仓储：内存实现（当前唯一实现）；PostgreSQL 仅有 `001_init.sql` 与仓储接口，尚无 PgRepository；Redis 未接入
-- 智能：LLM / OCR 均为规则 Mock；文心 / 通义 / 腾讯云 OCR 只保留配置项，真实调用未实现
+- 智能：LLM 走 OpenAI 兼容协议（默认 MiMo `mimo-v2.6-flash`，超时 15s，失败回退规则）；OCR 仍是规则占位
 
 ## 目录结构
 
@@ -220,6 +221,7 @@ LinkHub-test/
 │   ├── demo-script.md          # 5–8 分钟现场演示脚本（含演示前检查与纯 Mock 兜底）
 │   ├── delivery-checklist.md   # 交付/打包 checklist
 │   ├── deploy.md               # 独立部署指南（Docker 从零到一 / 离线搬运 / 数据卷）
+│   ├── ai-integration.md       # AI 服务集成说明（MiMo 调用方式 / 降级矩阵 / 集成位置 / 实测）
 │   └── risk-register.md        # 用户风险台账（31 条，按 P0–P3 排序）
 ├── .github/workflows/ci.yml    # typecheck + 测试 + web build + e2e:sh
 ├── documents/                  # 设计文档（初赛精简版 / 决赛完整版）
@@ -351,8 +353,9 @@ pnpm install
 | `OCR_CONFIDENCE_THRESHOLD` | OCR 置信度阈值，默认 `0.7`；低于阈值标记「待人工确认」 |
 | `SEND_MAX_RETRY` | 发送最大重试次数，默认 `3` |
 | `RETRY_BASE_MS` | 重试退避基数，默认 `1000`（ms） |
-| `LLM_TIMEOUT_MS` | 真实平台 API 与 LLM 调用超时，默认 `8000`（ms） |
-| `LLM_PROVIDER` / `LLM_API_KEY` / `LLM_ENDPOINT` | 大模型配置：`mock`（默认）/ `wenxin` / `qwen`；**真实调用尚未实现，填了也仍走 Mock** |
+| `LLM_TIMEOUT_MS` | 大模型单次调用超时，默认 `15000`（ms）。实测 flash 单次 2.9–9.3s，8s 会把长尾全部打成降级 |
+| `PLATFORM_TIMEOUT_MS` | 平台 HTTP 调用超时，默认 `8000`（ms）。与 LLM 解耦，避免 LLM 长尾传染平台接口 |
+| `LLM_PROVIDER` / `LLM_API_KEY` / `LLM_MODEL` / `LLM_ENDPOINT` / `LLM_MIN_CONFIDENCE` | 大模型：`mock`（默认，规则识别）/ `openai`（OpenAI 兼容协议，MiMo / 通义 / DeepSeek / 智谱 通用）。默认模型 `mimo-v2.6-flash`、端点 `https://api.xiaomimimo.com/v1`、置信阈值 `0.6`。未填 Key 自动回退规则，绝不假装真实调用 |
 | `OCR_PROVIDER` / `OCR_API_KEY` / `OCR_SECRET_ID` | OCR 配置：`mock`（默认）/ `tencent`；**真实调用尚未实现，填了也仍走 Mock** |
 
 ### 飞书
@@ -511,7 +514,8 @@ pnpm install
 | 独立部署：可在纯净服务器零依赖启动 | ✅ 已实现（单容器方案） | `Dockerfile` + `docker-compose.yml` + [docs/deploy.md](docs/deploy.md)：server 同源托管前端，单端口 3001，含健康检查与数据卷；镜像可 `docker save/load` 离线搬运 |
 | 闭环数据重启后仍可回放 | ✅ 已实现（文件快照） | `DATA_DIR` / `DATA_FILE` 开启原子快照，消息 / trace / DLQ 落盘；Docker 默认挂载 `linkhub-data` 卷 |
 | PostgreSQL / Redis 持久化 | ❌ 未实现 | 仅有 `001_init.sql` 与仓储接口；当前为单实例内存 + 文件快照，不是关系库 |
-| 真实大模型意图识别 / OCR | ❌ 未实现 | 规则 Mock（配置项已预留，降级策略已实现） |
+| 真实大模型意图识别 | ✅ 已实现（OpenAI 兼容协议，默认 MiMo flash） | 2026-11-11 实测：5 条业务样例 **5/5** 命中（同批关键词规则仅 2/5），平均 5.47s、最大 9.3s；doctor 探针实跑 2.5s PASS。失败/超时/低置信一律回退规则并标注来源 |
+| OCR 真实调用 | ❌ 未实现 | 仍是占位实现；赛题 A 不依赖 OCR，配置项已预留 |
 | 三平台真实收发 | 🟡 部分 | 2026-11-10 用真实 `.env` 跑 `doctor`：**PASS 8 / FAIL 1**。钉钉 accessToken / 机器人编码 / 收消息通道、企微 access_token、163+QQ 邮箱 IMAP+SMTP 全部 PASS；唯一 FAIL 是飞书租户策略 `21001`（`start.bat doctor` 可复现） |
 | 入口鉴权（Bearer + WS）| ✅ 已实现 | `/api/*` 与 `/ws` 同一 token；默认 `dev-token` 仅演示用，对外需改 |
 | CORS 白名单 | ✅ 已实现 | `CORS_ORIGINS` 白名单（不填保持 `*` 兼容本地；填了名单外 403 JSON） |
@@ -530,7 +534,7 @@ pnpm install
 - 邮箱 UID 水位已持久化到 `.mail-watermarks.json`（`MAIL_STATE_FILE` 可改路径），重启续传、不再跳过停机期间的邮件；单轮最多追 5 批（每批 20），大批量新邮件会跨轮继续，不会跳水位。**升级到本版本之前**已发生过的「目录被清空/重建」无法识别（旧状态没有 UIDVALIDITY）；升级后遇到 UIDVALIDITY 变化会按「宁可重复、不漏信」自动重导（若目录重建但保留原邮件，可能重复导入一次）。
 - 邮箱 STARTTLS（143/587/25）已实现并有单测，但真实服务商 587/143 端到端尚未实测；部分服务商（如 Gmail 需应用专用密码，部分 Microsoft 365 租户关闭基础认证）可能拒绝账号密码/授权码登录，遇到时需改用应用专用密码或换服务商。
 - 邮箱附件：正文会递归解析嵌套 multipart（不会因带附件而丢正文），附件名只出现在正文摘要/`attachments` 字段，不下载附件内容；中文 IMAP 目录已支持 modified UTF-7 编码（仅对配置的目录 SELECT，未实现目录自动发现）。
-- 真实大模型 / OCR 尚未实现：`LLM_*` / `OCR_*` 只是预留配置，实际始终走规则 Mock。
+- OCR 尚未实现真实调用：`OCR_*` 只是预留配置，实际始终走占位规则（赛题 A 不依赖 OCR）。大模型已接真实调用，见 [ai-integration.md](docs/ai-integration.md)。
 - PostgreSQL / Redis 仅有 DDL 与仓储接口，实际走「内存 + 可选文件快照」；多实例部署时限流、token 缓存、消息均不共享，水平扩展 / 高可用未实现（附加分项不申领）。单容器独立部署已提供，见 [docs/deploy.md](docs/deploy.md)。
 - 前端默认跑内存 Mock 数据；配 `VITE_API_BASE` / `VITE_API_TOKEN` 后即接本仓库后端。入口令牌是演示性质（`VITE_` 会进前端 bundle），生产需换成登录后签发的短期凭证。
 - 默认监听所有网卡（`SERVER_HOST` 留空）+ 默认 `dev-token` 只适合本机演示；公共 Wi-Fi / 局域网演示时同网段可访问接口，**对外暴露前必须改 `API_TOKEN`、按需设 `CORS_ORIGINS` / `SERVER_HOST`**。
