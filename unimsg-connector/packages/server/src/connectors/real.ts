@@ -1,8 +1,69 @@
 /**
- * 真实平台调用的公共设施：token 缓存 + JSON 请求。
+ * 真实平台调用的公共设施：token 缓存 + JSON 请求 + multipart 文件上传。
  * 只使用 Node 内置 fetch，不引入第三方 SDK。
  */
+import { randomUUID } from 'node:crypto';
 import { config } from '../config';
+
+/**
+ * 手工拼 multipart/form-data 请求体。
+ * 不用全局 FormData/Blob 是为了兼容「只装了 @types/node、没有 DOM lib」的服务端编译环境，
+ * 同时让文件内容始终以 Buffer 在内存里走一趟，不落盘（演示环境无需临时目录）。
+ */
+export interface MultipartPart {
+  /** 表单字段名（平台各异：飞书 file / 企微 media / 钉钉 media） */
+  field: string;
+  filename: string;
+  contentType: string;
+  content: Buffer;
+}
+
+export function buildMultipart(
+  fields: Array<{ name: string; value: string }>,
+  part: MultipartPart,
+): { body: Buffer; contentType: string } {
+  const boundary = `----LinkHub${randomUUID().replace(/-/g, '')}`;
+  const chunks: Buffer[] = [];
+  const push = (s: string) => chunks.push(Buffer.from(s, 'utf8'));
+
+  for (const f of fields) {
+    push(`--${boundary}\r\nContent-Disposition: form-data; name="${f.name}"\r\n\r\n${f.value}\r\n`);
+  }
+  // 文件名里的引号/换行会破坏头部结构，统一替换成下划线
+  const safeName = part.filename.replace(/["\r\n]/g, '_');
+  push(`--${boundary}\r\nContent-Disposition: form-data; name="${part.field}"; filename="${safeName}"\r\n`);
+  push(`Content-Type: ${part.contentType}\r\n\r\n`);
+  chunks.push(part.content);
+  push(`\r\n--${boundary}--\r\n`);
+
+  return { body: Buffer.concat(chunks), contentType: `multipart/form-data; boundary=${boundary}` };
+}
+
+/** 上传文件到平台媒体接口，返回平台原始 JSON 响应（调用方按平台取 media_id / file_key） */
+export async function postMultipart(
+  url: string,
+  fields: Array<{ name: string; value: string }>,
+  part: MultipartPart,
+  headers: Record<string, string> = {},
+  timeoutMs = config.llmTimeoutMs,
+): Promise<any> {
+  const { body, contentType } = buildMultipart(fields, part);
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': contentType, ...headers },
+    body: body as unknown as BodyInit,
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  const text = await res.text();
+  let data: any = {};
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = { raw: text };
+  }
+  if (!res.ok) throw new Error(`${url} HTTP ${res.status}: ${text.slice(0, 200)}`);
+  return data;
+}
 
 interface CachedToken {
   token: string;

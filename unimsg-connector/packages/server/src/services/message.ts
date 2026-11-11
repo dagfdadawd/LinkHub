@@ -8,8 +8,10 @@
  *  - syncStatus / onPlatformEvent：平台状态回流
  *  - getTrace / getLoopLog：全链路回放
  */
+import { randomUUID } from 'node:crypto';
 import {
   Platform, MsgStatus, UnifiedMessage, PlatformConnector,
+  type ComposeAck, type ComposeRequest, type OutboundAttachment,
 } from '@unimsg/shared';
 import { MessageRepository } from '../db/repository';
 import { LlmService } from './llm';
@@ -19,6 +21,7 @@ import { decidePlatformEvent } from './sync';
 import { writeTrace } from '../core/loop-log';
 import { counters } from '../core/metrics';
 import { config } from '../config';
+import { describeAttachments } from './outbound';
 
 export interface Broadcast {
   (event: { type: string; data?: unknown }): void;
@@ -209,12 +212,25 @@ export class MessageService {
   }
 
   // ---------- 处理 / 回写 ----------
-  async reply(id: string, text: string): Promise<{ message: UnifiedMessage; taskId: string }> {
+  /**
+   * 回复一条已收到的消息。文本与附件可同时携带（赛题 A「发送文本消息、文件等」），
+   * 附件元数据写进消息，文件内容只在本次投递的在途生命周期存在。
+   */
+  async reply(
+    id: string,
+    text: string,
+    attachments: OutboundAttachment[] = [],
+  ): Promise<{ message: UnifiedMessage; taskId: string }> {
     const cur = this.repo.get(id);
     if (!cur) throw new Error('message not found');
+    const info = describeAttachments(attachments);
 
-    let m = this.repo.update(id, { status: MsgStatus.PROCESSING, reply: text })!;
-    writeTrace(this.repo, m, 'processing');
+    let m = this.repo.update(id, {
+      status: MsgStatus.PROCESSING,
+      reply: text,
+      ...(info.length > 0 ? { attachments: info } : {}),
+    })!;
+    writeTrace(this.repo, m, 'processing', info.length > 0 ? `带 ${info.length} 个附件` : undefined);
     this.broadcast({ type: 'message.updated', data: m });
 
     m = this.repo.update(id, { status: MsgStatus.REPLIED, reply: text })!;
@@ -222,18 +238,93 @@ export class MessageService {
     this.broadcast({ type: 'message.updated', data: m });
 
     // 异步回写：不阻塞 HTTP 响应，结果经 WS 推送
-    void this.processSend(id);
+    void this.processSend(id, attachments);
     return { message: m, taskId: id };
   }
 
-  private async processSend(id: string): Promise<void> {
+  /**
+   * 从统一入口主动向「指定平台 + 指定会话」发送文本/文件。
+   *
+   * 关键：主动发送不是一条旁路，而是完整纳入既有闭环状态机与 trace 的消息——
+   * 一样经历 received→processing→replied→sent→synced，一样可回放、可回流、
+   * 失败进死信队列。这样赛题要求的「接收 → 展示 → 处理 → 发送反馈」在
+   * 入站回复与主动发起两条路径上都能被评审逐步验证。
+   */
+  async compose(req: ComposeRequest): Promise<ComposeAck> {
+    const connector = this.connectors[req.platform];
+    if (!connector) throw new Error(`unsupported platform: ${req.platform}`);
+
+    const attachments = req.attachments ?? [];
+    const info = describeAttachments(attachments);
+
+    // 目标会话：用户显式指定优先；否则复用该平台最近一条已知会话（可用但不是伪造）
+    let conversationId = req.conversationId;
+    let conversationType = req.conversationType;
+    if (!conversationId) {
+      const recent = this.repo.list({ platform: req.platform }).find((m) => m.conversation?.id);
+      conversationId = recent?.conversation?.id;
+      conversationType = recent?.conversation?.type ?? conversationType;
+    }
+    if (!conversationId) {
+      throw new Error(
+        `向 ${req.platform} 发送缺少目标会话：请填写 conversationId，或先让该平台收到一条消息`,
+      );
+    }
+
+    // 邮箱的回信账号由 mailMeta.account / externalId 前缀决定，主动发送时落到首个已配置账号
+    const mailKey = req.platform === Platform.MAIL ? config.mail.accounts[0]?.key : undefined;
+    const uid = randomUUID();
+    const now = new Date().toISOString();
+    const display = req.text || `[附件] ${info.map((a) => a.name).join(', ')}`;
+
+    const msg: UnifiedMessage = {
+      traceId: randomUUID(),
+      platform: req.platform,
+      externalId: mailKey ? `${mailKey}:compose:${uid}` : `compose:${uid}`,
+      sender: { id: 'linkhub', name: 'LinkHub 统一入口' },
+      conversation: { id: conversationId, type: conversationType ?? 'group' },
+      type: 'text',
+      body: display,
+      reply: req.text,
+      ...(info.length > 0 ? { attachments: info } : {}),
+      ...(mailKey
+        ? { mailMeta: { account: mailKey, inReplyTo: '', subject: req.text.slice(0, 60) || 'LinkHub 文件' } }
+        : {}),
+      status: MsgStatus.RECEIVED,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    this.repo.save(msg);
+    counters.received += 1;
+    writeTrace(
+      this.repo,
+      msg,
+      'composed',
+      `统一入口主动发送 → ${req.platform} · 会话 ${conversationId}${info.length > 0 ? ` · 附件 ${info.length} 个` : ''}`,
+    );
+    this.broadcast({ type: 'message.received', data: msg });
+
+    let m = this.repo.update(msg.traceId, { status: MsgStatus.PROCESSING })!;
+    writeTrace(this.repo, m, 'processing');
+    this.broadcast({ type: 'message.updated', data: m });
+
+    m = this.repo.update(msg.traceId, { status: MsgStatus.REPLIED })!;
+    writeTrace(this.repo, m, 'replied');
+    this.broadcast({ type: 'message.updated', data: m });
+
+    void this.processSend(msg.traceId, attachments);
+    return { message: m, taskId: msg.traceId };
+  }
+
+  private async processSend(id: string, attachments: OutboundAttachment[] = []): Promise<void> {
     const cur = this.repo.get(id);
     if (!cur) return;
     const connector = this.connectors[cur.platform];
     const outgoing: UnifiedMessage = { ...cur, body: cur.reply ?? cur.body };
 
     try {
-      const result = await this.limiter.send(cur.platform, () => connector.send(outgoing));
+      const result = await this.limiter.send(cur.platform, () => connector.send(outgoing, attachments));
       const at = new Date().toISOString();
 
       // 把"本次到底走了真实接口还是本地模拟"写进消息与闭环日志，绝不静默假装成功

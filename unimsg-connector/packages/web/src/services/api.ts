@@ -5,7 +5,9 @@
  *  - 现在：MockApi（内存数据 + 模拟推送）
  *  - 后续：HttpApi（对接 packages/server 的 REST/WS），页面代码零改动
  */
-import type { DeliveryMode } from '@unimsg/shared';
+import type {
+  ComposeAck, ComposeRequest, DeliveryMode, OutboundAttachment, SendCapabilities,
+} from '@unimsg/shared';
 import type { MsgType, TraceEntry, UnifiedMessage } from '../types';
 import type { Platform, MsgStatus } from '../types';
 
@@ -88,7 +90,12 @@ export interface TraceResult {
 export interface MessageApi {
   list(filter?: MessageFilter): Promise<UnifiedMessage[]>;
   get(id: string): Promise<UnifiedMessage | undefined>;
-  reply(id: string, text: string): Promise<ReplyAck>;
+  /** 文本与附件可同时发送（赛题 A 功能需求 3） */
+  reply(id: string, text: string, attachments?: OutboundAttachment[]): Promise<ReplyAck>;
+  /** 从统一入口主动向指定平台/会话发送，不依赖先收到消息 */
+  compose(req: ComposeRequest): Promise<ComposeAck>;
+  /** 各平台发送能力与体积上限，供新建发送表单渲染 */
+  capabilities(): Promise<SendCapabilities[]>;
   markDone(id: string): Promise<UnifiedMessage>;
   trace(id: string): Promise<TraceResult>;
   accounts(): Promise<AccountInfo[]>;

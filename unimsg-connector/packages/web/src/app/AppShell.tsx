@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { Alert, App as AntApp, Avatar, Dropdown, Tooltip } from 'antd';
+import { Alert, App as AntApp, Avatar, Button, Dropdown, Tooltip } from 'antd';
 import type { MenuProps } from 'antd';
 import {
   ApiOutlined,
@@ -12,6 +12,7 @@ import {
   MoonOutlined,
   ReloadOutlined,
   SearchOutlined,
+  SendOutlined,
   SettingOutlined,
   SunOutlined,
   ThunderboltOutlined,
@@ -23,6 +24,7 @@ import { footerState } from '../utils/footerState';
 import { initialOf, useProfile } from '../features/settings/profile';
 import { usePreferences } from '../features/settings/preferences';
 import { SettingsModal } from '../features/settings/SettingsModal';
+import { ComposeModal } from '../features/compose/ComposeModal';
 import { CommandPalette } from '../components/CommandPalette';
 import { useTheme } from './ThemeProvider';
 
@@ -95,6 +97,7 @@ export function AppShell() {
   const prefs = usePreferences();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [composeOpen, setComposeOpen] = useState(false);
 
   // —— 图标轨滑动高光 ——
   const navRef = useRef<HTMLElement | null>(null);
@@ -248,6 +251,18 @@ export function AppShell() {
           </div>
 
           <div className="cmdbar__actions">
+            <Tooltip title="从统一入口向指定平台发送文本或文件">
+              <Button
+                type="primary"
+                icon={<SendOutlined />}
+                onClick={() => setComposeOpen(true)}
+                aria-label="新建发送"
+                data-testid="open-compose"
+              >
+                新建发送
+              </Button>
+            </Tooltip>
+
             <button
               className="search-trigger"
               type="button"
@@ -328,6 +343,7 @@ export function AppShell() {
       </div>
 
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <ComposeModal open={composeOpen} onClose={() => setComposeOpen(false)} />
       <CommandPalette
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}

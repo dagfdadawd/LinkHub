@@ -46,6 +46,8 @@ export interface FeishuCreds {
   appSecret: string;
   verifyToken: string;
   encryptKey: string;
+  /** 长连接（WebSocket）收消息：true 时免公网回调，需飞书后台「使用长连接接收事件」 */
+  stream: boolean;
   /** 开放平台基址，默认 https://open.feishu.cn（Lark 国际版/代理可覆盖） */
   baseUrl: string;
 }
@@ -93,6 +95,7 @@ export function readPlatformCredentials(env: NodeJS.ProcessEnv): PlatformCredent
       appSecret: env.FEISHU_APP_SECRET ?? '',
       verifyToken: env.FEISHU_VERIFY_TOKEN ?? '',
       encryptKey: env.FEISHU_ENCRYPT_KEY ?? '',
+      stream: truthy(env.FEISHU_STREAM),
       baseUrl: trimBase(env.FEISHU_BASE_URL, DEFAULT_FEISHU_BASE_URL),
     },
     dingtalk: {
@@ -474,12 +477,14 @@ function capability(platform: Platform, input: RuntimeBuildInput): CapabilityRes
   if (platform === Platform.FEISHU) {
     if (!p.feishu.appId) missing.push('FEISHU_APP_ID');
     if (!p.feishu.appSecret) missing.push('FEISHU_APP_SECRET');
-    if (!p.feishu.verifyToken) missing.push('FEISHU_VERIFY_TOKEN');
+    // 长连接模式免 Webhook 验签；HTTP 回调模式才需要 Verification Token
+    if (!p.feishu.stream && !p.feishu.verifyToken) missing.push('FEISHU_VERIFY_TOKEN');
     const canSend = Boolean(p.feishu.appId && p.feishu.appSecret);
-    // 收：webhook 验签必须有 Verification Token；Encrypt Key 只决定报文是否加密
-    const canReceive = Boolean(p.feishu.verifyToken);
-    if (canSend && !canReceive) warnings.push('只能发不能收：缺少 FEISHU_VERIFY_TOKEN（回调验签）');
-    if (canSend && !p.feishu.encryptKey) warnings.push('未配置 FEISHU_ENCRYPT_KEY：仅支持未加密回调（若后台开了加密策略会解密失败）');
+    // 收：HTTP 回调需 Verification Token；长连接只需 appId/appSecret
+    const canReceive = Boolean(p.feishu.verifyToken || p.feishu.stream);
+    if (canSend && !canReceive) warnings.push('只能发不能收：缺少 FEISHU_VERIFY_TOKEN（HTTP 回调验签），或开启 FEISHU_STREAM 长连接');
+    if (canSend && !p.feishu.stream && !p.feishu.encryptKey) warnings.push('未配置 FEISHU_ENCRYPT_KEY：仅支持未加密回调（若后台开了加密策略会解密失败）');
+    if (p.feishu.stream) warnings.push('已开启飞书长连接（FEISHU_STREAM）：本机无需公网回调即可收消息');
     return { configured: canSend, canSend, canReceive, missing, warnings };
   }
 

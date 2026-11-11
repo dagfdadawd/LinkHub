@@ -8,12 +8,26 @@
  * decrypt：配置了 Encrypt Key 时解密 encrypt 字段。
  */
 import {
-  Platform, MsgStatus, UnifiedMessage, PlatformConnector, type SendResult,
+  Platform, MsgStatus, UnifiedMessage, PlatformConnector,
+  type SendResult, type OutboundAttachment,
 } from '@unimsg/shared';
 import { config } from '../config';
 import { genTraceId, mockSend, verifyMock, inferType, inferDueAt, isMock, assertRealSendable } from './base';
 import { feishuDecrypt } from './crypto';
-import { feishuTenantToken, postJson } from './real';
+import { feishuTenantToken, postJson, postMultipart } from './real';
+import { decodeAttachment, describeAttachments } from '../services/outbound';
+
+/** 飞书 im/v1/files 允许的 file_type：按扩展名归类，其余统一走 stream */
+function feishuFileType(a: OutboundAttachment): string {
+  const ext = a.name.split('.').pop()?.toLowerCase() ?? '';
+  if (ext === 'pdf') return 'pdf';
+  if (['doc', 'docx', 'txt', 'md'].includes(ext)) return 'doc';
+  if (['xls', 'xlsx', 'csv'].includes(ext)) return 'xls';
+  if (['ppt', 'pptx'].includes(ext)) return 'ppt';
+  if (ext === 'mp4') return 'mp4';
+  if (['mp3', 'wav', 'opus'].includes(ext)) return 'opus';
+  return 'stream';
+}
 
 function safeParse(content: unknown): any {
   if (typeof content !== 'string') return content;
@@ -87,10 +101,19 @@ export function verify(payload: unknown, sig: string): boolean {
   return typeof token === 'string' && token === expected;
 }
 
-export async function send(msg: UnifiedMessage): Promise<SendResult> {
+/**
+ * 发送：文本走 im/v1/messages（text），文件走「im/v1/files 上传 → im/v1/messages（file）」。
+ * 文本与文件可同一笔发送；任一步失败即整笔抛错，由中枢置 failed 并写死信队列，
+ * 绝不出现「文本发出去了、文件悄悄丢了却报成功」的假闭环。
+ */
+export async function send(msg: UnifiedMessage, attachments: OutboundAttachment[] = []): Promise<SendResult> {
+  const text = msg.reply ?? msg.body;
   const payload = convert(msg) as any;
   if (isMock(Platform.FEISHU)) {
-    return mockSend(Platform.FEISHU, payload);
+    return mockSend(
+      Platform.FEISHU,
+      attachments.length > 0 ? { ...payload, attachments: describeAttachments(attachments) } : payload,
+    );
   }
   assertRealSendable(Platform.FEISHU);
 
@@ -98,15 +121,41 @@ export async function send(msg: UnifiedMessage): Promise<SendResult> {
   if (!chatId) throw new Error('飞书真实发送缺少 conversation.id（需先收到该会话的消息）');
 
   const token = await feishuTenantToken();
-  const data = await postJson(
-    `${config.platforms.feishu.baseUrl}/open-apis/im/v1/messages?receive_id_type=chat_id`,
-    payload,
-    { Authorization: `Bearer ${token}` },
-  );
-  if (data.code !== 0) {
-    throw new Error(`飞书发送失败: ${data.code} ${data.msg ?? ''}`);
+  const auth = { Authorization: `Bearer ${token}` };
+  const base = config.platforms.feishu.baseUrl;
+  const receiveIdType = msg.conversation?.type === 'p2p' ? 'open_id' : 'chat_id';
+  const sendUrl = `${base}/open-apis/im/v1/messages?receive_id_type=${receiveIdType}`;
+  const receipts: string[] = [];
+
+  if (text) {
+    const data = await postJson(sendUrl, payload, auth);
+    if (data.code !== 0) throw new Error(`飞书文本发送失败: ${data.code} ${data.msg ?? ''}`);
+    if (data.data?.message_id) receipts.push(String(data.data.message_id));
   }
-  return { ok: true, mode: 'real', platformReply: data.data?.message_id };
+
+  for (const a of attachments) {
+    const uploaded = await postMultipart(
+      `${base}/open-apis/im/v1/files`,
+      [
+        { name: 'file_type', value: feishuFileType(a) },
+        { name: 'file_name', value: a.name },
+      ],
+      { field: 'file', filename: a.name, contentType: a.mimeType, content: decodeAttachment(a) },
+      auth,
+    );
+    if (uploaded.code !== 0 || !uploaded.data?.file_key) {
+      throw new Error(`飞书文件上传失败: ${uploaded.code ?? 'unknown'} ${uploaded.msg ?? ''}`);
+    }
+    const data = await postJson(
+      sendUrl,
+      { receive_id: chatId, msg_type: 'file', content: JSON.stringify({ file_key: uploaded.data.file_key }) },
+      auth,
+    );
+    if (data.code !== 0) throw new Error(`飞书文件消息发送失败: ${data.code} ${data.msg ?? ''}`);
+    if (data.data?.message_id) receipts.push(String(data.data.message_id));
+  }
+
+  return { ok: true, mode: 'real', platformReply: receipts.join(',') || undefined };
 }
 
 export const feishuConnector: PlatformConnector = { verify, decrypt, challenge, receive, send, convert };

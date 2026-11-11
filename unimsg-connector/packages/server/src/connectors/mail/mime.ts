@@ -6,7 +6,16 @@
  * 与 GBK 字符集都在这一层收敛成 { from, subject, text }。
  */
 
+import { randomUUID } from 'node:crypto';
+
 const CRLF = '\r\n';
+
+/** 出站附件：内容已是 base64（由统一入口的 OutboundAttachment 直接透传，不落盘） */
+export interface MailAttachment {
+  name: string;
+  mimeType: string;
+  contentBase64: string;
+}
 
 /** 解码 =?UTF-8?B?...?= / =?GBK?Q?...?= 形式的头部字段 */
 export function decodeWords(input: string): string {
@@ -295,8 +304,25 @@ export function readMessage(raw: Buffer | string): ParsedMessage {
   return parsed;
 }
 
-/** 回写报文：主题自动加 Re:，头部带 In-Reply-To 以便原会话串联 */
-export function buildMail(from: string, to: string, subject: string, text: string, opts: { inReplyTo?: string; messageId: string }): string {
+/** base64 按 RFC 2045 折行（每行 76 字符），末尾不留多余 CRLF */
+function foldBase64(text: string): string {
+  return text.replace(/(.{76})/g, `$1${CRLF}`).replace(/\r\n$/, '');
+}
+
+/**
+ * 回写报文：主题自动加 Re:，头部带 In-Reply-To 以便原会话串联。
+ *
+ * 无附件时保持原来的 text/plain 单 part 结构（字节级兼容既有单测与 SMTP 服务器）；
+ * 有附件时升级为 multipart/mixed：第一个 part 是正文，其后每个附件一个 part，
+ * 文件名走 RFC 2047 encoded-word，中文名在邮件客户端里也能正常显示。
+ */
+export function buildMail(
+  from: string,
+  to: string,
+  subject: string,
+  text: string,
+  opts: { inReplyTo?: string; messageId: string; attachments?: MailAttachment[] },
+): string {
   const subj = subject.startsWith('Re:') ? subject : `Re: ${subject || '(无主题)'}`;
   const head = [
     `From: ${from}`,
@@ -306,14 +332,41 @@ export function buildMail(from: string, to: string, subject: string, text: strin
     `Message-ID: <${opts.messageId}>`,
   ];
   if (opts.inReplyTo) head.push(`In-Reply-To: <${opts.inReplyTo}>`);
-  head.push('MIME-Version: 1.0', 'Content-Type: text/plain; charset=UTF-8', 'Content-Transfer-Encoding: base64');
 
-  const encoded = Buffer.from(text.replace(/\r?\n/g, CRLF), 'utf8')
-    .toString('base64')
-    .replace(/(.{76})/g, `$1${CRLF}`)
-    .replace(/\r\n$/, '');
-  // 头部与正文之间必须留一个空行，结尾单独一行的 . 表示 DATA 结束
-  return `${head.join(CRLF)}${CRLF}${CRLF}${encoded}${CRLF}.${CRLF}`;
+  const encoded = foldBase64(Buffer.from(text.replace(/\r?\n/g, CRLF), 'utf8').toString('base64'));
+
+  if (!opts.attachments || opts.attachments.length === 0) {
+    head.push('MIME-Version: 1.0', 'Content-Type: text/plain; charset=UTF-8', 'Content-Transfer-Encoding: base64');
+    // 头部与正文之间必须留一个空行，结尾单独一行的 . 表示 DATA 结束
+    return `${head.join(CRLF)}${CRLF}${CRLF}${encoded}${CRLF}.${CRLF}`;
+  }
+
+  const boundary = `----=_LinkHub_${randomUUID().replace(/-/g, '')}`;
+  head.push('MIME-Version: 1.0', `Content-Type: multipart/mixed; boundary="${boundary}"`);
+
+  const parts: string[] = [];
+  parts.push([
+    `--${boundary}`,
+    'Content-Type: text/plain; charset=UTF-8',
+    'Content-Transfer-Encoding: base64',
+    '',
+    encoded,
+  ].join(CRLF));
+
+  for (const a of opts.attachments) {
+    const safeName = a.name.replace(/["\r\n]/g, '_');
+    parts.push([
+      `--${boundary}`,
+      `Content-Type: ${a.mimeType || 'application/octet-stream'}; name="${encodeHeader(safeName)}"`,
+      'Content-Transfer-Encoding: base64',
+      `Content-Disposition: attachment; filename="${encodeHeader(safeName)}"`,
+      '',
+      foldBase64(a.contentBase64),
+    ].join(CRLF));
+  }
+  parts.push(`--${boundary}--`);
+
+  return `${head.join(CRLF)}${CRLF}${CRLF}${parts.join(CRLF)}${CRLF}.${CRLF}`;
 }
 
 /** 主题里的中文用 encoded-word，纯 ASCII 原样 */

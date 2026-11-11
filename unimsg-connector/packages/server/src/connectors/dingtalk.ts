@@ -8,12 +8,14 @@
  * decrypt：AES 解密 encrypt 字段。
  */
 import {
-  Platform, MsgStatus, UnifiedMessage, PlatformConnector, type SendResult,
+  Platform, MsgStatus, UnifiedMessage, PlatformConnector,
+  type SendResult, type OutboundAttachment,
 } from '@unimsg/shared';
 import { config } from '../config';
 import { genTraceId, mockSend, verifyMock, inferType, inferDueAt, isMock, assertRealSendable } from './base';
 import { dingtalkDecrypt, dingtalkSign, safeEqual } from './crypto';
-import { dingtalkAccessToken, postJson } from './real';
+import { dingtalkAccessToken, postJson, postMultipart } from './real';
+import { decodeAttachment, describeAttachments, isOutboundComposed } from '../services/outbound';
 
 function header(headers: Record<string, string | string[] | undefined> | undefined, name: string): string {
   const v = headers?.[name];
@@ -111,10 +113,19 @@ export function verify(
   return safeEqual(dingtalkSign(aesToken, timestamp, aesKey), sign);
 }
 
-export async function send(msg: UnifiedMessage): Promise<SendResult> {
+/**
+ * 发送：文本沿用 sampleText；文件走「robot/media/upload → sampleFile(mediaId)」。
+ * 群聊 / 单聊两个端点由 sendOne 统一收敛，文件与文本复用同一目标会话，
+ * 保证「向指定平台/会话发送文件」也落在同一条闭环里。
+ */
+export async function send(msg: UnifiedMessage, attachments: OutboundAttachment[] = []): Promise<SendResult> {
+  const text = msg.reply ?? msg.body;
   const payload = convert(msg) as any;
   if (isMock(Platform.DINGTALK)) {
-    return mockSend(Platform.DINGTALK, payload);
+    return mockSend(
+      Platform.DINGTALK,
+      attachments.length > 0 ? { ...payload, attachments: describeAttachments(attachments) } : payload,
+    );
   }
   assertRealSendable(Platform.DINGTALK);
 
@@ -124,23 +135,52 @@ export async function send(msg: UnifiedMessage): Promise<SendResult> {
   const token = await dingtalkAccessToken();
   const headers = { 'x-acs-dingtalk-access-token': token };
   const base = config.platforms.dingtalk.baseUrl;
+  const isP2p = msg.conversation?.type === 'p2p';
+  if (!isP2p && !msg.conversation?.id) throw new Error('钉钉群消息缺少 conversation.id');
 
-  if (msg.conversation?.type === 'p2p') {
-    const data = await postJson(
-      `${base}/v1.0/robot/oToMessages/batchSend`,
-      { robotCode, userIds: [msg.sender.id], ...payload },
+  const targetUser = isOutboundComposed(msg)
+    ? (msg.conversation?.id ?? msg.sender.id)
+    : msg.sender.id;
+  const sendOne = async (body: Record<string, unknown>): Promise<any> => {
+    if (isP2p) {
+      return postJson(
+        `${base}/v1.0/robot/oToMessages/batchSend`,
+        { robotCode, userIds: [targetUser], ...body },
+        headers,
+      );
+    }
+    return postJson(
+      `${base}/v1.0/robot/groupMessages/send`,
+      { robotCode, openConversationId: msg.conversation!.id, ...body },
       headers,
     );
-    return { ok: true, mode: 'real', platformReply: data.processQueryKey };
+  };
+
+  const receipts: string[] = [];
+  if (text) {
+    const data = await sendOne(payload);
+    if (data?.processQueryKey) receipts.push(String(data.processQueryKey));
   }
 
-  if (!msg.conversation?.id) throw new Error('钉钉群消息缺少 conversation.id');
-  const data = await postJson(
-    `${base}/v1.0/robot/groupMessages/send`,
-    { robotCode, openConversationId: msg.conversation.id, ...payload },
-    headers,
-  );
-  return { ok: true, mode: 'real', platformReply: data.processQueryKey };
+  for (const a of attachments) {
+    const uploaded = await postMultipart(
+      `${base}/v1.0/robot/media/upload`,
+      [{ name: 'type', value: 'file' }],
+      { field: 'media', filename: a.name, contentType: a.mimeType, content: decodeAttachment(a) },
+      headers,
+    );
+    const mediaId = uploaded?.mediaId ?? uploaded?.data?.mediaId;
+    if (!mediaId) {
+      throw new Error('钉钉媒体上传失败：未返回 mediaId（检查应用是否具备机器人媒体上传权限）');
+    }
+    const data = await sendOne({
+      msgKey: 'sampleFile',
+      msgParam: JSON.stringify({ mediaId }),
+    });
+    if (data?.processQueryKey) receipts.push(String(data.processQueryKey));
+  }
+
+  return { ok: true, mode: 'real', platformReply: receipts.join(',') || undefined };
 }
 
 export const dingtalkConnector: PlatformConnector = { verify, decrypt, receive, send, convert };

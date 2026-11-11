@@ -5,7 +5,9 @@
  * 筛选在本地完成（后端 filter 接口保持一致，后续可直接切换）。
  */
 import { MsgStatus } from '../types';
-import type { MsgType, Platform, UnifiedMessage } from '../types';
+import type {
+  ComposeRequest, MsgType, OutboundAttachment, Platform, UnifiedMessage,
+} from '../types';
 import type { AccountInfo, HealthInfo, MessageApi } from '../services/api';
 import { isDemoApi } from '../services/api';
 import type { RealtimeClient, RealtimeStatus } from '../services/realtime';
@@ -142,12 +144,20 @@ export class AppStore {
     this.set({ error: null });
   }
 
-  async reply(id: string, text: string): Promise<void> {
-    const ack = await this.api.reply(id, text);
+  async reply(id: string, text: string, attachments?: OutboundAttachment[]): Promise<void> {
+    const ack = await this.api.reply(id, text, attachments);
     // 202 回执兜底：WS 丢包时也能把回复内容与 replied 状态落地。
     // 只补字段、不把状态往回拽（HTTP 202 可能晚于 WS 的 sent/synced 推送）。
     this.upsertReply(ack.message);
     await this.refreshHealth();
+  }
+
+  /** 主动向指定平台发送：复用 202 回执兜底 + 健康指标刷新，返回可回放的 traceId */
+  async compose(req: ComposeRequest): Promise<string> {
+    const ack = await this.api.compose(req);
+    this.upsertReply(ack.message);
+    await this.refreshHealth();
+    return ack.taskId;
   }
 
   async markDone(id: string): Promise<void> {

@@ -3,6 +3,10 @@
 > 目标：**不配任何平台账号，也能看到完整闭环**；以后换成自己的账号只改 `.env`，不改代码。
 > 从交付包根目录开始，先 `cd unimsg-connector`；下文命令都在该目录下执行（仓库根目录没有 `package.json`，在根目录跑 `pnpm` 会报错）。
 > README 顶部也有同样的一张「30 秒选路径」表，两边内容一致。
+>
+> **Windows 用户更省事**：直接双击仓库根目录的 `start.bat`（或 `start-docker.bat` 走 Docker），脚本会自动完成下面的依赖安装、环境变量配置、启动后端与前端、打开浏览器；停止用 `start.bat stop`。详见 [README 的「Windows 一键启动」小节](../README.md)。
+>
+> **账号配置只在 `unimsg-connector/.env`**，该文件被 `.gitignore` 排除，**clone / pull / 同步队友代码都不会带过来**，换工作区后会静默退回全 Mock。若发现「我明明配过」，把旧工作区的 `.env` 复制过来，或双击 `setup-accounts.bat` 重新填，再用 `start.bat doctor` 自检。
 
 ## 先判断你属于哪类人
 
@@ -104,7 +108,7 @@ pnpm --filter @unimsg/server start
 - 完整真实接入（后台点什么、填哪些变量、常见报错）→ [swap-accounts.md](swap-accounts.md)
 - 承诺 vs 实现、已知边界与风险 → [README.md](../README.md) 的「设计文档承诺 vs 当前实现」与 [risk-register.md](risk-register.md)
 
-部署三条底线：飞书/企微回调需要公网可达；企微发信出口 IP 必须在「企业可信 IP」；生产必须改强随机 `API_TOKEN`（`NODE_ENV=production` 且仍是默认 `dev-token` 会拒绝启动；也**不要**把它留空，空值会关闭鉴权）。
+部署三条底线：企微回调需要公网可达；**飞书推荐用长连接（`FEISHU_STREAM=true`）免公网回调**（详见 [swap-accounts.md](swap-accounts.md) §3）；企微发信出口 IP 必须在「企业可信 IP」；生产必须改强随机 `API_TOKEN`（`NODE_ENV=production` 且仍是默认 `dev-token` 会拒绝启动；也**不要**把它留空，空值会关闭鉴权）。
 
 ## 常见卡点一张表
 

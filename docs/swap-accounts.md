@@ -108,14 +108,14 @@ curl -H "Authorization: Bearer dev-token" http://127.0.0.1:3001/api/accounts
 4. **权限管理**：开通
    - `im:message:send_as_bot`（以应用身份发送消息）——**发送必需**；
    - `im:message`（获取与发送单聊、群组消息）——接收 / 查询消息需要；未开通时可能收不到消息。
-5. **事件与回调 → 事件配置**：
-   - 订阅方式选「将事件发送至开发者服务器」，请求地址填 `https://<公网域名>/api/webhook/feishu`；
-   - 添加事件 `im.message.receive_v1`（接收消息 v2.0）。
-6. **事件与回调 → 加密策略**：复制 **Verification Token**（必填）、**Encrypt Key**（建议配置；配了就必须同步到 `.env`，否则解密失败）。
+5. **事件与回调 → 事件配置**（两种订阅方式二选一）：
+   - **方式 A · 长连接（推荐，免公网）**：订阅方式选「**使用长连接接收事件**」，保存时要求本地长连接已在线（**先启动后端，再回后台保存**）；添加事件 `im.message.receive_v1`。长连接下事件由官方 SDK 明文推送，无需 Verification Token / Encrypt Key，也不需要公网回调地址。
+   - **方式 B · HTTP 回调**：订阅方式选「将事件发送至开发者服务器」，请求地址填 `https://<公网域名>/api/webhook/feishu`；添加事件 `im.message.receive_v1`。
+6. 若走**方式 B（HTTP 回调）**：**事件与回调 → 加密策略**复制 **Verification Token**（必填）、**Encrypt Key**（建议配置；配了就必须同步到 `.env`，否则解密失败）。走**方式 A 长连接则无需此项**。
 7. **版本管理与发布**：创建版本并发布（可用范围可先设「仅我可见」自测）。**不发布版本，事件订阅可能不生效。**
-8. 配置回调 URL 时飞书会发 `url_verification` 挑战，本服务会自动回 `challenge`；这一步**不用**手动处理。
+8. 配置回调 URL 时飞书会发 `url_verification` 挑战（仅 HTTP 回调方式），本服务会自动回 `challenge`；这一步**不用**手动处理。
 
-> 飞书没有 Stream 长连接模式，真实收消息需要公网可访问的回调地址（内网穿透 / 云服务器 / 反向代理均可）。只想本地演示时用 `FEISHU_MODE=mock`。
+> 飞书现已支持**长连接（WebSocket）收消息**（`FEISHU_STREAM=true`，实现见 `packages/server/src/stream/feishuStream.ts`）：与钉钉 Stream 同理，免公网回调、事件明文推送，本机 / 决赛服务器直接收。代价是仍依赖应用已发布且启用——否则 `tenant_access_token` 同样报 `21001`。不想配公网时优先用长连接；纯本地演示仍可用 `FEISHU_MODE=mock`。
 
 ### 3.2 填哪些 env
 
@@ -123,6 +123,9 @@ curl -H "Authorization: Bearer dev-token" http://127.0.0.1:3001/api/accounts
 FEISHU_MODE=auto
 FEISHU_APP_ID=cli_xxxxxxxxxxxxxxxx
 FEISHU_APP_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+# —— 长连接（推荐，免公网）——
+FEISHU_STREAM=true
+# —— 以下两项仅 HTTP 回调方式需要（FEISHU_STREAM=false 时）——
 FEISHU_VERIFY_TOKEN=xxxxxxxxxxxxxxxx
 FEISHU_ENCRYPT_KEY=xxxxxxxxxxxxxxxx          # 后台没开加密策略可留空；开了必须填
 # FEISHU_BASE_URL=https://open.feishu.cn       # 国际版 Lark / 代理网关才需要改
@@ -163,6 +166,9 @@ curl -H "Authorization: Bearer dev-token" http://127.0.0.1:3001/api/accounts
 | 收到加密事件但报「未配置 FEISHU_ENCRYPT_KEY」 | 后台开了加密策略但 `.env` 没填 Encrypt Key | 填上 Encrypt Key 并重启 |
 | 解密失败 / JSON 解析失败 | Encrypt Key 错误，或后台关闭加密但 `.env` 仍按加密处理 | 两处保持一致；改完重启 |
 | 能发不能收 | 缺 `FEISHU_VERIFY_TOKEN`、事件未订阅、权限未开通或版本未发布 | 看 `/api/accounts` 的 `missing` / `warnings`，逐项补齐 |
+| 长连接保存时提示「连接校验失败」 | 本地后端未启动，或 `FEISHU_STREAM=true` 未设，或应用未发布启用 | 先 `FEISHU_STREAM=true` 启动后端，确认日志出现 `[feishu-stream] 飞书长连接已启动`，再回后台保存订阅方式 |
+| 长连接启动后日志无「已启动」 | `FEISHU_STREAM` 未开，或 `FEISHU_MODE≠real`，或 21001（应用未发布/未启用） | 看 `[feishu-stream]` 日志；21001 见「现实说明」 |
+| 长连接能收但回复发失败 | 缺 `im:message:send_as_bot` 权限，或版本未发布 | 开通权限并重新发布版本 |
 
 ### 3.5 现实说明：飞书 21001 与企业认证
 

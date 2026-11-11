@@ -81,6 +81,7 @@ pnpm e2e                                   # Windows；macOS / Linux / Git Bash�
 | 运行环境 | Node `<node -v>`、pnpm `<pnpm -v>`（package.json 固定 pnpm 9.15.9，可用 corepack） |
 | 真实可用 | 钉钉 Stream 收 + 机器人回写；邮箱 IMAP 收 + SMTP 发（多账号 / STARTTLS） |
 | 受限能力 | 飞书 `21001`（需企业认证/合规租户）；企微 `60020`（需企业可信 IP + 回调 Token/AESKey + 公网） |
-| 未实现 | PostgreSQL/Redis 持久化、LLM/OCR 真实调用、Docker Compose（详见 README「承诺 vs 实现」） |
-| 文档索引 | quickstart / demo-script / swap-accounts / risk-register / README |
+| 未实现 | PostgreSQL/Redis 持久化（当前为单实例内存 + 文件快照）、LLM/OCR 真实调用、高可用/水平扩展（详见 README「承诺 vs 实现」） |
+| 独立部署包 | `unimsg-connector/Dockerfile` + `docker-compose.yml` + `.dockerignore`；步骤见 [deploy.md](deploy.md)，可 `docker save/load` 离线搬运 |
+| 文档索引 | quickstart / demo-script / swap-accounts / deploy / risk-register / README |
 | 已知风险 | 全部见 [risk-register.md](risk-register.md) |
