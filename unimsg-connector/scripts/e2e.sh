@@ -20,10 +20,25 @@ fi
 
 cd "$ROOT"
 echo "[e2e] 工作目录: $ROOT"
+
+# 端口已被占用时必须拒绝：否则下面的健康检查会命中别人的服务，
+# 冒烟结果不可信，甚至可能往真实实例灌消息（与 e2e.ps1 的预检保持一致）。
+if "$PY" - "$PORT" <<'PY'
+import socket, sys
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.settimeout(0.5)
+sys.exit(0 if s.connect_ex(("127.0.0.1", int(sys.argv[1]))) == 0 else 1)
+PY
+then
+  echo "[e2e] 端口 $PORT 已被占用：换一个端口（pnpm e2e:sh 3102），或先关闭占用该端口的程序。"
+  exit 1
+fi
+
 echo "[e2e] 启动后端服务 (port=$PORT, 强制 mock 模式，与本地 .env 里的真实凭据隔离) ..."
 # 关键：e2e 必须完全离线可复现，不受 .env 中真实凭据影响；入口令牌也固定（避免用户改过 API_TOKEN 后 smoke 401）
 # smoke.py 从 LINKHUB_API_TOKEN 读取令牌，故单独 export 给同脚本后续的 python 进程
 export LINKHUB_API_TOKEN=dev-token
+: > "$LOG"
 SERVER_PORT="$PORT" API_TOKEN=dev-token \
 FEISHU_MODE=mock DINGTALK_MODE=mock WECOM_MODE=mock MAIL_MODE=mock \
 DINGTALK_STREAM=false MAIL_ENABLED=false \
@@ -32,8 +47,20 @@ SERVER_PID=$!
 
 cleanup() {
   echo "[e2e] 关闭服务..."
-  kill "$SERVER_PID" 2>/dev/null || true
-  pkill -P "$SERVER_PID" 2>/dev/null || true
+  case "$(uname -s 2>/dev/null)" in
+    MINGW*|MSYS*|CYGWIN*)
+      # Windows: $! 是 MSYS 的 PID，taskkill 不认；按端口取真正的 Windows PID，
+      # 再 /T 带走 node 子进程。端口在启动前已确认空闲，这里不会误杀。
+      win_pid="$(netstat -ano 2>/dev/null | awk -v port=":$PORT" '$2 ~ port"$" && $4 == "LISTENING" { print $5; exit }')"
+      if [ -n "$win_pid" ]; then
+        taskkill //F //T //PID "$win_pid" >/dev/null 2>&1 || true
+      fi
+      ;;
+    *)
+      kill "$SERVER_PID" 2>/dev/null || true
+      pkill -P "$SERVER_PID" 2>/dev/null || true
+      ;;
+  esac
 }
 trap cleanup EXIT
 
