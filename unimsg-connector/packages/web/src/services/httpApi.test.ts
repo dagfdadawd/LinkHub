@@ -189,6 +189,26 @@ describe('HttpApi', () => {
     });
   });
 
+  it('feishuOAuthStart：POST start 并返回授权 URL', async () => {
+    const fn = mockFetch(jsonResponse({
+      ok: true,
+      data: {
+        url: 'https://accounts.feishu.cn/open-apis/authen/v1/authorize?client_id=cli_x&state=s',
+        redirectUri: 'http://localhost:3001/api/feishu/oauth/callback',
+      },
+    }));
+    const api = new HttpApi(BASE, TOKEN);
+
+    const result = await api.feishuOAuthStart();
+
+    expect(result.url).toContain('accounts.feishu.cn');
+    expect(result.redirectUri).toContain('/api/feishu/oauth/callback');
+    const [url, init] = callArgs(fn);
+    expect(url).toBe(`${BASE}/api/feishu/oauth/start`);
+    expect(init.method).toBe('POST');
+    expect((init.headers as Record<string, string>).Authorization).toBe(`Bearer ${TOKEN}`);
+  });
+
   it('401 映射为 ApiError（status=401）', async () => {
     mockFetch(jsonResponse({ ok: false, error: 'unauthorized' }, 401));
     const api = new HttpApi(BASE, 'bad-token');

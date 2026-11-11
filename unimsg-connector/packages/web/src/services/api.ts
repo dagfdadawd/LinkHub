@@ -28,6 +28,26 @@ export interface ReplyAck {
 /** 通道策略：auto=按凭据自动选择（有凭据走真实，否则 Mock）；real / mock=强制指定 */
 export type AccountPolicy = 'auto' | 'real' | 'mock';
 
+export type FeishuSendAs = 'auto' | 'bot' | 'user';
+export type FeishuTokenState = 'none' | 'active' | 'refreshable' | 'expired' | 'invalid';
+
+/** 飞书出站身份与用户授权状态（后端只下发状态/过期时间，绝不下发令牌） */
+export interface FeishuIdentityInfo {
+  sendAs: FeishuSendAs;
+  effective: 'bot' | 'user';
+  tokenState: FeishuTokenState;
+  configured: boolean;
+  accessExpiresAt?: string;
+  refreshExpiresAt?: string;
+  hint: string;
+}
+
+/** 发起飞书用户授权的返回值 */
+export interface FeishuOAuthStart {
+  url: string;
+  redirectUri?: string;
+}
+
 /** 邮箱平台下的单个账号：只含展示所需的非敏感字段，授权码永不下发前端 */
 export interface MailAccountInfo {
   key: string;
@@ -70,6 +90,8 @@ export interface AccountInfo {
   reason?: string;
   /** 邮箱平台的多账号明细 */
   accounts?: MailAccountInfo[];
+  /** 仅飞书：发送身份与用户授权状态 */
+  feishuIdentity?: FeishuIdentityInfo;
 }
 
 export interface HealthInfo {
@@ -96,6 +118,8 @@ export interface MessageApi {
   compose(req: ComposeRequest): Promise<ComposeAck>;
   /** 各平台发送能力与体积上限，供新建发送表单渲染 */
   capabilities(): Promise<SendCapabilities[]>;
+  /** 发起飞书用户身份授权，返回需要打开的飞书授权页 URL */
+  feishuOAuthStart(): Promise<FeishuOAuthStart>;
   markDone(id: string): Promise<UnifiedMessage>;
   trace(id: string): Promise<TraceResult>;
   accounts(): Promise<AccountInfo[]>;

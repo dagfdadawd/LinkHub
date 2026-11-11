@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Card, Col, Row, Tag } from 'antd';
+import { useEffect, useRef, useState } from 'react';
+import { Button, Card, Col, message, Row, Tag } from 'antd';
 import {
   ApiOutlined,
   CheckCircleFilled,
@@ -7,13 +7,15 @@ import {
   DatabaseOutlined,
   ExperimentOutlined,
   InboxOutlined,
+  LinkOutlined,
   SendOutlined,
   WarningOutlined,
 } from '@ant-design/icons';
 import type { DeliveryMode } from '@unimsg/shared';
 import { useAppState } from '../../hooks/useAppState';
 import { Platform } from '../../types';
-import type { AccountInfo, MailAccountInfo } from '../../services/api';
+import type { AccountInfo, FeishuIdentityInfo, MailAccountInfo } from '../../services/api';
+import { store } from '../../store';
 import { PLATFORM_META, toneStyle } from '../../utils/format';
 import { DrawerSection } from '../../components/DrawerSection';
 import { Sparkline } from '../../components/Sparkline';
@@ -62,8 +64,84 @@ function MailAccountRow({ account }: { account: MailAccountInfo }) {
   );
 }
 
+function formatExpiry(value?: string): string {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleString('zh-CN', { hour12: false });
+}
+
+/** 飞书发送身份：机器人 / 本人 + 一键授权入口 */
+function FeishuIdentityBlock({
+  identity,
+  canConnect,
+  connecting,
+  onConnect,
+}: {
+  identity: FeishuIdentityInfo;
+  canConnect: boolean;
+  connecting: boolean;
+  onConnect?: () => void;
+}) {
+  const user = identity.effective === 'user';
+  const authorized = identity.configured
+    && (identity.tokenState === 'active' || identity.tokenState === 'refreshable');
+  const identityLabel = !user
+    ? '机器人'
+    : authorized
+      ? '本人（用户授权）'
+      : identity.tokenState === 'expired' || identity.tokenState === 'invalid'
+        ? '本人（授权失效）'
+        : '本人（未连接）';
+  const risky = identity.tokenState === 'expired'
+    || identity.tokenState === 'invalid'
+    || (identity.sendAs === 'user' && identity.tokenState === 'none');
+
+  return (
+    <div className="feishu-identity" data-testid="feishu-identity">
+      <div className="feishu-identity__head">
+        <span className="feishu-identity__label">发送身份</span>
+        <Tag color={user && authorized ? 'blue' : user ? 'orange' : 'default'}>{identityLabel}</Tag>
+        {identity.sendAs !== 'auto' && (
+          <span className="feishu-identity__policy mono">FEISHU_SEND_AS={identity.sendAs}</span>
+        )}
+      </div>
+      <div className={`feishu-identity__hint${risky ? ' feishu-identity__hint--warn' : ''}`}>
+        {identity.hint}
+      </div>
+      {identity.accessExpiresAt && (
+        <div className="feishu-identity__expiry">
+          access 至 {formatExpiry(identity.accessExpiresAt)}
+          {identity.refreshExpiresAt ? ` · refresh 至 ${formatExpiry(identity.refreshExpiresAt)}` : ''}
+        </div>
+      )}
+      {canConnect && identity.sendAs !== 'bot' && onConnect && (
+        <Button
+          size="small"
+          icon={<LinkOutlined />}
+          loading={connecting}
+          onClick={onConnect}
+          className="feishu-identity__btn"
+        >
+          {identity.configured ? '重新授权' : '连接飞书用户身份'}
+        </Button>
+      )}
+    </div>
+  );
+}
+
 /** 单个平台账号卡：mode Tag + policy + missing + warnings/issues（导出便于渲染测试） */
-export function AccountCard({ account }: { account: AccountInfo }) {
+export function AccountCard({
+  account,
+  showFeishuConnect = false,
+  feishuConnecting = false,
+  onFeishuConnect,
+}: {
+  account: AccountInfo;
+  showFeishuConnect?: boolean;
+  feishuConnecting?: boolean;
+  onFeishuConnect?: () => void;
+}) {
   const meta = PLATFORM_META[account.platform];
   const mode = account.mode ? MODE_META[account.mode] : undefined;
   const mailAccounts = account.platform === Platform.MAIL ? account.accounts ?? [] : [];
@@ -109,6 +187,15 @@ export function AccountCard({ account }: { account: AccountInfo }) {
         {account.reason && <span className="account-card__hint">{account.reason}</span>}
       </div>
 
+      {account.platform === Platform.FEISHU && account.mode !== 'mock' && account.feishuIdentity && (
+        <FeishuIdentityBlock
+          identity={account.feishuIdentity}
+          canConnect={showFeishuConnect}
+          connecting={feishuConnecting}
+          onConnect={onFeishuConnect}
+        />
+      )}
+
       {missing.length > 0 && (
         <div className="account-card__missing">
           缺少环境变量：<code>{missing.join('、')}</code>
@@ -151,8 +238,47 @@ export function AccountsPage() {
   const state = useAppState();
   const health = state.health;
   const [metricsOpen, setMetricsOpen] = useState(false);
+  const [feishuConnecting, setFeishuConnecting] = useState(false);
+  const connectingRef = useRef(false);
   // 只在小抽屉展开时采样（不做后台轮询）；数据不足 3 点不画
   const receivedSeries = useHealthSeries(health?.received, metricsOpen);
+
+  // 授权页是另一个标签：回到本页时静默刷新账号状态（授权成功/取消都能立刻反映）
+  useEffect(() => {
+    let timer: number | undefined;
+    const onFocus = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => { void store.refreshAccounts(); }, 250);
+    };
+    window.addEventListener('focus', onFocus);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, []);
+
+  const connectFeishu = async (): Promise<void> => {
+    // state 更新是异步的，同 tick 连点会绕过 feishuConnecting；用 ref 同步拦截
+    if (connectingRef.current) return;
+    connectingRef.current = true;
+    setFeishuConnecting(true);
+    // 必须在 await 之前同步开空白页，否则会被浏览器当作弹窗拦截
+    const tab = window.open('about:blank', '_blank');
+    if (tab) {
+      try { tab.opener = null; } catch { /* 跨域前设置失败不影响授权 */ }
+    }
+    try {
+      const { url } = await store.feishuOAuthStart();
+      if (tab) tab.location.href = url;
+      else window.location.href = url;
+    } catch (e) {
+      tab?.close();
+      message.error(e instanceof Error ? e.message : '获取飞书授权地址失败');
+    } finally {
+      connectingRef.current = false;
+      setFeishuConnecting(false);
+    }
+  };
 
   const METRICS = [
     { key: 'received', label: '接收', value: health?.received, icon: <InboxOutlined /> },
@@ -194,7 +320,12 @@ export function AccountsPage() {
       <Row gutter={[16, 16]} className="account-grid">
         {state.accounts.map((account) => (
           <Col xs={24} md={12} xl={6} key={account.platform}>
-            <AccountCard account={account} />
+            <AccountCard
+              account={account}
+              showFeishuConnect={!state.demoMode && account.mode !== 'mock' && account.canSend !== false}
+              feishuConnecting={feishuConnecting}
+              onFeishuConnect={connectFeishu}
+            />
           </Col>
         ))}
       </Row>

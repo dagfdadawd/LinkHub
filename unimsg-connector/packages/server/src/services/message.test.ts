@@ -71,6 +71,46 @@ test('reply：走完状态机并真实回写（Mock）', async () => {
   }
 });
 
+test('用户身份自环：平台把刚发出的消息推回来时不入库', async () => {
+  const repo = new InMemoryRepository();
+  const echoConnectors = {
+    ...connectors,
+    [Platform.FEISHU]: { ...connectors[Platform.FEISHU], isSelfEcho: () => true },
+  };
+  const svc = new MessageService(
+    repo, echoConnectors, new LlmService(), new OcrService(), new RateLimiter(3, 5), () => {},
+  );
+
+  const r = await svc.onPlatformEvent(Platform.FEISHU, feishuSample);
+  assert.equal(r.applied, false);
+  assert.equal(repo.list().length, 0, '自环事件不应占用收件箱或幂等键');
+});
+
+test('sent trace 标注真实发送身份', async () => {
+  const repo = new InMemoryRepository();
+  const userConnectors = {
+    ...connectors,
+    [Platform.FEISHU]: {
+      ...connectors[Platform.FEISHU],
+      send: async () => ({
+        ok: true as const,
+        mode: 'real' as const,
+        identity: 'user' as const,
+        platformReply: 'om_user_trace',
+      }),
+    },
+  };
+  const svc = new MessageService(
+    repo, userConnectors, new LlmService(), new OcrService(), new RateLimiter(3, 5), () => {},
+  );
+
+  const { message } = await svc.ingest(Platform.FEISHU, feishuSample);
+  await svc.reply(message.traceId, '收到');
+  await waitFor(() => repo.get(message.traceId)!.status === MsgStatus.SYNCED);
+  const sent = repo.getLoopLog(message.traceId).find((e) => e.event === 'sent');
+  assert.match(sent?.detail ?? '', /用户身份/);
+});
+
 test('syncStatus：平台回流更新本地状态', async () => {
   const { svc, repo } = makeSvc();
   const { message } = await svc.ingest(Platform.DINGTALK, dingtalkSample);

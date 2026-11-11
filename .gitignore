@@ -78,6 +78,8 @@ web_modules/
 
 # Office lock/temp files
 ~$*
+# 飞书用户身份令牌（user_access_token / refresh_token，运行期授权产物）
+.feishu-user-token.json
 
 # parcel-bundler cache (https://parceljs.org/)
 .cache

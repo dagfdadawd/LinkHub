@@ -8,7 +8,9 @@ import { MsgStatus } from '../types';
 import type {
   ComposeRequest, MsgType, OutboundAttachment, Platform, UnifiedMessage,
 } from '../types';
-import type { AccountInfo, HealthInfo, MessageApi } from '../services/api';
+import type {
+  AccountInfo, FeishuOAuthStart, HealthInfo, MessageApi,
+} from '../services/api';
 import { isDemoApi } from '../services/api';
 import type { RealtimeClient, RealtimeStatus } from '../services/realtime';
 import { sortMessages } from '../utils/format';
@@ -182,6 +184,20 @@ export class AppStore {
   /** 静默重拉全量数据（空态注入、外部写入后手动对齐用；失败保持现状） */
   async refresh(): Promise<void> {
     await this.reload();
+  }
+
+  /** 飞书 OAuth 回来只更新账号页，不重拉消息（避免打扰当前收件箱视图） */
+  async refreshAccounts(): Promise<void> {
+    try {
+      this.set({ accounts: await this.api.accounts() });
+    } catch {
+      // 授权页刚关闭时后端可能正忙；保持现状，下一次操作会再拉
+    }
+  }
+
+  /** 发起飞书用户授权：仅返回授权 URL，打开新标签由页面负责 */
+  async feishuOAuthStart(): Promise<FeishuOAuthStart> {
+    return this.api.feishuOAuthStart();
   }
 
   async refreshHealth(): Promise<void> {

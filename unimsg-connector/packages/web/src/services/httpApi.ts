@@ -16,6 +16,7 @@ import type {
 import type { TraceEntry, UnifiedMessage } from '../types';
 import type {
   AccountInfo,
+  FeishuOAuthStart,
   HealthInfo,
   MessageApi,
   MessageFilter,
@@ -106,6 +107,15 @@ export class HttpApi implements MessageApi {
   async capabilities(): Promise<SendCapabilities[]> {
     const body = await this.request<{ data?: SendCapabilities[] }>('/api/capabilities');
     return body.data ?? [];
+  }
+
+  async feishuOAuthStart(): Promise<FeishuOAuthStart> {
+    const body = await this.request<{ data?: FeishuOAuthStart }>(
+      '/api/feishu/oauth/start',
+      { method: 'POST', body: '{}' },
+    );
+    if (!body.data?.url) throw new ApiError('后端未返回飞书授权地址', 0);
+    return body.data;
   }
 
   async markDone(id: string): Promise<UnifiedMessage> {

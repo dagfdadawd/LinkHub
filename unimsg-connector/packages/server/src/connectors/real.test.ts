@@ -37,6 +37,8 @@ before(() => {
   config.platforms.feishu.appSecret = 'secret_test';
   config.platforms.feishu.verifyToken = 'verify_test';
   config.platforms.feishu.encryptKey = 'encrypt_test_key_1234567890abcd';
+  // 现有用例断言的是机器人通道；显式锁 bot，避免误读开发者本机的用户令牌文件
+  config.feishuAuth.sendAs = 'bot';
   config.platforms.dingtalk.appKey = 'ding_test';
   config.platforms.dingtalk.appSecret = 'ding_secret_test';
   config.platforms.dingtalk.robotCode = 'robot_test';

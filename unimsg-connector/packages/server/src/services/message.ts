@@ -282,8 +282,25 @@ export class MessageService {
       );
     }
 
-    // 邮箱的回信账号由 mailMeta.account / externalId 前缀决定，主动发送时落到首个已配置账号
-    const mailKey = req.platform === Platform.MAIL ? config.mail.accounts[0]?.key : undefined;
+    // 邮箱的发件账号由 mailMeta.account / externalId 前缀决定：
+    // 用户显式选择优先（必须已配置），未指定时沿用首个已配置账号（向后兼容）
+    let mailKey: string | undefined;
+    if (req.platform === Platform.MAIL) {
+      if (req.mailAccount) {
+        const account = config.mail.accounts.find((a) => a.key === req.mailAccount);
+        if (!account) {
+          const available = config.mail.accounts.map((a) => a.key);
+          throw new Error(
+            available.length > 0
+              ? `邮箱发件账号未配置：${req.mailAccount}（可用：${available.join(' / ')}）`
+              : `邮箱发件账号未配置：${req.mailAccount}（当前没有可用的 MAIL_<KEY>_ADDRESS / AUTH_CODE）`,
+          );
+        }
+        mailKey = account.key;
+      } else {
+        mailKey = config.mail.accounts[0]?.key;
+      }
+    }
     const uid = randomUUID();
     const now = new Date().toISOString();
     const display = req.text || `[附件] ${info.map((a) => a.name).join(', ')}`;
@@ -312,7 +329,9 @@ export class MessageService {
       this.repo,
       msg,
       'composed',
-      `统一入口主动发送 → ${req.platform} · 会话 ${conversationId}${info.length > 0 ? ` · 附件 ${info.length} 个` : ''}`,
+      `统一入口主动发送 → ${req.platform} · 会话 ${conversationId}`
+        + `${mailKey ? ` · 发件账号 ${mailKey}` : ''}`
+        + `${info.length > 0 ? ` · 附件 ${info.length} 个` : ''}`,
     );
     this.broadcast({ type: 'message.received', data: msg });
 
@@ -343,13 +362,18 @@ export class MessageService {
         status: MsgStatus.SENT,
         delivery: { mode: result.mode, platformReply: result.platformReply, at },
       })!;
+      const identityNote = result.identity === 'user'
+        ? '（用户身份）'
+        : result.identity === 'bot'
+          ? '（机器人身份）'
+          : '';
       writeTrace(
         this.repo,
         m,
         'sent',
         result.mode === 'mock'
           ? '模拟发送（本地 Mock，未调用真实平台接口）'
-          : `真实接口${result.platformReply ? ` · ${result.platformReply}` : ''}`,
+          : `真实接口${identityNote}${result.platformReply ? ` · ${result.platformReply}` : ''}`,
       );
       this.broadcast({ type: 'message.updated', data: m });
 
@@ -414,6 +438,12 @@ export class MessageService {
     platform: Platform,
     raw: unknown,
   ): Promise<{ applied: boolean; message?: UnifiedMessage; duplicate?: boolean }> {
+    // 用户身份发出的消息可能被机器人原样收回（飞书单聊必现）：
+    // 在写 trace / 幂等表之前丢弃，避免自己给自己造一条新消息。
+    if (this.connectors[platform]?.isSelfEcho?.(raw)) {
+      console.log(`[${platform}] 忽略自环事件：本进程刚以用户身份发出的消息被平台回收`);
+      return { applied: false };
+    }
     const d = decidePlatformEvent(raw);
     if (d.kind === 'status') {
       let target = d.traceId ? this.repo.get(d.traceId) : undefined;

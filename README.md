@@ -7,6 +7,7 @@
 LinkHub 把飞书、钉钉、企业微信、邮箱的消息与待办收拢到一个统一入口，支持直接处理、真实回写、状态回流与全链路日志回放。每个平台独立用 `*_MODE=auto|real|mock` 决定走真实接口还是本地模拟，默认 `auto`（凭据够就走真实接口、不够自动回退 Mock）；邮箱支持**任意数量、任意服务商**。一条 `pnpm run doctor` 完成凭据 / 网络 / 出口 IP 自检并给出中文修复建议；**Mock 结果一律标注「模拟发送」，绝不假成功**。
 
 - 换账号零代码：飞书 / 钉钉 / 企业微信 / 邮箱各自一段 `.env`，互不影响。
+- 飞书双身份出站：默认机器人；在账号页点一次「连接飞书用户身份」（OAuth）后，回写消息显示为你本人，access_token 自动续期，授权失效时显式报错、绝不悄悄换回机器人。
 - 混搭可用：只配钉钉、只配邮箱、或四个平台全真实，都能正常启动；没配的平台自动 Mock。
 - 零账号可演示：不填任何凭据也能跑通「接收 → 处理 → 回写 → 同步 → 回放」，且每一步都标明是模拟。
 - 自检不猜谜：`pnpm run doctor` 给出 Node / `.env` / 平台模式 / 逐平台探针 / 出口公网 IP 与修复建议。
@@ -35,6 +36,7 @@ cp .env.example .env        # Windows PowerShell 可用：Copy-Item .env.example
 
 # 2) 只填“目标平台”那一段，其余留空即可（留空 = auto 回退 Mock）
 #    飞书：FEISHU_APP_ID / FEISHU_APP_SECRET / FEISHU_VERIFY_TOKEN / FEISHU_ENCRYPT_KEY
+#          想出站显示为你本人：FEISHU_SEND_AS=auto + 账号页点「连接飞书用户身份」
 #    钉钉：DINGTALK_CLIENT_ID / DINGTALK_CLIENT_SECRET / DINGTALK_ROBOT_CODE / DINGTALK_STREAM=true
 #    企微：WECOM_CORP_ID / WECOM_AGENT_ID / WECOM_SECRET（要收消息再加 WECOM_TOKEN / WECOM_AES_KEY）
 #    邮箱：MAIL_<KEY>_ADDRESS / MAIL_<KEY>_AUTH_CODE（可配任意多个账号、任意服务商）
@@ -128,6 +130,7 @@ MAIL_MODE=real
 | 飞书 | 什么都没填 | ✗ | ✗ | `mock`；账号页「未配置 / Mock 模拟」，回写标「模拟发送」 |
 | 飞书 | 只有 App ID + Secret（缺 Verification Token，且未开长连接） | ✗ | ✓ | `real`；警告「只能发不能收」，收到回调会验签失败 |
 | 飞书 | App ID + Secret + `FEISHU_STREAM=true`（长连接，免公网） | ✓ | ✓ | `real`；长连接明文推送，无需 Verification Token / 公网回调 |
+| 飞书 | 上述凭据 + 账号页完成用户授权（`FEISHU_SEND_AS=auto/user`） | ✓ | ✓ | `real`；回写显示为授权用户本人；授权失效时显式失败，不悄悄换机器人 |
 | 飞书 | App ID + Secret + Verification Token（可选 Encrypt Key） | ✓ | ✓ | `real`；若租户被 21001 拦，`doctor` 会 FAIL 并给建议 |
 | 钉钉 | 什么都没填 | ✗ | ✗ | `mock`；账号页「未配置 / Mock 模拟」 |
 | 钉钉 | Client ID/Secret + RobotCode（未开 Stream、无 AES） | ✗ | ✓ | `real`；警告「暂时收不到消息」 |
@@ -150,7 +153,7 @@ MAIL_MODE=real
 | 平台适配器（飞书 / 钉钉 / 企业微信 / 邮箱） | ✅ 代码与单测全部完成；钉钉 Stream 真实收发、邮箱四跳闭环已实测；飞书卡租户策略 `21001`；企微卡「企业可信 IP」 |
 | 邮箱数据源 | ✅ 任意数量 / 任意服务商（8 个常见服务商预设 + `custom`）；IMAP 收 + SMTP 发；993/465 隐式 TLS 与 143/587/25 STARTTLS 均支持 |
 | `doctor` 自检 | ✅ 环境 + 模式 + 逐平台探针（飞书 token / 钉钉 token + 机器人 + 通道 / 企微 gettoken / 邮箱 IMAP+SMTP 登录）+ 大模型连通性（`llm:chat`，仅在未加 `--platform=` 时执行）+ 出口公网 IP + 中文修复建议；支持 `--json`、`--platform=`、`--help` |
-| 真实平台 API 接入 | ✅ 钉钉 Stream 端到端（真实收 + 回写）；✅ 邮箱四跳闭环；🟡 飞书适配器完成，token 被租户策略 `21001` 拦截；🟡 企微 `gettoken` 通过，真实发送卡「企业可信 IP」 |
+| 真实平台 API 接入 | ✅ 钉钉 Stream 端到端（真实收 + 回写）；✅ 邮箱四跳闭环；🟡 飞书适配器完成（机器人 / 用户本人双身份，OAuth 一键授权；部分租户仍可能被 `21001` 拦截）；🟡 企微 `gettoken` 通过，真实发送卡「企业可信 IP」 |
 | 消息中枢：状态机 / 幂等 / 异步回写 / 回流 | ✅ 完成（状态回流单向防倒退） |
 | 安全：Bearer 鉴权 + WebSocket 握手校验 | ✅ 完成 |
 | 闭环日志（traceId 全链路可回放） | ✅ 完成（Mock 与真实通道分开描述） |
@@ -230,7 +233,7 @@ LinkHub-test/
     ├── Dockerfile / docker-compose.yml / .dockerignore   # 独立部署包
     ├── packages/shared/src/message.ts      # 前后端共享契约（含 delivery / 出站附件 / compose）
     ├── packages/web/                       # 前端（React + AntD，账号页含模式标注、首启 3 步引导）
-    │   ├── src/features/compose/ComposeModal.tsx  # 新建发送：指定平台/会话 + 文本 + 附件
+    │   ├── src/features/compose/ComposeModal.tsx  # 新建发送：指定平台/会话（邮箱可选发件账号）+ 文本 + 附件
     │   ├── src/utils/attachments.ts        # File → base64 出站附件、体积校验
     │   ├── src/styles/app.css               # 设计令牌（色板 / 圆角 / 字号尺阶）与全部样式
     │   ├── src/utils/ink.ts                 # 对比度计算与墨色推导（标签文字色）
@@ -510,7 +513,7 @@ pnpm install
 |---|---|---|
 | 四类数据源（飞书 / 钉钉 / 企微 / 邮箱）统一接入 | ✅ 已实现（邮箱为超出原设计的新增数据源） | 三平台 + 邮箱，均可 Mock/真实独立切换 |
 | 完整闭环（接收→展示→处理→回写→回流）+ traceId 回放 | ✅ 已实现并有单测/e2e 覆盖 | `pnpm e2e` 20 项断言 |
-| 从统一入口向指定平台发送文本 + 文件 | ✅ 已实现 | 「新建发送」可指定平台/会话并挂附件；回复也支持附件；四平台适配器各自完成媒体上传或 MIME 转换，附件元数据进闭环回放 |
+| 从统一入口向指定平台发送文本 + 文件 | ✅ 已实现 | 「新建发送」可指定平台/会话并挂附件，邮箱平台还可选择发件账号；回复也支持附件；四平台适配器各自完成媒体上传或 MIME 转换，附件元数据进闭环回放 |
 | 独立部署：可在纯净服务器零依赖启动 | ✅ 已实现（单容器方案） | `Dockerfile` + `docker-compose.yml` + [docs/deploy.md](docs/deploy.md)：server 同源托管前端，单端口 3001，含健康检查与数据卷；镜像可 `docker save/load` 离线搬运 |
 | 闭环数据重启后仍可回放 | ✅ 已实现（文件快照） | `DATA_DIR` / `DATA_FILE` 开启原子快照，消息 / trace / DLQ 落盘；Docker 默认挂载 `linkhub-data` 卷 |
 | PostgreSQL / Redis 持久化 | ❌ 未实现 | 仅有 `001_init.sql` 与仓储接口；当前为单实例内存 + 文件快照，不是关系库 |
