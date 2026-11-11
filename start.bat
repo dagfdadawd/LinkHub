@@ -9,15 +9,20 @@ rem  ASCII-only on purpose: cmd.exe reads .bat with the OEM code page, so
 rem  non-ASCII text here gets garbled on some locales. Chinese instructions
 rem  live in README.md (section: Windows one-click start).
 rem
-rem    start.bat                  local mode : backend :3001 + frontend :5173
+rem    start.bat                  local mode : backend port from .env SERVER_PORT
+rem                               (default 3001) + frontend :5173
 rem    start.bat mock             same, but force all 4 platforms to MOCK (offline)
 rem    start.bat accounts         open unimsg-connector\.env for editing
 rem    start.bat doctor           read-only account / credential self-check
 rem    start.bat docker           Docker mode: one container, same origin :3001
-rem    start.bat stop             stop local services (ports 3001 / 5173)
+rem    start.bat stop             end the processes owning backend port / 5173
 rem    start.bat stopdocker       docker compose down
 rem    start-docker.bat           double-click shortcut for Docker mode
 rem    setup-accounts.bat         double-click shortcut for account setup
+rem
+rem  Backend port = SERVER_PORT in unimsg-connector\.env, default 3001.
+rem  Frontend port stays 5173 (Vite default). "stop" ends whoever OWNS those
+rem  ports, which may be an unrelated program - it is not project-scoped.
 rem
 rem  Double-click = local mode. No admin rights, no global pnpm required.
 rem  NOTE: .env is git-ignored on purpose. Cloning/syncing the repo never
@@ -32,6 +37,21 @@ if not exist "%APP%\package.json" (
   echo [ERROR] Cannot find unimsg-connector\package.json next to this script.
   echo         Keep start.bat in the repository root folder.
   goto :fail
+)
+
+rem Backend port follows SERVER_PORT in unimsg-connector\.env (default 3001).
+rem Resolved HERE, before the mode dispatch, so every entry point sees it:
+rem :LOCAL, :MOCK (which jumps to :LOCAL) and a direct "start.bat stop".
+rem Only a non-empty SERVER_PORT wins; blank / commented / absent = 3001.
+rem The inner for /f keeps just the first word, so a trailing space or an
+rem inline "3002 # note" comment cannot leak into URLs or the port check.
+set "BACKEND_PORT=3001"
+if exist "%APP%\.env" (
+  for /f "usebackq eol=# tokens=1,* delims==" %%A in ("%APP%\.env") do (
+    if /i "%%~A"=="SERVER_PORT" if not "%%~B"=="" (
+      for /f "tokens=1" %%P in ("%%~B") do set "BACKEND_PORT=%%P"
+    )
+  )
 )
 
 set "MODE=%~1"
@@ -52,7 +72,7 @@ rem ---------------------------------------------------------------------------
 :LOCAL
 rem ---------------------------------------------------------------------------
 echo.
-echo  LinkHub - local mode  ^(backend :3001 + frontend :5173^)
+echo  LinkHub - local mode  ^(backend :%BACKEND_PORT% + frontend :5173^)
 echo  ---------------------------------------------------------------
 
 where node >nul 2>nul
@@ -76,13 +96,17 @@ echo [env ] package runner: !PNPM!
 
 rem Refuse to start twice. PowerShell exits with the number of busy ports,
 rem so cmd can read it straight from errorlevel (no findstr quoting issues).
-powershell -NoProfile -Command "exit @(Get-NetTCPConnection -LocalPort 3001,5173 -State Listen -ErrorAction SilentlyContinue).Count"
+powershell -NoProfile -Command "exit @(Get-NetTCPConnection -LocalPort %BACKEND_PORT%,5173 -State Listen -ErrorAction SilentlyContinue).Count"
 if errorlevel 1 (
-  echo [ERROR] Port 3001 or 5173 is already in use.
-  echo         Run "start.bat stop" first, or close the two console windows.
+  echo [ERROR] Port %BACKEND_PORT% or 5173 is already in use by another program.
+  echo         Edit SERVER_PORT in unimsg-connector\.env to use a different
+  echo         backend port, or close the program that owns it.
+  echo         For 5173, close the "LinkHub Web" console window instead.
+  echo         "start.bat stop" kills whoever owns those ports - possibly an
+  echo         unrelated program - so it is not the safe first choice.
   goto :fail
 )
-echo [env ] ports 3001 / 5173 are free.
+echo [env ] ports %BACKEND_PORT% / 5173 are free.
 
 rem [1/4] dependencies -------------------------------------------------------
 if exist "%APP%\packages\server\node_modules\.bin\tsx.cmd" (
@@ -102,6 +126,9 @@ if exist "%APP%\packages\server\node_modules\.bin\tsx.cmd" (
 rem [2/4] account status + point the frontend at the local backend ----------
 rem Count non-empty credential groups so a missing .env can never be mistaken
 rem for "accounts configured". Credential VALUES are never printed.
+rem Mail is multi-account by design: ANY non-empty MAIL_..._AUTH_CODE counts
+rem (qq / 163 / gmail / work / school2 ...), not just two hard-coded names.
+rem The key part must be non-empty, like the server-side discovery rule.
 set "DEMO_TOKEN=dev-token"
 set "ACCT=0"
 if exist "%APP%\.env" (
@@ -110,8 +137,9 @@ if exist "%APP%\.env" (
     if /i "%%~A"=="FEISHU_APP_SECRET"      if not "%%~B"=="" set /a "ACCT+=1"
     if /i "%%~A"=="DINGTALK_CLIENT_SECRET" if not "%%~B"=="" set /a "ACCT+=1"
     if /i "%%~A"=="WECOM_SECRET"           if not "%%~B"=="" set /a "ACCT+=1"
-    if /i "%%~A"=="MAIL_QQ_AUTH_CODE"      if not "%%~B"=="" set /a "ACCT+=1"
-    if /i "%%~A"=="MAIL_163_AUTH_CODE"     if not "%%~B"=="" set /a "ACCT+=1"
+    rem Mail: match the key shape, any provider. MAIL_ = 5 chars, _AUTH_CODE = 10.
+    set "KVAR=%%~A"
+    if /i "!KVAR:~0,5!"=="MAIL_" if /i "!KVAR:~-10!"=="_AUTH_CODE" if not "!KVAR:~5,-10!"=="" if not "%%~B"=="" set /a "ACCT+=1"
   )
 )
 if defined FORCED_MOCK (
@@ -130,28 +158,32 @@ if defined FORCED_MOCK (
 rem This is derived config owned by the launcher: rewrite on every start so
 rem VITE_API_TOKEN can never drift away from the server API_TOKEN (401 cause).
 rem A custom VITE_API_BASE (e.g. remote backend) is respected and untouched.
+rem Any 127.0.0.1 port counts as launcher-owned, so changing SERVER_PORT also
+rem refreshes a previously written base instead of leaving it pointing at the
+rem old port. A non-loopback base is still treated as custom and kept.
 set "WEBENV=%APP%\packages\web\.env"
 set "CUSTOM_WEBENV="
 if exist "%WEBENV%" (
-  findstr /i /c:"VITE_API_BASE=http://127.0.0.1:3001" "%WEBENV%" >nul
+  findstr /i /r /c:"^VITE_API_BASE=http://127\.0\.0\.1:[0-9][0-9]*" "%WEBENV%" >nul
   if errorlevel 1 set "CUSTOM_WEBENV=1"
 )
 if defined CUSTOM_WEBENV (
   echo [2/4] Custom VITE_API_BASE detected - kept as is ^(not overwritten^).
 ) else (
-  >  "%WEBENV%" echo VITE_API_BASE=http://127.0.0.1:3001
+  >  "%WEBENV%" echo VITE_API_BASE=http://127.0.0.1:%BACKEND_PORT%
   >> "%WEBENV%" echo VITE_API_TOKEN=%DEMO_TOKEN%
   echo [2/4] Synced packages\web\.env ^(token matches API_TOKEN^).
 )
 
 rem [3/4] backend ------------------------------------------------------------
-echo [3/4] Starting backend on :3001 ...
-start "LinkHub Server :3001" /D "%APP%" cmd /k "%PNPM% --filter @unimsg/server start"
+rem The server reads SERVER_PORT from .env itself, so it binds BACKEND_PORT.
+echo [3/4] Starting backend on :%BACKEND_PORT% ...
+start "LinkHub Server :%BACKEND_PORT%" /D "%APP%" cmd /k "%PNPM% --filter @unimsg/server start"
 
 set "READY="
 for /L %%i in (1,1,40) do (
   if not defined READY (
-    curl -sf http://127.0.0.1:3001/api/health >nul 2>nul
+    curl -sf http://127.0.0.1:%BACKEND_PORT%/api/health >nul 2>nul
     if not errorlevel 1 set "READY=1"
     if not defined READY ping -n 2 127.0.0.1 >nul
   )
@@ -185,7 +217,7 @@ echo.
 echo  ===============================================================
 echo   LinkHub is running
 echo     Web      http://127.0.0.1:5173
-echo     API      http://127.0.0.1:3001/api/health
+echo     API      http://127.0.0.1:%BACKEND_PORT%/api/health
 echo     Token    %DEMO_TOKEN%
 echo     Accounts %ACCT% credential group^(s^) in .env  ^(0 = all MOCK^)
 if defined FORCED_MOCK echo     Channel  FORCED MOCK ^(offline, no real API calls^)
@@ -298,8 +330,13 @@ rem ---------------------------------------------------------------------------
 :STOP
 rem ---------------------------------------------------------------------------
 echo.
-echo  Stopping local services on ports 3001 / 5173 ...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-NetTCPConnection -LocalPort 3001,5173 -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }"
+echo  Stopping local services on ports %BACKEND_PORT% / 5173 ...
+echo  Backend port = SERVER_PORT in unimsg-connector\.env, default 3001.
+echo  WARNING: this ends the process that OWNS each listening port. If another
+echo           program is using %BACKEND_PORT% or 5173, that program is killed
+echo           too - this is not limited to LinkHub. When unsure, just close
+echo           the "LinkHub Server" / "LinkHub Web" console windows instead.
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-NetTCPConnection -LocalPort %BACKEND_PORT%,5173 -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }"
 echo  Done. The two console windows may now be closed.
 echo.
 echo  For the Docker stack run:  start.bat stopdocker

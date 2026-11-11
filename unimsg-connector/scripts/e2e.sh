@@ -22,7 +22,8 @@ cd "$ROOT"
 echo "[e2e] 工作目录: $ROOT"
 echo "[e2e] 启动后端服务 (port=$PORT, 强制 mock 模式，与本地 .env 里的真实凭据隔离) ..."
 # 关键：e2e 必须完全离线可复现，不受 .env 中真实凭据影响；入口令牌也固定（避免用户改过 API_TOKEN 后 smoke 401）
-# smokes.py 从 LINKHUB_API_TOKEN 读取令牌，故单独 export 给同脚本后续的 python 进程export LINKHUB_API_TOKEN=dev-token
+# smoke.py 从 LINKHUB_API_TOKEN 读取令牌，故单独 export 给同脚本后续的 python 进程
+export LINKHUB_API_TOKEN=dev-token
 SERVER_PORT="$PORT" API_TOKEN=dev-token \
 FEISHU_MODE=mock DINGTALK_MODE=mock WECOM_MODE=mock MAIL_MODE=mock \
 DINGTALK_STREAM=false MAIL_ENABLED=false \
@@ -49,4 +50,14 @@ if [ "$ready" -ne 1 ]; then
 fi
 
 echo "[e2e] 服务就绪，开始冒烟..."
-"$PY" scripts/smoke.py "$BASE"
+# 先收下 smoke.py 的输出用于统计断言条数，再原样打印；失败时保留它的退出码，且不打印 PASS
+smoke_code=0
+smoke_out="$("$PY" scripts/smoke.py "$BASE")" || smoke_code=$?
+printf '%s\n' "$smoke_out"
+if [ "$smoke_code" -ne 0 ]; then
+  echo "[e2e] FAIL (exit $smoke_code)"
+  exit "$smoke_code"
+fi
+# 与 e2e.ps1 的成功信号保持一致：[e2e] PASS（grep -c 无匹配时返回 1，故兜底 true 以免 set -e 提前退出）
+passed="$(printf '%s\n' "$smoke_out" | grep -c '^PASS ' || true)"
+echo "[e2e] PASS (断言 $passed 条全部通过)"
