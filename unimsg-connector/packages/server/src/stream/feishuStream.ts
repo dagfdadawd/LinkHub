@@ -54,6 +54,11 @@ export async function startFeishuStream(svc: MessageService): Promise<FeishuStre
     domain: domainOf(baseUrl),
     loggerLevel: Lark.LoggerLevel.warn,
     autoReconnect: true,
+    // 连接生命周期回调：SDK 的 start() 立即返回（后台异步建连），
+    // 连接状态只能通过这些回调感知，不能靠 start() 的 promise。
+    onReady: () => console.log('[feishu-stream] 飞书长连接已就绪（ws client ready）'),
+    onReconnected: () => console.log('[feishu-stream] 飞书长连接断线重连成功'),
+    onError: (e: Error) => console.error('[feishu-stream] 长连接错误:', e?.message ?? e),
   });
 
   const dispatcher = new Lark.EventDispatcher({}).register({
@@ -68,19 +73,26 @@ export async function startFeishuStream(svc: MessageService): Promise<FeishuStre
         console.error('[feishu-stream] 处理消息失败:', e instanceof Error ? e.message : e);
       }
     },
+    'card.action.trigger': async (data: any) => {
+      // 卡片按钮交互：用户在"机器人单聊被 UI 禁发"场景下的可用交互通道
+      const action =
+        data?.action?.value ?? data?.event?.action?.value ?? data?.context?.open_message_id ?? 'unknown';
+      const operator =
+        data?.operator?.open_id ?? data?.event?.operator?.open_id ?? 'unknown';
+      console.log(`[feishu-stream] 收到卡片交互: operator=${operator} action=${JSON.stringify(action)}`);
+    },
   });
 
-  // start() 在连接存续期间保持 pending（不阻塞主线程）；断线由 SDK 自动重连，故 fire-and-forget
+  // start() 立即 resolve（SDK 在后台异步建连，详见 WSClient 源码），
+  // 因此它的 promise 不代表连接关闭；真正的连接状态走 onReady/onError 回调。
   wsClient
     .start({ eventDispatcher: dispatcher })
-    .then(() => console.log('[feishu-stream] 飞书长连接已正常关闭'))
     .catch((e: unknown) => {
-      console.error('[feishu-stream] 长连接异常:', e instanceof Error ? e.message : e);
+      console.error('[feishu-stream] 长连接启动失败:', e instanceof Error ? e.message : e);
     });
 
   console.log(
-    '[feishu-stream] 飞书长连接已启动：免公网回调，事件明文推送' +
-      '（需飞书后台「使用长连接接收事件」且应用已发布启用）',
+    '[feishu-stream] 飞书长连接启动指令已下发（SDK 异步建连，就绪时会打「已就绪」日志）',
   );
   return { client: wsClient, close: () => wsClient.close() };
 }
