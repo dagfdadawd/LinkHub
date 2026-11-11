@@ -1,5 +1,8 @@
-import { MsgStatus } from '../../types';
+import { MsgStatus, Platform, FILE_LIMITS } from '../../types';
 import type { UnifiedMessage, TraceEntry } from '../../types';
+import type {
+  ComposeAck, ComposeRequest, OutboundAttachment, SendCapabilities,
+} from '@unimsg/shared';
 import type {
   AccountInfo,
   DemoApi,
@@ -28,6 +31,11 @@ const DEFAULTS: Required<MockOptions> = {
   syncDelay: 800,
   enrichDelay: 650,
 };
+
+/** 附件 → 可展示元数据：Mock 演示里同样不把文件内容放进消息/回放 */
+function describeOutbound(list?: OutboundAttachment[]): Array<{ name: string; mimeType: string; size: number }> {
+  return (list ?? []).map(({ name, mimeType, size }) => ({ name, mimeType, size }));
+}
 
 /**
  * Mock 服务：内存实现 MessageApi，并通过 EmitterRealtime 模拟 WS 推送。
@@ -79,12 +87,18 @@ export class MockApi implements DemoApi {
     return this.messages.get(id);
   }
 
-  async reply(id: string, text: string): Promise<ReplyAck> {
+  async reply(id: string, text: string, attachments?: OutboundAttachment[]): Promise<ReplyAck> {
     const cur = this.messages.get(id);
     if (!cur) throw new Error('message not found');
     await this.wait();
 
-    this.patch(id, { status: MsgStatus.PROCESSING, reply: text }, 'processing');
+    const info = describeOutbound(attachments);
+    this.patch(
+      id,
+      { status: MsgStatus.PROCESSING, reply: text, ...(info.length > 0 ? { attachments: info } : {}) },
+      'processing',
+      info.length > 0 ? `带 ${info.length} 个附件` : undefined,
+    );
     const replied = this.patch(id, { status: MsgStatus.REPLIED, reply: text }, 'replied');
 
     const shouldFail = this.failNextSend;
@@ -112,6 +126,71 @@ export class MockApi implements DemoApi {
     }, this.options.sendDelay);
 
     return { message: replied, taskId: id };
+  }
+
+  /**
+   * 主动向指定平台发送（Mock 版）。
+   * 与真实后端保持一致：新建一条消息、写全链路日志、异步推进 sent/synced，
+   * 因此纯前端演示里「新建发送」同样能走通闭环并回放。
+   */
+  async compose(req: ComposeRequest): Promise<ComposeAck> {
+    await this.wait();
+    this.seq += 1;
+    const now = new Date().toISOString();
+    const traceId = `demo-compose-${Date.now().toString(16)}-${String(this.seq).padStart(4, '0')}`;
+    const info = describeOutbound(req.attachments);
+    const display = req.text || `[附件] ${info.map((a) => a.name).join(', ')}`;
+    const message: UnifiedMessage = {
+      traceId,
+      platform: req.platform,
+      externalId: `compose:${traceId}`,
+      sender: { id: 'linkhub', name: 'LinkHub 统一入口' },
+      conversation: { id: req.conversationId || 'mock-conversation', type: req.conversationType ?? 'group' },
+      type: 'text',
+      body: display,
+      reply: req.text,
+      ...(info.length > 0 ? { attachments: info } : {}),
+      status: MsgStatus.RECEIVED,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.messages.set(traceId, message);
+    this.traces.set(traceId, []);
+    this.metrics.received += 1;
+    this.realtime.emit({ type: 'message.received', data: message });
+    this.patch(traceId, { status: MsgStatus.PROCESSING }, 'processing');
+    const replied = this.patch(traceId, { status: MsgStatus.REPLIED }, 'replied');
+
+    window.setTimeout(() => {
+      this.patch(
+        traceId,
+        { status: MsgStatus.SENT, delivery: { mode: 'mock', at: new Date().toISOString() } },
+        'sent',
+        '模拟发送（未调用真实平台）',
+      );
+      window.setTimeout(() => {
+        this.patch(traceId, { status: MsgStatus.SYNCED }, 'synced');
+        this.metrics.sent += 1;
+        this.metrics.sentMock = (this.metrics.sentMock ?? 0) + 1;
+      }, this.options.syncDelay);
+    }, this.options.sendDelay);
+
+    return { message: replied, taskId: traceId };
+  }
+
+  async capabilities(): Promise<SendCapabilities[]> {
+    await this.wait();
+    return Object.values(Platform).map((platform) => ({
+      platform,
+      mode: 'mock' as const,
+      text: true,
+      file: true,
+      maxFiles: FILE_LIMITS.maxFiles,
+      maxFileBytes: FILE_LIMITS.maxFileBytes,
+      ...(platform === Platform.DINGTALK
+        ? { note: '钉钉机器人发送文件需要媒体上传权限；Mock 通道可完整演示' }
+        : {}),
+    }));
   }
 
   async markDone(id: string): Promise<UnifiedMessage> {

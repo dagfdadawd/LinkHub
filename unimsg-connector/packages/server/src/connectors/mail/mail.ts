@@ -7,12 +7,14 @@
  */
 import { randomUUID } from 'node:crypto';
 import {
-  Platform, MsgStatus, UnifiedMessage, PlatformConnector, type SendResult,
+  Platform, MsgStatus, UnifiedMessage, PlatformConnector,
+  type SendResult, type OutboundAttachment, type AttachmentInfo,
 } from '@unimsg/shared';
 import { config, type MailAccount } from '../../config';
 import { genTraceId, mockSend, verifyMock, inferType, inferDueAt, isMock, assertRealSendable } from '../base';
 import { buildMail, type ParsedMessage } from './mime';
 import { sendMail } from './smtpClient';
+import { decodeAttachment, describeAttachments } from '../../services/outbound';
 
 /** 正文入库上限：邮件可能很长，中枢与 LLM 只需要前面的要点 */
 const BODY_LIMIT = 2000;
@@ -31,6 +33,8 @@ export interface MailEnvelope {
   subject: string;
   text: string;
   inReplyTo: string;
+  /** 附件元数据（Mock 发送记录用，绝不含文件内容） */
+  attachments?: AttachmentInfo[];
 }
 
 export function findAccount(key: string): MailAccount {
@@ -79,9 +83,18 @@ export function convert(msg: UnifiedMessage): MailEnvelope {
   };
 }
 
-export async function send(msg: UnifiedMessage): Promise<SendResult> {
+/**
+ * 发送：文本 + 任意数量附件合并成一封 multipart/mixed 邮件，一次 SMTP 投递。
+ * 附件内容从内存 Buffer 直接编码进 MIME，不落盘、不写日志。
+ */
+export async function send(msg: UnifiedMessage, attachments: OutboundAttachment[] = []): Promise<SendResult> {
   const envelope = convert(msg);
-  if (isMock(Platform.MAIL)) return mockSend(Platform.MAIL, envelope);
+  if (isMock(Platform.MAIL)) {
+    return mockSend(
+      Platform.MAIL,
+      attachments.length > 0 ? { ...envelope, attachments: describeAttachments(attachments) } : envelope,
+    );
+  }
   assertRealSendable(Platform.MAIL);
   if (!envelope.to) throw new Error('邮箱真实回写缺少收件人（conversation.id）');
 
@@ -89,6 +102,15 @@ export async function send(msg: UnifiedMessage): Promise<SendResult> {
   const raw = buildMail(account.address, envelope.to, envelope.subject, envelope.text, {
     inReplyTo: envelope.inReplyTo,
     messageId: `${randomUUID()}@linkhub.local`,
+    ...(attachments.length > 0
+      ? {
+          attachments: attachments.map((a) => ({
+            name: a.name,
+            mimeType: a.mimeType,
+            contentBase64: decodeAttachment(a).toString('base64'),
+          })),
+        }
+      : {}),
   });
   const receipt = await sendMail(account, envelope.to, raw);
   return { ok: true, mode: 'real', platformReply: receipt };

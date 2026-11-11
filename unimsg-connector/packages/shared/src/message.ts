@@ -55,6 +55,75 @@ export interface SendResult {
   mode: DeliveryMode;
 }
 
+/**
+ * 出站附件体积上限（赛题 A 功能需求「发送文本消息、文件等」）。
+ * 前后端共用同一份常量：前端在选文件时就拦截，服务端在解析前再拒一次，
+ * 避免两层阈值漂移，也避免把超大 base64 打进请求体。
+ */
+export const FILE_LIMITS = {
+  maxFiles: 5,
+  maxFileBytes: 10 * 1024 * 1024,
+  maxTotalBytes: 20 * 1024 * 1024,
+} as const;
+
+/**
+ * 出站附件（统一入口 → 平台）。
+ * `contentBase64` 只在一次请求的在途生命周期里存在：
+ * 服务端校验并投递后立即丢弃，绝不写入消息、闭环日志、WS 广播或 sentBox 日志。
+ */
+export interface OutboundAttachment {
+  /** 原始文件名（含扩展名） */
+  name: string;
+  /** MIME 类型，如 application/pdf */
+  mimeType: string;
+  /** 原始字节数；服务端会用解码后的实际长度复核，防伪造 */
+  size: number;
+  /** 文件内容的 base64（不含 data: 前缀） */
+  contentBase64: string;
+}
+
+/**
+ * 附件的「可展示元数据」：不含文件内容，安全入库 / 广播 / 回放。
+ * 有附件的消息在收件箱、详情页与全链路回放里都能看到文件名与大小。
+ */
+export interface AttachmentInfo {
+  name: string;
+  mimeType: string;
+  size: number;
+}
+
+/** 平台发送能力：前端据此放开/禁用文件按钮，并如实展示平台边界 */
+export interface SendCapabilities {
+  platform: Platform;
+  /** 当前实际通道：真实接口 / 本地模拟 */
+  mode: DeliveryMode;
+  text: boolean;
+  file: boolean;
+  maxFiles: number;
+  maxFileBytes: number;
+  /** 平台限制说明（如钉钉机器人需媒体上传权限） */
+  note?: string;
+}
+
+/**
+ * 从统一入口「主动」向指定平台发送请求（赛题 A 功能需求 3）。
+ * 与 reply 的区别：不依赖先收到某条消息，可指定平台 + 目标会话 + 文本 + 文件。
+ */
+export interface ComposeRequest {
+  platform: Platform;
+  /** 目标会话：飞书 chat_id / 钉钉 openConversationId / 企微 userid / 邮箱收件地址 */
+  conversationId?: string;
+  conversationType?: 'group' | 'p2p';
+  text: string;
+  attachments?: OutboundAttachment[];
+}
+
+/** 主动发送回执：与 reply 的 202 响应同构，便于前端复用同一套状态推进 */
+export interface ComposeAck {
+  message: UnifiedMessage;
+  taskId: string;
+}
+
 /** 会话（真实回写必须知道发回哪里） */
 export interface Conversation {
   id: string;
@@ -94,6 +163,11 @@ export interface UnifiedMessage {
   mailMeta?: { account: string; inReplyTo: string; subject: string };
   /** 回写投递方式（成功后写入；Mock 模式也如实记录，便于前端标注"模拟发送"） */
   delivery?: DeliveryInfo;
+  /**
+   * 本次发送/接收携带的附件元数据（只有文件名、类型、大小，绝不含文件内容）。
+   * 让「发送文件」这一步在统一入口与全链路回放里同样可追踪。
+   */
+  attachments?: AttachmentInfo[];
 }
 
 /**
@@ -109,8 +183,12 @@ export interface PlatformConnector {
   challenge?(payload: unknown): unknown | undefined;
   /** 外部事件 → 统一消息 */
   receive(raw: unknown): UnifiedMessage;
-  /** 统一消息 → 平台（真实发送 / Mock 模拟发送），结果必须带上是哪条通道 */
-  send(msg: UnifiedMessage): Promise<SendResult>;
+  /**
+   * 统一消息 → 平台（真实发送 / Mock 模拟发送），结果必须带上是哪条通道。
+   * `attachments` 为可选出站附件：文本与文件可同一笔发送，各平台适配器自行
+   * 完成「上传媒体 → 发送文件消息」的格式转换；不支持时显式报错，绝不静默丢文件。
+   */
+  send(msg: UnifiedMessage, attachments?: OutboundAttachment[]): Promise<SendResult>;
   /** 统一消息 → 平台外部格式（回写前的格式转换） */
   convert(msg: UnifiedMessage): unknown;
 }
@@ -121,7 +199,9 @@ export interface PlatformConnector {
  */
 export interface MessageService {
   list(filter?: { platform?: Platform; status?: MsgStatus }): UnifiedMessage[];
-  reply(id: string, text: string): Promise<UnifiedMessage>;
+  reply(id: string, text: string, attachments?: OutboundAttachment[]): Promise<ComposeAck>;
+  /** 从统一入口主动向指定平台发送文本 / 文件，并把全过程纳入同一条闭环 trace */
+  compose(req: ComposeRequest): Promise<ComposeAck>;
   markDone(id: string): Promise<void>;
   getTrace(traceId: string): UnifiedMessage[];
 }

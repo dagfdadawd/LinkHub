@@ -10,6 +10,9 @@
  * 筛选约定：后端 /api/messages 仅支持 platform/status 两个查询参数，
  * type / keyword / onlyReview 在本地补齐（与 AppStore 的本地过滤一致）。
  */
+import type {
+  ComposeAck, ComposeRequest, OutboundAttachment, SendCapabilities,
+} from '@unimsg/shared';
 import type { TraceEntry, UnifiedMessage } from '../types';
 import type {
   AccountInfo,
@@ -77,13 +80,32 @@ export class HttpApi implements MessageApi {
     }
   }
 
-  async reply(id: string, text: string): Promise<ReplyAck> {
+  async reply(id: string, text: string, attachments?: OutboundAttachment[]): Promise<ReplyAck> {
     // 后端返回 202 { ok, message, taskId }，入队即返回，sent/synced 走 WS 推送
     const body = await this.request<{ message: UnifiedMessage; taskId: string }>(
       `/api/messages/${encodeURIComponent(id)}/reply`,
-      { method: 'POST', body: JSON.stringify({ text }) },
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          text,
+          ...(attachments && attachments.length > 0 ? { attachments } : {}),
+        }),
+      },
     );
     return { message: body.message, taskId: body.taskId };
+  }
+
+  async compose(req: ComposeRequest): Promise<ComposeAck> {
+    const body = await this.request<{ message: UnifiedMessage; taskId: string }>(
+      '/api/messages/compose',
+      { method: 'POST', body: JSON.stringify(req) },
+    );
+    return { message: body.message, taskId: body.taskId };
+  }
+
+  async capabilities(): Promise<SendCapabilities[]> {
+    const body = await this.request<{ data?: SendCapabilities[] }>('/api/capabilities');
+    return body.data ?? [];
   }
 
   async markDone(id: string): Promise<UnifiedMessage> {

@@ -4,6 +4,8 @@
  * 启动体验相关（CORS 白名单 / 监听错误人话提示）也放在这里：
  * 都是无副作用的纯函数，index.ts 与单测共用，避免为了测试去 import 有启动副作用的入口文件。
  */
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 import express, { type ErrorRequestHandler, type RequestHandler } from 'express';
 import cors from 'cors';
 import { MessageService } from './services/message';
@@ -11,6 +13,7 @@ import { healthRouter } from './routes/health';
 import { webhookRouter } from './routes/webhook';
 import { messagesRouter } from './routes/messages';
 import { apiAuth } from './middlewares/auth';
+import { config } from './config';
 
 /**
  * 解析 CORS_ORIGINS（逗号分隔）。不填/全是空白 → null，表示保持 `*` 全放行（兼容本地演示）。
@@ -42,18 +45,20 @@ function corsWhitelistGuard(origins: string[] | null): RequestHandler {
 }
 
 /** 请求体解析失败（畸形 JSON / 超大）时给可读 JSON，而不是 Express 默认的 HTML 报错页 */
-const bodyErrorHandler: ErrorRequestHandler = (err, _req, res, next) => {
-  const type = (err as { type?: string } | undefined)?.type;
-  if (type === 'entity.parse.failed') {
-    res.status(400).json({ ok: false, error: '请求体不是合法 JSON（检查 Content-Type 与 JSON 语法）' });
-    return;
-  }
-  if (type === 'entity.too.large') {
-    res.status(413).json({ ok: false, error: '请求体超过 2MB 限制' });
-    return;
-  }
-  next(err);
-};
+function bodyErrorHandler(limitMb: number): ErrorRequestHandler {
+  return (err, _req, res, next) => {
+    const type = (err as { type?: string } | undefined)?.type;
+    if (type === 'entity.parse.failed') {
+      res.status(400).json({ ok: false, error: '请求体不是合法 JSON（检查 Content-Type 与 JSON 语法）' });
+      return;
+    }
+    if (type === 'entity.too.large') {
+      res.status(413).json({ ok: false, error: `请求体超过 ${limitMb}MB 限制（可减小附件或调大 MAX_UPLOAD_MB）` });
+      return;
+    }
+    next(err);
+  };
+}
 
 export interface CreateAppOptions {
   /**
@@ -61,25 +66,42 @@ export interface CreateAppOptions {
    * 不传 = 读取环境变量 CORS_ORIGINS（不填等价 null）。
    */
   corsOrigins?: string[] | null;
+  /** JSON 请求体上限（MB），默认取 config.maxUploadMb，覆盖 base64 附件开销 */
+  jsonLimitMb?: number;
+  /** 前端构建产物目录：传入后同源托管静态资源与 SPA 路由，实现单端口独立部署 */
+  webDist?: string;
 }
 
 export function createApp(svc: MessageService, options: CreateAppOptions = {}) {
   const origins = options.corsOrigins !== undefined
     ? options.corsOrigins
     : parseCorsOrigins(process.env.CORS_ORIGINS);
+  const limitMb = options.jsonLimitMb ?? config.maxUploadMb;
+  const webDist = options.webDist ?? config.webDist;
 
   const app = express();
   app.use(corsWhitelistGuard(origins));
   // 白名单模式只回显名单内的 Origin；未配置则沿用 `*`（本地演示/旧调用方零改动）
   app.use(cors(origins ? { origin: origins } : {}));
-  app.use(express.json({ limit: '2mb' }));
+  app.use(express.json({ limit: `${limitMb}mb` }));
 
   app.use('/api', healthRouter(svc)); // 公共
   app.use('/api', webhookRouter(svc)); // 平台验签
   app.use('/api', apiAuth, messagesRouter(svc)); // Bearer 鉴权
 
+  // 同源部署（Docker 单容器）：server 直接托管前端构建产物 + SPA 回退。
+  // 只在 WEB_DIST 指向真实 index.html 时启用，本地 dev 走 Vite 5173 不受影响。
+  if (webDist && existsSync(resolve(webDist, 'index.html'))) {
+    const dist = resolve(webDist);
+    app.use(express.static(dist, { index: false }));
+    app.get('*', (req, res, next) => {
+      if (req.path.startsWith('/api') || req.path.startsWith('/ws')) return next();
+      res.sendFile(resolve(dist, 'index.html'));
+    });
+  }
+
   // 必须挂在最后：才能兜住 app 级 json 与路由级 text 解析器的报错
-  app.use(bodyErrorHandler);
+  app.use(bodyErrorHandler(limitMb));
 
   return app;
 }

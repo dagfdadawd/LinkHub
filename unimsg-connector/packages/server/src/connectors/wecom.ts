@@ -14,13 +14,15 @@
  * 只要配置了 Token/EncodingAESKey，无论 Mock 与否都按真实规则严格验签。
  */
 import {
-  Platform, MsgStatus, UnifiedMessage, PlatformConnector, type SendResult,
+  Platform, MsgStatus, UnifiedMessage, PlatformConnector,
+  type SendResult, type OutboundAttachment,
 } from '@unimsg/shared';
 import { config } from '../config';
 import { genTraceId, mockSend, verifyMock, inferType, inferDueAt, isMock, assertRealSendable } from './base';
 import { safeEqual, wecomDecrypt, wecomEncrypt, wecomSign } from './crypto';
 import { buildXml, parseXml, type XmlObject } from './wecomXml';
-import { postJson, wecomAccessToken } from './real';
+import { postJson, postMultipart, wecomAccessToken } from './real';
+import { decodeAttachment, describeAttachments, isOutboundComposed } from '../services/outbound';
 
 const SEND_PATH = '/cgi-bin/message/send';
 /** 回调时间戳容忍窗口（防重放），与钉钉一致取 1 小时 */
@@ -145,7 +147,8 @@ export function receive(raw: unknown): UnifiedMessage {
 export function convert(msg: UnifiedMessage): unknown {
   const { agentId } = config.platforms.wecom;
   return {
-    touser: msg.sender.id,
+    // 主动发送时目标会话是用户填写的 userid；入站回复仍回给原发件人
+    touser: isOutboundComposed(msg) ? (msg.conversation?.id ?? msg.sender.id) : msg.sender.id,
     msgtype: 'text',
     ...(agentId ? { agentid: Number(agentId) } : {}),
     text: { content: msg.reply ?? msg.body },
@@ -169,10 +172,18 @@ export function encryptReply(
   return buildXml({ Encrypt: encrypt, MsgSignature: signature, TimeStamp: timestamp, Nonce: nonce });
 }
 
-export async function send(msg: UnifiedMessage): Promise<SendResult> {
+/**
+ * 发送：文本沿用 text 应用消息；文件走「media/upload → file 应用消息」。
+ * 企微文件消息要求 media_id，因此附件必须先上传成功；上传失败整笔报错进死信队列。
+ */
+export async function send(msg: UnifiedMessage, attachments: OutboundAttachment[] = []): Promise<SendResult> {
+  const text = msg.reply ?? msg.body;
   const payload = convert(msg) as any;
   if (isMock(Platform.WECOM)) {
-    return mockSend(Platform.WECOM, payload);
+    return mockSend(
+      Platform.WECOM,
+      attachments.length > 0 ? { ...payload, attachments: describeAttachments(attachments) } : payload,
+    );
   }
   assertRealSendable(Platform.WECOM);
 
@@ -184,13 +195,42 @@ export async function send(msg: UnifiedMessage): Promise<SendResult> {
   }
 
   const token = await wecomAccessToken();
-  const url = `${config.platforms.wecom.baseUrl}${SEND_PATH}?access_token=${encodeURIComponent(token)}`;
-  const data = await postJson(url, payload);
-  if (data.errcode !== 0) {
-    const invalid = data.invaliduser ? ` invaliduser=${data.invaliduser}` : '';
-    throw new Error(`企业微信发送失败: ${data.errcode ?? 'unknown'} ${data.errmsg ?? ''}${invalid}`);
+  const base = config.platforms.wecom.baseUrl;
+  const url = `${base}${SEND_PATH}?access_token=${encodeURIComponent(token)}`;
+  const receipts: string[] = [];
+
+  if (text) {
+    const data = await postJson(url, payload);
+    if (data.errcode !== 0) {
+      const invalid = data.invaliduser ? ` invaliduser=${data.invaliduser}` : '';
+      throw new Error(`企业微信发送失败: ${data.errcode ?? 'unknown'} ${data.errmsg ?? ''}${invalid}`);
+    }
+    if (data.msgid) receipts.push(String(data.msgid));
   }
-  return { ok: true, mode: 'real', platformReply: data.msgid ? String(data.msgid) : undefined };
+
+  for (const a of attachments) {
+    const uploaded = await postMultipart(
+      `${base}/cgi-bin/media/upload?access_token=${encodeURIComponent(token)}&type=file`,
+      [],
+      { field: 'media', filename: a.name, contentType: a.mimeType, content: decodeAttachment(a) },
+    );
+    if (uploaded.errcode !== 0 || !uploaded.media_id) {
+      throw new Error(`企业微信媒体上传失败: ${uploaded.errcode ?? 'unknown'} ${uploaded.errmsg ?? ''}`);
+    }
+    const data = await postJson(url, {
+      touser: payload.touser,
+      msgtype: 'file',
+      ...(agentId ? { agentid: Number(agentId) } : {}),
+      file: { media_id: uploaded.media_id },
+      safe: 0,
+    });
+    if (data.errcode !== 0) {
+      throw new Error(`企业微信文件消息发送失败: ${data.errcode ?? 'unknown'} ${data.errmsg ?? ''}`);
+    }
+    if (data.msgid) receipts.push(String(data.msgid));
+  }
+
+  return { ok: true, mode: 'real', platformReply: receipts.join(',') || undefined };
 }
 
 export const wecomConnector: PlatformConnector = {

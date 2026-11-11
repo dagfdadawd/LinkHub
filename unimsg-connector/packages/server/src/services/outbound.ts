@@ -1,0 +1,166 @@
+/**
+ * 出站消息公共层（赛题 A 功能需求 3「从统一入口向指定平台发送文本消息、文件等」）。
+ *
+ * 设计要点：
+ *  1. 所有不可信请求体先在这里收敛：平台、目标会话、文本、附件都做白名单校验；
+ *  2. 附件只允许 base64 在途传递，`contentBase64` 绝不入库 / 写日志 / WS 广播，
+ *     对外只暴露 `AttachmentInfo`（文件名 + 类型 + 大小）；
+ *  3. 声明的大小必须与解码后的实际字节数一致，防伪造、防超大 payload 打爆内存；
+ *  4. 平台能力集中声明，前端据此决定文件按钮可用性，不靠前端硬编码平台差异。
+ */
+import {
+  Platform, FILE_LIMITS,
+  type OutboundAttachment,
+  type AttachmentInfo,
+  type SendCapabilities,
+  type ComposeRequest,
+  type UnifiedMessage,
+} from '@unimsg/shared';
+import { modeOf } from '../config';
+
+/** 附件/主动发送请求不合法：路由层据此回 400，而不是混进 500 或静默丢文件 */
+export class InvalidOutboundRequest extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'InvalidOutboundRequest';
+  }
+}
+
+const BASE64_RE = /^[A-Za-z0-9+/]*={0,2}$/;
+const SAFE_NAME_RE = /^[^\\/\x00-\x1f]{1,255}$/;
+const PLATFORMS = new Set<string>(Object.values(Platform));
+
+/** 解码并复核附件：返回文件内容 Buffer，仅供本次平台投递使用 */
+export function decodeAttachment(a: OutboundAttachment): Buffer {
+  const b64 = a.contentBase64;
+  if (typeof b64 !== 'string' || b64.length === 0 || b64.length % 4 !== 0 || !BASE64_RE.test(b64)) {
+    throw new InvalidOutboundRequest(`附件「${a.name}」的 base64 内容不合法`);
+  }
+  const buf = Buffer.from(b64, 'base64');
+  if (buf.byteLength !== a.size) {
+    throw new InvalidOutboundRequest(
+      `附件「${a.name}」声明大小 ${a.size} 字节，实际解码为 ${buf.byteLength} 字节（拒绝伪造大小）`,
+    );
+  }
+  return buf;
+}
+
+/** 请求体里的附件数组 → 合规附件数组（含解码复核） */
+export function normalizeAttachments(raw: unknown): OutboundAttachment[] {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) throw new InvalidOutboundRequest('attachments 必须是数组');
+  if (raw.length > FILE_LIMITS.maxFiles) {
+    throw new InvalidOutboundRequest(`最多只能带 ${FILE_LIMITS.maxFiles} 个附件，当前 ${raw.length} 个`);
+  }
+
+  let total = 0;
+  const out = raw.map((item, i) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      throw new InvalidOutboundRequest(`第 ${i + 1} 个附件不是合法对象`);
+    }
+    const v = item as Record<string, unknown>;
+    const { name, mimeType, size, contentBase64 } = v;
+
+    if (typeof name !== 'string' || !SAFE_NAME_RE.test(name.trim())) {
+      throw new InvalidOutboundRequest(`第 ${i + 1} 个附件文件名非法（不能含路径分隔符/控制字符，最长 255 字符）`);
+    }
+    if (typeof mimeType !== 'string' || !mimeType.trim() || mimeType.length > 128) {
+      throw new InvalidOutboundRequest(`附件「${name}」缺少合法的 MIME 类型`);
+    }
+    if (typeof size !== 'number' || !Number.isInteger(size) || size <= 0) {
+      throw new InvalidOutboundRequest(`附件「${name}」的 size 必须是正整数`);
+    }
+    if (size > FILE_LIMITS.maxFileBytes) {
+      throw new InvalidOutboundRequest(
+        `附件「${name}」超过单文件上限 ${Math.floor(FILE_LIMITS.maxFileBytes / 1024 / 1024)}MB`,
+      );
+    }
+    total += size;
+    if (total > FILE_LIMITS.maxTotalBytes) {
+      throw new InvalidOutboundRequest(
+        `附件总大小超过 ${Math.floor(FILE_LIMITS.maxTotalBytes / 1024 / 1024)}MB 上限`,
+      );
+    }
+
+    const normalized: OutboundAttachment = {
+      name: name.trim(),
+      mimeType: mimeType.trim(),
+      size,
+      contentBase64: typeof contentBase64 === 'string' ? contentBase64 : '',
+    };
+    decodeAttachment(normalized);
+    return normalized;
+  });
+  return out;
+}
+
+/** 只保留可安全持久化 / 广播的附件元数据 */
+export function describeAttachments(list: OutboundAttachment[]): AttachmentInfo[] {
+  return list.map(({ name, mimeType, size }) => ({ name, mimeType, size }));
+}
+
+/**
+ * 主动发送请求体归一化。
+ * 允许「只有文本」「只有文件」「文本 + 文件」，但两者不能同时为空。
+ */
+export function normalizeCompose(raw: unknown): ComposeRequest {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new InvalidOutboundRequest('请求体必须是对象');
+  }
+  const v = raw as Record<string, unknown>;
+  const platform = v.platform;
+  if (typeof platform !== 'string' || !PLATFORMS.has(platform)) {
+    throw new InvalidOutboundRequest(`platform 必须是 ${[...PLATFORMS].join(' / ')} 之一`);
+  }
+
+  const text = typeof v.text === 'string' ? v.text.trim() : '';
+  if (text.length > 4000) throw new InvalidOutboundRequest('文本消息最长 4000 字符');
+
+  const attachments = normalizeAttachments(v.attachments);
+  if (!text && attachments.length === 0) {
+    throw new InvalidOutboundRequest('文本与附件不能同时为空');
+  }
+
+  const conversationId = typeof v.conversationId === 'string' ? v.conversationId.trim() : '';
+  if (conversationId.length > 512) throw new InvalidOutboundRequest('conversationId 最长 512 字符');
+
+  const conversationType = v.conversationType === 'p2p' || v.conversationType === 'group'
+    ? v.conversationType
+    : undefined;
+
+  return {
+    platform: platform as Platform,
+    ...(conversationId ? { conversationId } : {}),
+    ...(conversationType ? { conversationType } : {}),
+    text,
+    ...(attachments.length > 0 ? { attachments } : {}),
+  };
+}
+
+/**
+ * 是否为「统一入口主动发起」的消息。
+ * 入站消息的 sender.id 是发件人；主动发送时目标会话才是收件人，
+ * 企微/钉钉的适配器据此切换 touser / userIds，避免把 'linkhub' 当收件人。
+ */
+export function isOutboundComposed(msg: UnifiedMessage): boolean {
+  return msg.externalId.startsWith('compose:') || msg.externalId.includes(':compose:');
+}
+
+/** 平台文件通道说明：如实写出真实接口侧的边界，避免演示时被误读为「平台已支持」 */
+const FILE_NOTES: Partial<Record<Platform, string>> = {
+  [Platform.DINGTALK]: '钉钉机器人发送文件需要应用具备媒体上传权限；Mock 通道可完整演示文件闭环',
+  [Platform.MAIL]: '邮箱文件以标准 MIME multipart/mixed 附件发送，大小受服务商限制',
+};
+
+/** 各平台当前发送能力（含本次实际通道，供前端展示与按钮禁用判断） */
+export function sendCapabilities(): SendCapabilities[] {
+  return Object.values(Platform).map((platform) => ({
+    platform,
+    mode: modeOf(platform),
+    text: true,
+    file: true,
+    maxFiles: FILE_LIMITS.maxFiles,
+    maxFileBytes: FILE_LIMITS.maxFileBytes,
+    ...(FILE_NOTES[platform] ? { note: FILE_NOTES[platform] } : {}),
+  }));
+}

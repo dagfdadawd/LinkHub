@@ -8,10 +8,12 @@ import {
   HistoryOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
+  PaperClipOutlined,
   SendOutlined,
 } from '@ant-design/icons';
 import { MsgStatus } from '../../types';
-import type { UnifiedMessage } from '../../types';
+import type { OutboundAttachment, UnifiedMessage } from '../../types';
+import { formatBytes } from '../../utils/attachments';
 import { store } from '../../store';
 import { TYPE_LABEL, PLATFORM_META, deliveryLabel, conversationLabel, formatDateTime, formatRelative, shortTrace } from '../../utils/format';
 import { AvatarBadge } from '../../components/AvatarBadge';
@@ -48,13 +50,17 @@ export function DetailPanel({
   // 投递方式：Mock 必须如实标注，不能显示成真实平台已收到
   const delivery = deliveryLabel(message.delivery);
 
-  async function handleSend() {
+  async function handleSend(attachments: OutboundAttachment[] = []) {
     const content = text.trim();
-    if (!content) return;
+    if (!content && attachments.length === 0) return;
     setSending(true);
     try {
-      await store.reply(message.traceId, content);
-      toast.success('已提交回写，状态将实时更新');
+      await store.reply(message.traceId, content, attachments);
+      toast.success(
+        attachments.length > 0
+          ? `已提交回写（含 ${attachments.length} 个附件），状态将实时更新`
+          : '已提交回写，状态将实时更新',
+      );
     } catch {
       toast.error('回复失败，请重试');
     } finally {
@@ -161,6 +167,15 @@ export function DetailPanel({
         <section className="detail__section">
           <div className="section-label">消息内容</div>
           <div className="message-body">{message.body}</div>
+          {message.attachments && message.attachments.length > 0 && (
+            <div className="message-attachments" aria-label="附件">
+              {message.attachments.map((a, i) => (
+                <Tag key={`${a.name}-${i}`} icon={<PaperClipOutlined />}>
+                  {a.name} · {formatBytes(a.size)}
+                </Tag>
+              ))}
+            </div>
+          )}
           {message.reply && (
             <div className="message-reply">
               <span className="message-reply__label">

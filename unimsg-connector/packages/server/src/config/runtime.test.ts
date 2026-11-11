@@ -17,7 +17,7 @@ import {
 
 function creds(): PlatformCredentials {
   return {
-    feishu: { appId: '', appSecret: '', verifyToken: '', encryptKey: '', baseUrl: 'https://open.feishu.cn' },
+    feishu: { appId: '', appSecret: '', verifyToken: '', encryptKey: '', stream: false, baseUrl: 'https://open.feishu.cn' },
     dingtalk: { appKey: '', appSecret: '', robotCode: '', aesToken: '', aesKey: '', stream: false, baseUrl: 'https://api.dingtalk.com' },
     wecom: { corpId: '', agentId: '', secret: '', token: '', aesKey: '', baseUrl: 'https://qyapi.weixin.qq.com' },
   };

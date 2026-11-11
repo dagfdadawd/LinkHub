@@ -17,10 +17,12 @@ LinkHub 把飞书、钉钉、企业微信、邮箱的消息与待办收拢到一
 
 | 你想做什么 | 直接怎么做 | 预计耗时 | 详细步骤 |
 |---|---|---|---|
+| **Windows 上只想双击看效果** | 双击仓库根目录的 `start.bat`，自动起后端 + 前端并打开浏览器 | 约 1 分钟 | 下文「Windows 一键启动」 |
 | **我只想看效果**（零账号、零平台配置） | `cd unimsg-connector` → `corepack pnpm install` → `pnpm e2e` → 起后端+前端 | 约 5 分钟 | [docs/quickstart.md](docs/quickstart.md) |
 | **我要换成自己的账号**（飞书 / 钉钉 / 企微 / 邮箱任选） | 复制 `.env.example` 为 `.env`，只填目标平台 → `pnpm run doctor` → 启动 | 约 10 分钟 | 下文「换一个账号，只要 3 步」+ [docs/swap-accounts.md](docs/swap-accounts.md) |
 | **我要现场演示 / 录视频** | 按分镜脚本走，含演示前 10 分钟检查清单与纯 Mock 兜底 | 5–8 分钟 | [docs/demo-script.md](docs/demo-script.md) |
 | **我要交付/打包给评审** | `pnpm run deliver`（git archive，自动排除 `.env`/日志/node_modules）+ 打包后自检 | 约 5 分钟 | [docs/delivery-checklist.md](docs/delivery-checklist.md) |
+| **我要在纯净服务器独立部署** | `cd unimsg-connector && docker compose up -d --build` → 打开 `http://<IP>:3001` | 约 5 分钟 | [docs/deploy.md](docs/deploy.md) |
 
 > 新手常见卡点（pnpm 未装、端口占用、`.env` 拼错、401、代理超时等）有一张「现象 → 原因 → 一句话解决」表，见 [docs/quickstart.md](docs/quickstart.md#常见卡点一张表)。
 > 完整风险清单（按严重度排序、含修复状态）见 [docs/risk-register.md](docs/risk-register.md)。
@@ -124,7 +126,8 @@ MAIL_MODE=real
 | 平台 | 配置状态 | 收 | 发 | 实际通道 / UI 标注 |
 |---|---|---|---|---|
 | 飞书 | 什么都没填 | ✗ | ✗ | `mock`；账号页「未配置 / Mock 模拟」，回写标「模拟发送」 |
-| 飞书 | 只有 App ID + Secret（缺 Verification Token） | ✗ | ✓ | `real`；警告「只能发不能收」，收到回调会验签失败 |
+| 飞书 | 只有 App ID + Secret（缺 Verification Token，且未开长连接） | ✗ | ✓ | `real`；警告「只能发不能收」，收到回调会验签失败 |
+| 飞书 | App ID + Secret + `FEISHU_STREAM=true`（长连接，免公网） | ✓ | ✓ | `real`；长连接明文推送，无需 Verification Token / 公网回调 |
 | 飞书 | App ID + Secret + Verification Token（可选 Encrypt Key） | ✓ | ✓ | `real`；若租户被 21001 拦，`doctor` 会 FAIL 并给建议 |
 | 钉钉 | 什么都没填 | ✗ | ✗ | `mock`；账号页「未配置 / Mock 模拟」 |
 | 钉钉 | Client ID/Secret + RobotCode（未开 Stream、无 AES） | ✗ | ✓ | `real`；警告「暂时收不到消息」 |
@@ -162,7 +165,7 @@ MAIL_MODE=real
 
 ## 功能特性（对应业务闭环五要素）
 
-- **接收**：四类数据源统一接入。飞书 Webhook（校验 Verification Token，配置 Encrypt Key 时 AES 解密，支持 `url_verification` challenge）；钉钉 **Stream 长连接**（本机免公网）或 HTTP 回调（`timestamp + HMAC` 签名 + AES 解密）；企业微信 XML 回调（SHA1 验签 + AES 解密 + GET `echostr` 握手）；邮箱 IMAP 轮询（UID 水位，首轮只立基线）。Mock 下签名带 `mock` 或 `dev*` 前缀即通过。
+- **接收**：四类数据源统一接入。飞书 **长连接（WebSocket，免公网回调，事件明文推送）** 或 Webhook（校验 Verification Token，配置 Encrypt Key 时 AES 解密，支持 `url_verification` challenge）；钉钉 **Stream 长连接**（本机免公网）或 HTTP 回调（`timestamp + HMAC` 签名 + AES 解密）；企业微信 XML 回调（SHA1 验签 + AES 解密 + GET `echostr` 握手）；邮箱 IMAP 轮询（UID 水位，首轮只立基线）。Mock 下签名带 `mock` 或 `dev*` 前缀即通过。
 - **展示**：REST 列表 + WebSocket 实时推送，按平台 / 状态筛选。
 - **处理**：直接回复、标记完成；规则 Mock 给出意图与回复草稿（真实大模型调用尚未接入）。
 - **回写**：按目标平台格式转换后异步发送，结果经 WS 推送，并写入 `delivery`。真实接口：飞书 `im/v1/messages`、钉钉机器人 `groupMessages/send` / `oToMessages/batchSend`、企微 `cgi-bin/message/send`、邮箱 SMTP（带 `In-Reply-To` 串回会话）。
@@ -208,18 +211,25 @@ received → processing → replied → sent → synced
 LinkHub-test/
 ├── README.md
 ├── LICENSE
+├── start.bat                  # Windows 一键启动（local / mock / accounts / doctor / docker / stop / stopdocker）
+├── start-docker.bat           # 双击快捷方式：等价于 start.bat docker
+├── setup-accounts.bat         # 双击快捷方式：等价于 start.bat accounts（编辑平台账号 .env）
 ├── docs/
 │   ├── quickstart.md           # 5 分钟上手（三类用户分流 + 常见卡点表）
 │   ├── swap-accounts.md        # 换账号指南：逐平台 checklist / errcode 排错 / 邮箱预设表
 │   ├── demo-script.md          # 5–8 分钟现场演示脚本（含演示前检查与纯 Mock 兜底）
 │   ├── delivery-checklist.md   # 交付/打包 checklist
+│   ├── deploy.md               # 独立部署指南（Docker 从零到一 / 离线搬运 / 数据卷）
 │   └── risk-register.md        # 用户风险台账（31 条，按 P0–P3 排序）
 ├── .github/workflows/ci.yml    # typecheck + 测试 + web build + e2e:sh
 ├── documents/                  # 设计文档（初赛精简版 / 决赛完整版）
 ├── test.photos/                # 历史冒烟截图（2026-11-02 旧版，界面已改版，仅作记录）
 └── unimsg-connector/           # pnpm monorepo 源码
-    ├── packages/shared/src/message.ts      # 前后端共享契约（含 delivery）
+    ├── Dockerfile / docker-compose.yml / .dockerignore   # 独立部署包
+    ├── packages/shared/src/message.ts      # 前后端共享契约（含 delivery / 出站附件 / compose）
     ├── packages/web/                       # 前端（React + AntD，账号页含模式标注、首启 3 步引导）
+    │   ├── src/features/compose/ComposeModal.tsx  # 新建发送：指定平台/会话 + 文本 + 附件
+    │   ├── src/utils/attachments.ts        # File → base64 出站附件、体积校验
     │   ├── src/styles/app.css               # 设计令牌（色板 / 圆角 / 字号尺阶）与全部样式
     │   ├── src/utils/ink.ts                 # 对比度计算与墨色推导（标签文字色）
     │   ├── src/utils/format.ts              # tone()：一个品牌色派生整套明暗标签色板
@@ -232,11 +242,11 @@ LinkHub-test/
     │   ├── doctor/            # 探针（probes）、报告渲染（report）、环境变量拼写检查（env-check）
     │   ├── connectors/        # 飞书 / 钉钉 / 企微 / 邮箱适配器（crypto / real 为真实接入工具）
     │   ├── core/              # 闭环日志 / 幂等 / 指标
-    │   ├── services/          # 消息中枢 / 回流 / LLM / OCR / 限流
+    │   ├── services/          # 消息中枢 / 回流 / LLM / OCR / 限流 / outbound（附件校验与能力）
     │   ├── stream/            # 钉钉 Stream 长连接 / 邮箱 IMAP 轮询器（水位持久化）
-    │   ├── routes/            # health / webhook / messages（含 /api/accounts）
+    │   ├── routes/            # health / webhook / messages（含 compose、capabilities、accounts）
     │   ├── middlewares/auth.ts
-    │   ├── db/                # 仓储 + migrations/001_init.sql
+    │   ├── db/                # 仓储（内存 + 可选文件快照）+ migrations/001_init.sql
     │   └── app.ts / index.ts / ws.ts
     ├── scripts/               # smoke.py + e2e.ps1 / e2e.sh + deliver.mjs（交付打包）
     │                          # shot.mjs（CDP 截图走查）/ push-via-api.mjs（github.com 不可达时改走 API）
@@ -246,7 +256,37 @@ LinkHub-test/
 
 ## 快速开始
 
-环境要求：Node.js ≥ 20、pnpm ≥ 9、Python 3（仅 `e2e` 冒烟脚本需要）。
+### Windows 一键启动（演示 / 评审现场最省事）
+
+`start.bat` 已放在仓库根目录，**双击即可**，不用装全局 pnpm、不用手敲命令：
+
+| 想做什么 | 操作 | 实际动作 |
+|---|---|---|
+| 本地一键启动 | 双击 `start.bat` | 自动装依赖 → 起后端 `:3001` + 前端 `:5173` → 等两者就绪 → 打开浏览器 |
+| 纯离线演示（强制 Mock） | `start.bat mock` | 同上，但四平台全部强制 Mock，不调用任何真实平台接口 |
+| 配置 / 修改平台账号 | 双击 `setup-accounts.bat`（或 `start.bat accounts`） | 已有 `.env` 原样打开、没有则从模板创建，用记事本编辑 |
+| 账号自检 | `start.bat doctor` | 只读自检：凭据 / 收发能力 / 出口公网 IP / 中文修复建议 |
+| Docker 一键启动 | 双击 `start-docker.bat`（或 `start.bat docker`） | `docker compose up -d --build`，同源访问 `http://127.0.0.1:3001` |
+| 停止本地服务 | `start.bat stop` | 按 3001 / 5173 端口精确结束进程（不会误杀其他 Node 进程） |
+| 停止 Docker | `start.bat stopdocker` | `docker compose down`，数据卷保留 |
+
+脚本自动处理：Node ≥ 20 检测、无全局 pnpm 时回退 `corepack pnpm`、首次运行 `pnpm install --frozen-lockfile`、**统计 `.env` 里非空凭据组数并打印账号状态**（0 组就明确提示「全 Mock」，不会再出现「以为配了其实没配」）、每次启动重写 `packages/web/.env` 让 `VITE_API_TOKEN` 永远与后端 `API_TOKEN` 一致（避免 401，自定义 `VITE_API_BASE` 则不覆盖）、端口占用检查（重复双击不会起第二份）、轮询 `/api/health` 与前端首页后再打开浏览器。
+
+### 账号配置在哪？为什么「我明明配过」却没生效
+
+平台账号只写在 **`unimsg-connector/.env`** 一个文件里，它**被 `.gitignore` 排除、从不入库**（`pnpm run deliver` 打包也会排除）。因此：
+
+- 从 GitHub clone / pull、同步队友代码、或换一个工作区目录之后，**凭据不会跟过来**，后端会静默回退到全 Mock；
+- 团队文档里「2026-11-04 实测 163 + QQ 邮箱 PASS 4 / FAIL 0」「企微 `gettoken` 实测 PASS」这类记录，是在**当时那份带 `.env` 的工作区**里跑出来的，换目录后需要把 `.env` 复制过去；
+- 换机器 / 换副本时手动复制这一个文件即可，代码零改动；或直接双击 `setup-accounts.bat` 重新填。
+
+判断是否生效最快的方式：看 `start.bat` 输出的 `[acct] N credential group(s)`，或运行 `start.bat doctor`，或在浏览器「平台账号」页看每个平台的 `configured / 收 / 发`。当前仓库文档的已知限制（飞书租户策略 `21001`、企微缺 `WECOM_TOKEN`/`WECOM_AES_KEY` 且卡可信 IP `60020`）依然是真实边界，配了 `.env` 也不等于所有平台都能真实收发。
+
+> 两个服务各开一个控制台窗口；关掉窗口或执行 `start.bat stop` 即停止。「按任意键关闭」只关启动器窗口，不影响服务。
+> Docker 模式需要先启动 Docker Engine；入口令牌默认 `linkhub-local-demo-2026-change-me`，改 `LINKHUB_DEPLOY_TOKEN` 后需重新 `--build`，详见 [docs/deploy.md](docs/deploy.md)。
+> `.bat` 刻意保持纯 ASCII + CRLF（与 `scripts/e2e.ps1` 同因）：cmd.exe 按 OEM 代码页解析批处理，中文注释会被拆成命令执行，中文说明一律以本文档为准。
+
+环境要求：Node.js ≥ 20、pnpm ≥ 9（或用 Node 自带 corepack）、Python 3（仅 `e2e` 冒烟脚本需要）。
 
 ```bash
 cd unimsg-connector
@@ -367,7 +407,7 @@ pnpm install
 
 | 平台 | 收消息方式 | 需要公网吗 | 关键点 | 验证命令（在 `unimsg-connector/` 下） |
 |---|---|---|---|---|
-| 飞书 | 事件订阅 HTTP 回调 | 是（需公网 URL） | `im.message.receive_v1` 事件 + Verification Token（可选 Encrypt Key） | `pnpm run doctor -- --platform=feishu` |
+| 飞书 | 长连接（WebSocket，推荐免公网）或事件订阅 HTTP 回调 | 长连接否 / 回调是 | `im.message.receive_v1` 事件 +（`FEISHU_STREAM=true` 免公网；HTTP 回调需 Verification Token 与公网 URL） | `pnpm run doctor -- --platform=feishu` |
 | 钉钉 | Stream 长连接（推荐）或 HTTP 回调 | Stream 否 / 回调是 | 机器人消息接收模式选 Stream，`DINGTALK_STREAM=true`，发布版本 | `pnpm run doctor -- --platform=dingtalk` |
 | 企业微信 | 应用「API 接收」回调 | 是（需公网 URL） | Token / EncodingAESKey + 出口 IP 加入「企业可信 IP」 | `pnpm run doctor -- --platform=wecom` |
 | 邮箱 | 本机 IMAP 轮询 | 否 | 网页端开启 IMAP/SMTP + 生成授权码；可多账号 | `pnpm run doctor -- --platform=mail` |
@@ -467,10 +507,12 @@ pnpm install
 |---|---|---|
 | 四类数据源（飞书 / 钉钉 / 企微 / 邮箱）统一接入 | ✅ 已实现（邮箱为超出原设计的新增数据源） | 三平台 + 邮箱，均可 Mock/真实独立切换 |
 | 完整闭环（接收→展示→处理→回写→回流）+ traceId 回放 | ✅ 已实现并有单测/e2e 覆盖 | `pnpm e2e` 20 项断言 |
-| 独立部署：Docker Compose 拉起 postgres/redis/server/web | ❌ **尚未提供** Dockerfile / docker-compose | 当前用 pnpm 本地启动；内存存储，重启即清空；补容器化列入后续计划 |
-| PostgreSQL / Redis 持久化 | ❌ 未实现 | 仅有 `001_init.sql` 与仓储接口，实际始终内存 |
+| 从统一入口向指定平台发送文本 + 文件 | ✅ 已实现 | 「新建发送」可指定平台/会话并挂附件；回复也支持附件；四平台适配器各自完成媒体上传或 MIME 转换，附件元数据进闭环回放 |
+| 独立部署：可在纯净服务器零依赖启动 | ✅ 已实现（单容器方案） | `Dockerfile` + `docker-compose.yml` + [docs/deploy.md](docs/deploy.md)：server 同源托管前端，单端口 3001，含健康检查与数据卷；镜像可 `docker save/load` 离线搬运 |
+| 闭环数据重启后仍可回放 | ✅ 已实现（文件快照） | `DATA_DIR` / `DATA_FILE` 开启原子快照，消息 / trace / DLQ 落盘；Docker 默认挂载 `linkhub-data` 卷 |
+| PostgreSQL / Redis 持久化 | ❌ 未实现 | 仅有 `001_init.sql` 与仓储接口；当前为单实例内存 + 文件快照，不是关系库 |
 | 真实大模型意图识别 / OCR | ❌ 未实现 | 规则 Mock（配置项已预留，降级策略已实现） |
-| 三平台真实收发 | 🟡 部分 | 钉钉 Stream 真实收发已跑通；飞书卡租户策略 `21001`；企微卡「企业可信 IP」`60020`（`pnpm run doctor` 可自证） |
+| 三平台真实收发 | 🟡 部分 | 2026-11-10 用真实 `.env` 跑 `doctor`：**PASS 8 / FAIL 1**。钉钉 accessToken / 机器人编码 / 收消息通道、企微 access_token、163+QQ 邮箱 IMAP+SMTP 全部 PASS；唯一 FAIL 是飞书租户策略 `21001`（`start.bat doctor` 可复现） |
 | 入口鉴权（Bearer + WS）| ✅ 已实现 | `/api/*` 与 `/ws` 同一 token；默认 `dev-token` 仅演示用，对外需改 |
 | CORS 白名单 | ✅ 已实现 | `CORS_ORIGINS` 白名单（不填保持 `*` 兼容本地；填了名单外 403 JSON） |
 | 日志脱敏 | ✅ 已实现 | 闭环日志不含正文；doctor 报告邮箱脱敏；启动日志与 `mock-send` 已不打印邮箱/正文 |
@@ -480,7 +522,7 @@ pnpm install
 
 ## 已知限制
 
-- **飞书真实收发被租户策略 `21001` 拦住**：代码与配置都已就绪，但要企业认证或换合规租户才能验证；此外 `im:message`（获取与发送单聊、群组消息）权限尚未开通，当前只有 `im:message:send_as_bot`。
+- **飞书真实收发被租户策略 `21001` 拦住**：2026-11-10 在带真实凭据的 `.env` 上重跑 `doctor`，仍为 `21001`（`Access denied due to platform policy`），确认是租户级策略而非凭据或代码问题；代码与配置都已就绪，但要企业认证或换合规租户才能验证；此外 `im:message`（获取与发送单聊、群组消息）权限尚未开通，当前只有 `im:message:send_as_bot`。
 - **企业微信**：真实适配器与 19 条单测已就绪、`gettoken` 已通，但**卡在「企业可信 IP」**——当前出口 IP 不在白名单，真实发送端到端尚未验证（典型报错 60020）；同时缺回调 Token/EncodingAESKey，暂时收不到消息。`pnpm run doctor` 每次都会打印当前出口公网 IP：电脑重启一般不影响（公网出口在网关/运营商侧），但重拨路由器、换网络、开代理后可能变化，演示前先核对即可。
 - **钉钉**真实收消息依赖 Stream 长连接（本机可用）或公网 HTTP 回调；`DINGTALK_STREAM` 默认关闭，需要显式开启并在后台发布版本。
 - **钉钉 / 企业微信群聊只推「@机器人」的消息**（平台规则，不是本项目限制）：普通群消息不会推给机器人，钉钉 Stream 的机器人通道只投递「单聊」和「群内 @机器人」。所以群聊场景能聚合的就是被 @ 的那一条，**不能承诺"群里所有消息都收"**。另外群里要添加的是**企业内部应用机器人**（自定义 Webhook 机器人只能发、不能收）。群内 @ 消息入库后会保留群会话与群名，回复走群消息接口回到原群（界面「会话」一行显示「群聊「群名」· 回复会发回该群」）。参考：[钉钉机器人接收消息](https://open.dingtalk.com/document/robots/receive-message)。
@@ -489,11 +531,12 @@ pnpm install
 - 邮箱 STARTTLS（143/587/25）已实现并有单测，但真实服务商 587/143 端到端尚未实测；部分服务商（如 Gmail 需应用专用密码，部分 Microsoft 365 租户关闭基础认证）可能拒绝账号密码/授权码登录，遇到时需改用应用专用密码或换服务商。
 - 邮箱附件：正文会递归解析嵌套 multipart（不会因带附件而丢正文），附件名只出现在正文摘要/`attachments` 字段，不下载附件内容；中文 IMAP 目录已支持 modified UTF-7 编码（仅对配置的目录 SELECT，未实现目录自动发现）。
 - 真实大模型 / OCR 尚未实现：`LLM_*` / `OCR_*` 只是预留配置，实际始终走规则 Mock。
-- PostgreSQL / Redis 仅有 DDL 与仓储接口，实际始终走内存；多实例部署时限流、token 缓存、消息均不共享。**Docker Compose 尚未提供**（设计文档承诺项，见上表）。
+- PostgreSQL / Redis 仅有 DDL 与仓储接口，实际走「内存 + 可选文件快照」；多实例部署时限流、token 缓存、消息均不共享，水平扩展 / 高可用未实现（附加分项不申领）。单容器独立部署已提供，见 [docs/deploy.md](docs/deploy.md)。
 - 前端默认跑内存 Mock 数据；配 `VITE_API_BASE` / `VITE_API_TOKEN` 后即接本仓库后端。入口令牌是演示性质（`VITE_` 会进前端 bundle），生产需换成登录后签发的短期凭证。
 - 默认监听所有网卡（`SERVER_HOST` 留空）+ 默认 `dev-token` 只适合本机演示；公共 Wi-Fi / 局域网演示时同网段可访问接口，**对外暴露前必须改 `API_TOKEN`、按需设 `CORS_ORIGINS` / `SERVER_HOST`**。
 - Mock 下不带签名头时按 `mock` 放行、`dev*` 前缀签名同样放行，仅适合本地演示；邮箱真实模式没有回调通道也是防伪造的有意设计。
-- 所有消息、闭环日志、DLQ 都在内存里，进程重启即清空（邮箱水位除外，已落盘）。
+- 默认（不设 `DATA_DIR` / `DATA_FILE`）所有消息、闭环日志、DLQ 都在内存里，进程重启即清空（邮箱水位除外，已落盘）；设置 `DATA_DIR` 后启用文件快照，重启可恢复，快照为单文件 JSON，不适合大数据量或多写入者并发。
+- 真实平台的文件发送通道（飞书 `im/v1/files`、企微 `media/upload`、钉钉 `robot/media/upload`）已按官方接口实现并有单测，但受租户策略 / 企业可信 IP 限制，**尚未端到端实测**；Mock 通道可完整演示并会明确标注「模拟发送」。
 - `scripts/e2e-server.log.err`：旧版本曾误提交，本版本已从 git 索引删除，并把 `*.log.err` / `*.log` 加入 `.gitignore`（日志类产物不再进仓库）。
 - `test.photos/` 是 2026-11-02 旧版界面截图，当前 UI 已改版（新增账号页模式标注、首启引导等），仅作历史证据保留。
 
@@ -506,8 +549,8 @@ pnpm install
 | `pnpm dev` | 开发模式（tsx watch） |
 | `pnpm start` | 启动服务（:3001） |
 | `pnpm typecheck` | TypeScript 类型检查（shared + server + web） |
-| `pnpm test` | 服务端单元测试（217 条，含 doctor / webhook / MIME / 水位） |
-| `pnpm test:web` | 前端单元测试（112 条） |
+| `pnpm test` | 服务端单元测试（245 条，含 doctor / webhook / MIME / 出站附件 / compose / 快照） |
+| `pnpm test:web` | 前端单元测试（117 条，含新建发送 / 附件工具） |
 | `pnpm --filter @unimsg/web lint:css` | 样式护栏：字号 rem / 色值走令牌 / 位移走 transform / 暗色块禁 `!important` / 圆角用尺阶 |
 | `pnpm run doctor` | 只读自检：环境 + 模式 + 逐平台探针 + 出口公网 IP + 中文修复建议；有 FAIL 时退出码 1 |
 | `pnpm run doctor -- --platform=feishu,mail` | 只检查指定平台 |
@@ -516,6 +559,11 @@ pnpm install
 | `pnpm e2e` | 一键端到端冒烟（Windows PowerShell） |
 | `pnpm e2e:sh` | 一键端到端冒烟（macOS / Linux / Git Bash） |
 | `pnpm run deliver` | 交付打包：`git archive` 生成 zip，自动排除 `.env*` / 日志 / 状态文件 / `node_modules`（工作区不干净会拒绝） |
+| 双击 `start.bat` / `start-docker.bat` | Windows 一键启动：本地前后端 / Docker 单容器，自动装依赖、配环境变量、开浏览器（详见上文「Windows 一键启动」） |
+| `start.bat mock` / `start.bat accounts` / `start.bat doctor` | 强制离线 Mock / 打开账号配置 / 只读账号自检 |
+| `start.bat stop` / `start.bat stopdocker` | 一键停止本地服务 / Docker 栈 |
+| `docker compose up -d --build` | 在 `unimsg-connector/` 下执行，一键构建并启动独立部署容器（详见 [docs/deploy.md](docs/deploy.md)） |
+| `docker compose logs -f app` / `docker compose down` | 查看容器日志 / 停止并保留数据卷 |
 | `pnpm --filter @unimsg/web dev` | 前端开发模式（:5173，不配 `.env` 时为 Mock 数据） |
 | `pnpm --filter @unimsg/web build` | 前端生产构建 |
 | `node packages/web/scripts/verify-contract.mjs http://127.0.0.1:3001 dev-token` | 前后端契约自检（后端已启动；当前 **46 PASS / 0 FAIL**） |

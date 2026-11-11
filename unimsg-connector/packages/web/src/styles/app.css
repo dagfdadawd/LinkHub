@@ -3988,3 +3988,50 @@ html.vt-morph .detail {
     background: var(--surface-2);
   }
 }
+
+/* ---------------- 附件发送 / 新建发送（赛题 A 功能需求 3） ---------------- */
+
+.composer__bar {
+  justify-content: space-between;
+}
+
+.composer__attach {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  color: var(--text-2);
+  font-family: inherit;
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+
+.composer__attach:hover {
+  border-color: var(--brand);
+  color: var(--brand-ink);
+}
+
+.composer__attachments,
+.message-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.composer__file-error {
+  margin-top: 8px;
+  color: var(--danger);
+  font-size: 0.75rem;
+}
+
+.compose-field__label {
+  margin-bottom: 6px;
+  color: var(--text-2);
+  font-size: 0.8125rem;
+  font-weight: 500;
+}

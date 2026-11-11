@@ -14,7 +14,7 @@
  */
 import 'dotenv/config';
 import { config as loadEnv } from 'dotenv';
-import { dirname, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Platform, type DeliveryMode } from '@unimsg/shared';
 import {
@@ -78,6 +78,9 @@ if (process.env.API_TOKEN !== undefined && !rawApiToken) {
   modeWarnings.push('API_TOKEN 被显式设置为空，已回退 dev-token；默认令牌仅适合本地演示，对外暴露前务必设置强令牌');
 }
 
+const dataDir = (process.env.DATA_DIR ?? '').trim();
+const explicitDataFile = (process.env.DATA_FILE ?? '').trim();
+
 export const config = {
   port: Number(process.env.SERVER_PORT ?? 3001),
 
@@ -85,6 +88,20 @@ export const config = {
   // 填入真实连接串 → 自动切换 Postgres（部署评审环境时用）。
   databaseUrl: process.env.DATABASE_URL ?? '',
   redisUrl: process.env.REDIS_URL ?? '',
+
+  /**
+   * 闭环数据快照文件（独立部署用）。
+   * 设置 DATA_DIR 或 DATA_FILE 后，消息 / trace / 死信队列会落盘，
+   * 容器重启后收件箱与「全链路回放」不丢，满足赛题 3.2「可追踪、可回放」。
+   * 留空 = 纯内存（本地演示零副作用）。
+   */
+  dataFile: explicitDataFile || (dataDir ? join(dataDir, 'linkhub-state.json') : ''),
+
+  /** 请求体上限（MB）：base64 附件约为原始大小的 4/3，默认 32MB 覆盖 20MB 总附件 */
+  maxUploadMb: Number(process.env.MAX_UPLOAD_MB ?? 32),
+
+  /** 前端构建产物目录：容器内同源部署时由 server 直接托管，单端口即可跑完整闭环 */
+  webDist: (process.env.WEB_DIST ?? '').trim(),
 
   /** 是否运行在 node:test 子进程里（供 doctor/测试判断，业务代码不用关心） */
   underTest,
@@ -122,6 +139,7 @@ export const config = {
       appSecret: platforms.feishu.appSecret,
       verifyToken: platforms.feishu.verifyToken,
       encryptKey: platforms.feishu.encryptKey,
+      stream: platforms.feishu.stream,
       baseUrl: platforms.feishu.baseUrl,
     },
     dingtalk: {

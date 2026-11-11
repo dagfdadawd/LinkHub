@@ -14,6 +14,7 @@ import { OcrService } from './services/ocr';
 import { RateLimiter } from './services/rateLimiter';
 import { MessageService } from './services/message';
 import { startDingtalkStream } from './stream/dingtalkStream';
+import { startFeishuStream } from './stream/feishuStream';
 import { startMailPoller } from './stream/mailPoller';
 import { initWs, wsBroadcast } from './ws';
 
@@ -28,7 +29,8 @@ if (tokenBlocker) {
   process.exit(1);
 }
 
-const repo = new InMemoryRepository();
+// DATA_DIR/DATA_FILE 存在时启用文件快照：容器重启后收件箱与全链路回放仍可复现
+const repo = new InMemoryRepository(config.dataFile);
 const svc = new MessageService(
   repo,
   connectors,
@@ -89,9 +91,10 @@ server.on('error', onListenError);
 wss.on('error', onListenError);
 
 server.listen(config.port, listenHost, () => {
-  const store = config.databaseUrl ? 'postgres(未启用·当前内存)' : 'memory';
+  const store = config.dataFile ? `file-snapshot(${config.dataFile})` : 'memory';
   console.log(`[unimsg] server listening on ${listenHost ?? '0.0.0.0'}:${config.port} (store=${store})`);
   console.log(`[unimsg] 本机访问: http://${displayHost}:${config.port}`);
+  if (config.webDist) console.log(`[unimsg] 同源托管前端: ${config.webDist}`);
   console.log(`[unimsg] auth=Bearer ${effectiveToken === DEFAULT_DEV_TOKEN ? 'dev-token(默认/空值回退)' : '***'}`);
   const tokenWarning = apiTokenWarning(config.apiToken);
   if (tokenWarning) {
@@ -112,6 +115,16 @@ if (config.dingtalkStream) {
     });
   } else {
     console.log('[stream] 钉钉当前为 Mock 模式，跳过 Stream 长连接（DINGTALK_MODE=real 才会连）');
+  }
+}
+
+if (config.platforms.feishu.stream) {
+  if (modeOf(Platform.FEISHU) === 'real') {
+    startFeishuStream(svc).catch((e) => {
+      console.error('[feishu-stream] 启动失败:', e instanceof Error ? e.message : e);
+    });
+  } else {
+    console.log('[feishu-stream] 飞书当前为 Mock 模式，跳过长连接（FEISHU_MODE=real 才会连）');
   }
 }
 
