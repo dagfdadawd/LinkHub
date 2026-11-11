@@ -24,8 +24,10 @@ import {
   probeMailAccount,
   probeWecomToken,
   runProbes,
+  probeLlm,
   type DingtalkProbeInput,
   type FeishuProbeInput,
+  type LlmProbeInput,
   type PlatformProbeRuntime,
   type ProbeInput,
   type WecomProbeInput,
@@ -128,6 +130,7 @@ function probeInput(over: Partial<ProbeInput> = {}): ProbeInput {
     dingtalk: DINGTALK,
     wecom: WECOM,
     mail: { accounts: [], enabled: false },
+    llm: llmInput({ ready: false }),
     runtime: mockRuntime(),
     ...over,
   };
@@ -488,13 +491,15 @@ test('邮箱探针（超时）：注入永不 resolve 的实现 → FAIL 且原�
 // 编排：mock → SKIP；real → 探测；--platform 过滤
 // ---------------------------------------------------------------------------
 
-test('runProbes：全部平台 mock → 每个平台一条 SKIP（不发起任何请求）', async () => {
+test('runProbes：全部平台 mock → 每个平台一条 SKIP + 一条大模型 SKIP（不发起任何请求）', async () => {
   const { checks } = await runProbes(probeInput());
-  assert.equal(checks.length, 4);
+  assert.equal(checks.length, 5, '4 个平台 + 1 条大模型');
   assert.ok(checks.every((c) => c.status === 'SKIP'));
   assert.ok(checks.some((c) => c.id === 'feishu:skipped'));
   assert.ok(checks.some((c) => c.id === 'mail:skipped'));
-  assert.ok(checks.every((c) => (c.hint ?? '').includes('_MODE=real') || (c.hint ?? '').includes('补齐')));
+  assert.ok(checks.some((c) => c.id === 'llm:chat' && c.group === 'llm'));
+  const platformChecks = checks.filter((c) => c.id !== 'llm:chat');
+  assert.ok(platformChecks.every((c) => (c.hint ?? '').includes('_MODE=real') || (c.hint ?? '').includes('补齐')));
 });
 
 test('runProbes：--platform 过滤后只检查指定平台', async () => {
@@ -594,4 +599,78 @@ test('runProbes：企微 real 且 60020 → FAIL 且 egressIp 冒泡到结果根
   assert.equal(result.checks.length, 1);
   assert.equal(result.checks[0].status, 'FAIL');
   assert.ok(result.checks[0].detail.includes('203.0.113.77'));
+});
+
+// ---------------------------------------------------------------------------
+// 大模型探针：只发一条固定样例，确认鉴权、协议与 JSON 约束
+// ---------------------------------------------------------------------------
+
+function llmInput(over: Partial<LlmProbeInput> = {}): LlmProbeInput {
+  return {
+    ready: true,
+    provider: 'mimo',
+    model: 'mimo-v2.6-flash',
+    endpoint: 'https://api.xiaomimimo.com/v1',
+    apiKey: 'sk-test',
+    minConfidence: 0.6,
+    ...over,
+  };
+}
+
+function openaiBody(content: string): unknown {
+  return {
+    choices: [{ index: 0, message: { role: 'assistant', content } }],
+    usage: { total_tokens: 120 },
+  };
+}
+
+test('LLM 探针：未配置真实大模型 → SKIP，且绝不发请求', async () => {
+  let calls = 0;
+  const check = await withStubFetch(
+    () => { calls += 1; return jsonResponse({}); },
+    () => probeLlm(llmInput({ ready: false })),
+  );
+  assert.equal(check.status, 'SKIP');
+  assert.equal(check.group, 'llm');
+  assert.equal(calls, 0);
+});
+
+test('LLM 探针：正常返回 → PASS 并报告模型与耗时', async () => {
+  const check = await withStubFetch(
+    (url) => {
+      assert.ok(url.endsWith('/chat/completions'), `应请求 chat/completions，实际 ${url}`);
+      return jsonResponse(openaiBody(JSON.stringify({ intent: '待办', confidence: 0.9, summary: 's', replyDraft: 'd' })));
+    },
+    () => probeLlm(llmInput()),
+  );
+  assert.equal(check.status, 'PASS');
+  assert.ok(check.detail.includes('mimo-v2.6-flash'));
+  assert.ok(check.detail.includes('待办'));
+});
+
+test('LLM 探针：401 → FAIL，提示检查 Key', async () => {
+  const check = await withStubFetch(
+    () => jsonResponse({ error: 'unauthorized' }, 401),
+    () => probeLlm(llmInput()),
+  );
+  assert.equal(check.status, 'FAIL');
+  assert.match(check.hint ?? '', /LLM_API_KEY|Key/i);
+});
+
+test('LLM 探针：返回非 JSON 内容 → FAIL，指出模型没有遵守输出约束', async () => {
+  const check = await withStubFetch(
+    () => jsonResponse(openaiBody('抱歉，我无法完成')),
+    () => probeLlm(llmInput()),
+  );
+  assert.equal(check.status, 'FAIL');
+  assert.match(check.detail, /JSON/i);
+});
+
+test('LLM 探针：网络错误 → FAIL 并附排查建议', async () => {
+  const check = await withStubFetch(
+    () => { throw new Error('getaddrinfo ENOTFOUND api.xiaomimimo.com'); },
+    () => probeLlm(llmInput()),
+  );
+  assert.equal(check.status, 'FAIL');
+  assert.ok((check.hint ?? '').length > 0);
 });
