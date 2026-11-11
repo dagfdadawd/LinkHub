@@ -385,6 +385,46 @@ test('结论：下一步使用实际端口，非默认令牌时不打印 dev-tok
   assert.ok(!text.includes('Bearer dev-token'), '自定义令牌时不应再教用户用 dev-token');
 });
 
+test('结论：非默认令牌时提示 <你的 API_TOKEN> 需要替换，避免照抄 curl 得到 401', () => {
+  const text = renderTextReport(report({ port: 3101, tokenIsDefault: false }));
+  assert.ok(text.includes('<你的 API_TOKEN>'));
+  assert.ok(/替换|换成/.test(text), '应说明占位符要替换成 .env 里的实际值');
+});
+
+test('结论：复制模板的命令注明在 unimsg-connector/ 下执行（doctor 的 cwd 是 packages/server）', () => {
+  const text = renderTextReport(
+    report({
+      platforms: [platformReport({ configured: false, mode: 'mock', canSend: false, canReceive: false })],
+      checks: [check({ status: 'SKIP' })],
+      env: env({ mailAccountCount: 0, mailEnabled: false }),
+    }),
+  );
+  assert.ok(text.includes('在 unimsg-connector/'), '应给出可执行的目录说明');
+});
+
+test('结论：--platform 过滤到单个未配置平台时，说“所选平台”而不是“四个平台”', () => {
+  const only = platformReport({
+    platform: Platform.WECOM,
+    label: '企业微信',
+    configured: false,
+    mode: 'mock',
+    canSend: false,
+    canReceive: false,
+    reason: '未配置凭据，回退 Mock',
+  });
+  const text = renderTextReport(
+    report({
+      platforms: [only],
+      platformFilter: [Platform.WECOM],
+      checks: [check({ group: Platform.WECOM, status: 'SKIP' })],
+      env: env({ mailAccountCount: 0, mailEnabled: false }),
+    }),
+  );
+  assert.ok(text.includes('所选平台'), '应按过滤后的范围描述');
+  assert.ok(!text.includes('四个平台'), '过滤单平台时不应再说四个平台');
+  assert.ok(text.includes('平台过滤：wecom'));
+});
+
 test('结论：四平台均未配置但大模型探针 PASS 时，计数用真实 summary 而非写死的 0', () => {
   const notConfigured = (p: Platform, label: string): PlatformReport =>
     platformReport({ platform: p, label, configured: false, mode: 'mock', canSend: false, canReceive: false, reason: '未配置凭据，回退 Mock' });

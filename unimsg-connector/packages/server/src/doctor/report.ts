@@ -321,13 +321,17 @@ function renderConclusion(input: DoctorReportInput, summary: DoctorSummary, exit
 
   // 「什么都没配」不能亮绿灯：四平台都未配置时，PASS 0/FAIL 0/SKIP 的结论看起来像
   // "一切正常"，实际连账号都没填（大模型探针 PASS 也不能代表平台已就绪）。
+  const platformFiltered = Boolean(input.platformFilter && input.platformFilter.length > 0);
   const nothingConfigured = input.platforms.length > 0 && input.platforms.every((p) => !p.configured);
 
   if (exitCode === 0 && nothingConfigured) {
-    lines.push(`  ⚠ 尚未配置任何平台：PASS ${summary.pass} / FAIL ${summary.fail} / SKIP ${summary.skip}。`);
-    lines.push('    四个平台当前都会以本地 Mock 运行：可以完整演示闭环，但没有验证任何真实账号。');
+    const scope = platformFiltered ? '所选平台' : '四个平台';
+    lines.push(
+      `  ⚠ ${platformFiltered ? '所选平台尚未配置任何账号' : '尚未配置任何平台'}：PASS ${summary.pass} / FAIL ${summary.fail} / SKIP ${summary.skip}。`,
+    );
+    lines.push(`    ${scope}当前都会以本地 Mock 运行：可以完整演示闭环，但没有验证任何真实账号。`);
     lines.push('  下一步：');
-    lines.push('    1. 复制模板：cp .env.example .env（Windows PowerShell：Copy-Item .env.example .env）');
+    lines.push('    1. 在 unimsg-connector/ 目录复制模板：cp .env.example .env（Windows PowerShell：Copy-Item .env.example .env）');
     lines.push('    2. 只填你要用的那一个平台（飞书 / 钉钉 / 企微 / 邮箱任选其一），留空的平台自动回退 Mock');
     lines.push('    3. 重跑自检：pnpm --filter @unimsg/server run doctor');
     lines.push('    4. 只想先看效果：直接启动后端 + 前端，界面会如实标注「模拟发送」');
@@ -337,6 +341,9 @@ function renderConclusion(input: DoctorReportInput, summary: DoctorSummary, exit
     lines.push('  下一步：');
     lines.push('    1. 启动后端：pnpm --filter @unimsg/server start');
     lines.push(`    2. 查看接口：curl -H "Authorization: Bearer ${tokenHint}" http://127.0.0.1:${port}/api/accounts`);
+    if (input.tokenIsDefault === false) {
+      lines.push('    · 上面的 <你的 API_TOKEN> 请替换成 .env 里 API_TOKEN 的实际值');
+    }
   } else {
     lines.push(`  ✖ 自检未通过：PASS ${summary.pass} / FAIL ${summary.fail} / SKIP ${summary.skip}。`);
     if (!input.env.nodeSatisfies) lines.push('    · 先解决 Node 版本过低的问题（升级到 Node 20+）。');

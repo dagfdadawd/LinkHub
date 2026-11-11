@@ -279,6 +279,12 @@ test('capability：邮箱有账号 → 收发均 ✓；MAIL_ENABLED=false 时只
   assert.ok(off[Platform.MAIL].warnings.some((w) => w.includes('MAIL_ENABLED=false')));
 });
 
+test('capability：邮箱一个账号都没配时，reason 不误报 MAIL_ENABLED=false', () => {
+  const rt = runtimeOf({}, { mailAccounts: [], mailEnabled: false });
+  assert.doesNotMatch(rt[Platform.MAIL].reason, /MAIL_ENABLED=false/);
+  assert.match(rt[Platform.MAIL].reason, /未配置|未就绪/);
+});
+
 test('readPlatformCredentials：旧钉钉变量名兼容 + baseUrl 可覆盖并可去尾斜杠', () => {
   const c = readPlatformCredentials({
     DINGTALK_APP_KEY: 'old-key',

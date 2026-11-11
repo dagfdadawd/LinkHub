@@ -15,6 +15,9 @@ test('isKnownEnvKey：精确名 / 动态邮箱名 / 旧钉钉兼容名 / 未知�
   assert.equal(isKnownEnvKey('MAIL_WORK_ADDRESS'), true);
   assert.equal(isKnownEnvKey('MAIL_SCHOOL2_FOLDERS'), true);
   assert.equal(isKnownEnvKey('DINGTALK_APP_KEY'), true);
+  for (const key of ['DATA_DIR', 'DATA_FILE', 'WEB_DIST', 'VITE_API_BASE', 'VITE_API_TOKEN', 'LINKHUB_DEPLOY_TOKEN', 'HOST_PORT']) {
+    assert.equal(isKnownEnvKey(key), true, `${key} 应被认作合法变量`);
+  }
   assert.equal(isKnownEnvKey('FEISHU_APPID'), false);
   assert.equal(isKnownEnvKey('MAIL_QQ_ADRESS'), false);
   assert.equal(isKnownEnvKey('PATH'), false);
@@ -70,15 +73,15 @@ test('findSuspiciousEnvVars：正常配置零误报', () => {
   assert.deepEqual(found, []);
 });
 
-test('回归：.env.example 里出现的每个键都必须被认作合法，否则 doctor 会把模板变量误报成拼错', async () => {
+test('回归：.env.example 里出现的每个键（含注释示例）都必须被认作合法，否则 doctor 会把模板变量误报成拼错', async () => {
   const { readFileSync } = await import('node:fs');
   const text = readFileSync(new URL('../../../../.env.example', import.meta.url), 'utf8');
   const keys = [...new Set(
     text.split(/\r?\n/)
-      .map((line) => line.match(/^([A-Za-z0-9_]+)=/)?.[1])
+      .map((line) => line.match(/^[ \t]*#?[ \t]*([A-Z][A-Z0-9_]*)[ \t]*=/)?.[1])
       .filter((k): k is string => Boolean(k)),
   )];
-  assert.ok(keys.length > 20, `应解析出足够多的键，实际 ${keys.length}`);
+  assert.ok(keys.length >= 60, `应解析出足够多的键（含注释示例），实际 ${keys.length}`);
   const unknown = keys.filter((k) => !isKnownEnvKey(k));
   assert.deepEqual(unknown, [], `这些 .env.example 键未被认作合法：${unknown.join(', ')}`);
 });
