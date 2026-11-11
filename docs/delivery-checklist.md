@@ -1,7 +1,7 @@
 # LinkHub 交付 / 打包 checklist
 
 > 原则：**交付包 = `git archive` 白名单产物**——只含 git 已跟踪文件；凭据、日志、本机状态文件、`node_modules` 一律不进包。打包后必须解压再自检一遍。
-> 相关文档：[quickstart.md](quickstart.md) · [demo-script.md](demo-script.md) · [swap-accounts.md](swap-accounts.md) · [risk-register.md](risk-register.md) · [README.md](../README.md)
+> 相关文档：[quickstart.md](quickstart.md) · [demo-script.md](demo-script.md) · [swap-accounts.md](swap-accounts.md) · [ai-integration.md](ai-integration.md) · [risk-register.md](risk-register.md) · [README.md](../README.md)
 
 ## 0. 一句话流程（在 `unimsg-connector/` 下）
 
@@ -58,10 +58,13 @@ node packages/web/scripts/verify-contract.mjs http://127.0.0.1:3001 dev-token   
 ```bash
 # 解压 LinkHub-deliver-xxxx.zip 后
 cd unimsg-connector
-corepack pnpm install --frozen-lockfile    # 有 pnpm>=9 可直接 pnpm install --frozen-lockfile
+corepack enable                          # 只需一次；之后必须重开终端，pnpm 才进 PATH（已有 pnpm>=9 可跳过）
+pnpm install --frozen-lockfile           # 重开终端后再执行
 pnpm typecheck
 pnpm e2e                                   # Windows；macOS / Linux / Git Bash：pnpm e2e:sh
 ```
+
+> ⚠️ 不要只跑 `corepack pnpm install --frozen-lockfile` 就接着敲 `pnpm typecheck`：依赖装上了，但 `pnpm` 仍不在 PATH，后续命令会全部 `command not found`。要么按上面 `corepack enable` + **重开终端**，要么后续每条命令都写成 `corepack pnpm ...`（根目录脚本内部还会再调用 `pnpm -r`，所以推荐前者）。
 
 期望：`e2e` 20 项 PASS + `SMOKE OK`（`e2e` 需要 Python 3；没有 Python 时先装，或至少 `pnpm typecheck` 通过）。说明：包内没有 `.env`，四个平台会 `auto → Mock`（正常）；要通过界面看效果按 [quickstart.md](quickstart.md) 路径 A，要接真实账号按路径 B。
 
@@ -81,7 +84,8 @@ pnpm e2e                                   # Windows；macOS / Linux / Git Bash�
 | 运行环境 | Node `<node -v>`、pnpm `<pnpm -v>`（package.json 固定 pnpm 9.15.9，可用 corepack） |
 | 真实可用 | 钉钉 Stream 收 + 机器人回写；邮箱 IMAP 收 + SMTP 发（多账号 / STARTTLS） |
 | 受限能力 | 飞书 `21001`（需企业认证/合规租户）；企微 `60020`（需企业可信 IP + 回调 Token/AESKey + 公网） |
-| 未实现 | PostgreSQL/Redis 持久化（当前为单实例内存 + 文件快照）、LLM/OCR 真实调用、高可用/水平扩展（详见 README「承诺 vs 实现」） |
+| AI 能力 | 大模型意图 / 摘要 / 回复草稿**已接真实调用**（OpenAI 兼容协议，默认 MiMo `mimo-v2.6-flash`；失败/超时/低置信回退内置规则并标注来源），见 [ai-integration.md](ai-integration.md)；OCR 仍为占位实现 |
+| 未实现 | PostgreSQL/Redis 持久化（当前为单实例内存 + 文件快照）、OCR 真实调用、高可用/水平扩展（详见 README「承诺 vs 实现」） |
 | 独立部署包 | `unimsg-connector/Dockerfile` + `docker-compose.yml` + `.dockerignore`；步骤见 [deploy.md](deploy.md)，可 `docker save/load` 离线搬运 |
-| 文档索引 | quickstart / demo-script / swap-accounts / deploy / risk-register / README |
+| 文档索引 | quickstart / demo-script / swap-accounts / deploy / ai-integration / risk-register / README |
 | 已知风险 | 全部见 [risk-register.md](risk-register.md) |

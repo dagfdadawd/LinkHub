@@ -20,11 +20,11 @@
 
 ```bash
 node -v            # 需要 v20 及以上
-pnpm -v            # 需要 9.x；没有 pnpm：在 unimsg-connector/ 下执行 corepack pnpm install
+pnpm -v            # 需要 9.x；没有 pnpm：corepack enable 后重开终端（见下方说明）
 python --version   # 仅跑 e2e 需要 Python 3（没有也不影响起服务）
 ```
 
-- **装不上 pnpm**：先试 `corepack pnpm install`（Node 自带，无需全局安装）；仍不行再 `npm i -g pnpm@9`。
+- **装不上 pnpm / `pnpm: command not found`**：Node 20+ 自带 corepack。先 `corepack enable`（把 `pnpm` 放进 PATH，**之后必须重开终端**），再 `pnpm -v` 确认；仍不行再 `npm i -g pnpm@9`。不要只执行 `corepack pnpm install` 就接着敲 `pnpm ...`——依赖装上了，但 `pnpm` 仍不在 PATH，后续命令会全部 `command not found`。
 - **`pnpm install` 很慢（可选）**：`pnpm config set registry https://registry.npmmirror.com` 换国内镜像；公司有私有源则按团队规范配置。
 - 项目当前在中文路径下也可正常运行；若个别工具报奇怪的路径错误，把项目移到纯英文路径（如 `C:\dev\LinkHub`）再试。
 
@@ -33,7 +33,8 @@ python --version   # 仅跑 e2e 需要 Python 3（没有也不影响起服务）
 
 ```bash
 cd unimsg-connector
-corepack pnpm install        # 已有 pnpm>=9 时可直接 pnpm install；约 1–3 分钟，看网络
+corepack enable              # 只需一次；之后重开终端，pnpm 才进 PATH（已有 pnpm>=9 可跳过）
+pnpm install                 # 约 1–3 分钟，看网络
 pnpm typecheck               # 约 10 秒
 pnpm e2e                     # 约 10–20 秒；macOS / Linux / Git Bash 改用：pnpm e2e:sh
 pnpm --filter @unimsg/server start   # 约 2 秒；保持这个终端不关
@@ -51,6 +52,8 @@ pnpm --filter @unimsg/web dev        # 约 2 秒；浏览器打开 http://127.0.
 
 > **两种「看效果」方式别混用**：不配 `VITE_API_BASE` 时前端用内置 Mock 数据；一旦存在 `packages/web/.env` 且写了 `VITE_API_BASE`，前端就会去连后端。
 > 如果页面出现「数据加载异常」，多半是目录里带着别人的 `packages/web/.env`：先改名/删除它再重启前端（交付包默认不带这个文件）。
+> 另一个常见来源：仓库根的 `start.bat` **每次启动都会重写 `packages/web/.env`**（写回 `VITE_API_BASE=http://127.0.0.1:3001`；你自定义过该值则保留不动）。所以用过一键启动后再单独起前端，就必然去连后端——后端没起便报「数据加载异常」。
+> 想纯前端 Mock 演示：`mv packages/web/.env packages/web/.env.bak`（PowerShell：`Rename-Item packages/web/.env .env.bak`）再重启 Vite；要接回后端把名字改回来即可。
 
 ### 想把界面接到刚起的后端，看更真实的闭环
 
@@ -87,13 +90,14 @@ pnpm --filter @unimsg/server start
 ```
 
 > ⚠️ 必须写 **`pnpm run doctor`**，不要写 `pnpm doctor`：pnpm 9 自带同名内置命令会抢走它（变成诊断 pnpm 自身）。
-> 只想看某一平台：`pnpm run doctor -- --platform=dingtalk,mail`。
+> 只想看某一平台：`pnpm run doctor --platform=dingtalk,mail`。
 
 > `API_TOKEN` 不要留空：演示保持默认 `dev-token`，对外部署必须改成强随机值。**留空会回退 dev-token 并打印告警，仍强制 Bearer 鉴权**（不会出现"空令牌 = 不鉴权"）；`NODE_ENV=production` 且仍是默认/空令牌时服务会拒绝启动。
 
 **成功信号（三处任看其一即可）**：
 
 1. `doctor` 输出 `[PASS]`，结论 `✔ 自检通过：PASS x / FAIL 0`；正常退出码 **0**（0 = 全 PASS/SKIP，1 = 有 FAIL，2 = 参数错，3 = 自检异常）。若终端退出码和报告结论对不上，重跑一次即可（历史版本在 Windows + Node 24 下有过强制退出导致异常码的问题，已修复）。
+   注意：四个平台**都没填凭据**时，结论是「⚠ 尚未配置任何平台」而不是「✔ 自检通过」（退出码仍为 0）——这是提醒你去填账号，不是自检失败。
 2. 后端启动日志出现 `运行模式: ...=real(auto) 收✓ 发✓`。
 3. `curl http://127.0.0.1:3001/api/health` 的 `modes` 中该平台为 `real`；`curl -H "Authorization: Bearer dev-token" http://127.0.0.1:3001/api/accounts` 中该平台 `mode=real`。
 
@@ -108,13 +112,13 @@ pnpm --filter @unimsg/server start
 - 完整真实接入（后台点什么、填哪些变量、常见报错）→ [swap-accounts.md](swap-accounts.md)
 - 承诺 vs 实现、已知边界与风险 → [README.md](../README.md) 的「设计文档承诺 vs 当前实现」与 [risk-register.md](risk-register.md)
 
-部署三条底线：企微回调需要公网可达；**飞书推荐用长连接（`FEISHU_STREAM=true`）免公网回调**（详见 [swap-accounts.md](swap-accounts.md) §3）；企微发信出口 IP 必须在「企业可信 IP」；生产必须改强随机 `API_TOKEN`（`NODE_ENV=production` 且仍是默认 `dev-token` 会拒绝启动；也**不要**把它留空，空值会关闭鉴权）。
+部署三条底线：企微回调需要公网可达；**飞书推荐用长连接（`FEISHU_STREAM=true`）免公网回调**（详见 [swap-accounts.md](swap-accounts.md) §3）；企微发信出口 IP 必须在「企业可信 IP」；生产必须改强随机 `API_TOKEN`（`NODE_ENV=production` 且仍是默认 `dev-token` 会拒绝启动；也**不要**把它留空，空值会回退默认 `dev-token` 并告警、**仍强制鉴权**）。
 
 ## 常见卡点一张表
 
 | 现象 | 原因 | 一句话解决 |
 |---|---|---|
-| `pnpm: command not found` | 没装 pnpm | 在 `unimsg-connector/` 下执行 `corepack pnpm install`；或 `corepack enable` 后重开终端 |
+| `pnpm: command not found` | 没装 pnpm 或没进 PATH | `corepack enable` → **重开终端** → `pnpm -v` 确认；或 `npm i -g pnpm@9`（只跑 `corepack pnpm install` 不够：依赖装了但 `pnpm` 仍不在 PATH） |
 | 报 Node 版本 / `tsx` 不兼容 | Node < 20 | 装 Node 20 或 22 LTS，重开终端再试 |
 | `启动失败：端口 3001 已被占用` | 上次进程没关 / 别的软件占用 | 改 `.env` 的 `SERVER_PORT=3101` 并把前端 `VITE_API_BASE` 同步到 3101；或按提示 `netstat -ano | findstr :3001` + `taskkill`（macOS/Linux 用 `lsof -i :3001` + `kill`）；e2e 用 `pnpm e2e -Port 3102` |
 | 配了账号，页面却全是 Mock | `.env` 放错目录（必须在 `unimsg-connector/.env`，仓库根的不加载）或变量名拼错（如 `FEISHU_APPID`） | 照 `.env.example` 检查拼写；`pnpm run doctor` 会提示「疑似拼错的变量」；改完重启后端 |

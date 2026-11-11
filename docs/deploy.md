@@ -85,7 +85,7 @@ docker compose up -d --build
 > 这是演示级方案；正式系统应改为登录后签发的短期凭证（见 README「已知限制」）。
 
 `.env` 中的 `API_TOKEN=dev-token` 会被 compose 的 `environment` 覆盖，不会导致启动失败。
-其余 `FEISHU_*` / `DINGTALK_*` / `WECOM_*` / `MAIL_*` 变量通过 `env_file` 注入容器，
+其余 `FEISHU_*` / `DINGTALK_*` / `WECOM_*` / `MAIL_*` / `LLM_*` 变量通过 `env_file` 注入容器，
 换账号只改 `.env` 后 `docker compose up -d`（无需重新构建）。
 
 ---

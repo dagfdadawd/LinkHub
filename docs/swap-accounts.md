@@ -18,7 +18,7 @@
 ## 0. 先读：四条约定
 
 1. **只改 `.env`**：平台凭据、邮箱账号、运行模式全部走环境变量，代码不需要动。改完**重启后端**（`config.ts` 只在启动时读取 `.env`）。
-2. **换完账号先跑 `doctor`**：`pnpm run doctor` 会检查 Node、`.env`、平台模式、逐平台探针与出口公网 IP，并给出中文修复建议；有 FAIL 时退出码为 1。
+2. **换完账号先跑 `doctor`**：`pnpm run doctor` 会检查 Node、`.env`、平台模式、逐平台探针、大模型连通性与出口公网 IP，并给出中文修复建议；有 FAIL 时退出码为 1。大模型探针（`llm:chat`）只在**未加** `--platform=` 时执行，所以下文各平台的示意输出不含它。
 3. **Mock 是合法状态，但一定标注**：没配凭据或配得不全时，`auto` 会自动回退本地模拟；回写消息里会写 `delivery.mode=mock`，闭环日志与前端都显示「模拟发送」，**不会假装真实平台已收到**。
 4. **命令写法**：在 `unimsg-connector/` 目录下用 `pnpm run doctor`；**不要写 `pnpm doctor`**——pnpm 9 自带同名内置命令（诊断 pnpm 自身），会抢走本项目命令。在脚本 / CI 里推荐全路径：`pnpm --filter @unimsg/server run doctor`。
 
@@ -45,22 +45,22 @@ pnpm --filter @unimsg/server start
 按目标平台选择自检命令：
 
 ```bash
-pnpm run doctor -- --platform=feishu      # 只查飞书
-pnpm run doctor -- --platform=dingtalk    # 只查钉钉
-pnpm run doctor -- --platform=wecom       # 只查企业微信
-pnpm run doctor -- --platform=mail        # 只查邮箱
-pnpm run doctor -- --platform=feishu,mail # 多个平台用逗号
+pnpm run doctor --platform=feishu      # 只查飞书
+pnpm run doctor --platform=dingtalk    # 只查钉钉
+pnpm run doctor --platform=wecom       # 只查企业微信
+pnpm run doctor --platform=mail        # 只查邮箱
+pnpm run doctor --platform=feishu,mail # 多个平台用逗号
 ```
 
 机器可读 JSON（stdout 严格只有 JSON，便于 CI / 脚本消费）：
 
 ```bash
-pnpm --filter @unimsg/server run --silent doctor -- --json
+pnpm --filter @unimsg/server run --silent doctor --json
 ```
 
-> `--json` 场景必须加 `--silent` 且用**全路径**：`pnpm run doctor -- --json` 会把 pnpm 启动横幅写进 stdout，破坏 JSON。
+> `--json` 场景必须加 `--silent` 且用**全路径**：`pnpm run doctor --json` 会把 pnpm 启动横幅写进 stdout，破坏 JSON。
 
-「换账号」可以只换一个平台，例如只把钉钉换成自己的应用：改 `DINGTALK_*` 四个变量 → `pnpm run doctor -- --platform=dingtalk` → 重启后端。飞书 / 企微 / 邮箱的配置不受影响。
+「换账号」可以只换一个平台，例如只把钉钉换成自己的应用：改 `DINGTALK_*` 四个变量 → `pnpm run doctor --platform=dingtalk` → 重启后端。飞书 / 企微 / 邮箱的配置不受影响。
 
 ---
 
@@ -134,7 +134,7 @@ FEISHU_ENCRYPT_KEY=xxxxxxxxxxxxxxxx          # 后台没开加密策略可留空
 ### 3.3 验证命令
 
 ```bash
-pnpm run doctor -- --platform=feishu
+pnpm run doctor --platform=feishu
 ```
 
 期望输出形态（示意）：
@@ -221,7 +221,7 @@ DINGTALK_AES_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx  # 加密密钥
 ### 4.3 验证命令
 
 ```bash
-pnpm run doctor -- --platform=dingtalk
+pnpm run doctor --platform=dingtalk
 ```
 
 期望输出形态（Stream 模式）：三条 PASS——accessToken 校验、机器人编码、收消息通道；且 Stream 模式下不再把 AES Token/Key 误报为缺失。
@@ -264,7 +264,7 @@ pnpm run doctor -- --platform=dingtalk
    - 随机生成 **Token** → `WECOM_TOKEN`
    - 随机生成 **EncodingAESKey**（43 位）→ `WECOM_AES_KEY`
 5. **应用详情 → 企业可信 IP**：把**发信出口公网 IP** 加进去。不知道出口 IP 时：
-   - 先跑 `pnpm run doctor -- --platform=wecom`，若返回 60020，doctor 会直接打印当前出口 IP；
+   - 先跑 `pnpm run doctor --platform=wecom`，若返回 60020，doctor 会直接打印当前出口 IP；
    - 或访问 `https://ifconfig.me/ip` 查看。
 6. 确认应用「可见范围」包含需要收发的成员。
 
@@ -285,7 +285,7 @@ WECOM_AES_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx   # 43 位
 ### 5.3 验证命令
 
 ```bash
-pnpm run doctor -- --platform=wecom
+pnpm run doctor --platform=wecom
 ```
 
 期望：`[PASS] 企业微信 access_token（应用凭据校验）`，退出码 0。若返回 **60020**，doctor 会打印当前出口公网 IP 与「加入企业可信 IP」的操作步骤。
@@ -416,7 +416,7 @@ MAIL_ACCOUNTS=qq,163,work
 ### 6.6 验证命令
 
 ```bash
-pnpm run doctor -- --platform=mail
+pnpm run doctor --platform=mail
 ```
 
 期望：每个账号两条 PASS（IMAP 登录基线 + SMTP 登录自检；2 个账号即 PASS 4），地址自动脱敏：
@@ -561,7 +561,7 @@ A：新的邮箱账号都要在网页端开启 IMAP/SMTP 并生成授权码；�
 A：反垃圾行为不可预测（同一发件人不同轮次可能进 `Junk` 或 `INBOX`）。把 `MAIL_<KEY>_FOLDERS` 设为 `INBOX,Junk` 一起监听，`externalId` 会带目录名，不会和收件箱的 UID 撞车。
 
 **Q：企业微信为什么会 60020，加白后还报？**
-A：确认加的是**当前真实出口公网 IP**（公司代理 / VPN / 家庭宽带 / 云服务器各不相同），保存后等约 1 分钟；IP 变化后需要重新加。用 `pnpm run doctor -- --platform=wecom` 可看到当前出口 IP。
+A：确认加的是**当前真实出口公网 IP**（公司代理 / VPN / 家庭宽带 / 云服务器各不相同），保存后等约 1 分钟；IP 变化后需要重新加。用 `pnpm run doctor --platform=wecom` 可看到当前出口 IP。
 
 **Q：电脑重启后，企业微信可信 IP 会不会变？**
 A：**一般不会**。电脑重启只是重新拿内网 DHCP 地址，公网出口 IP 在路由器 / 校园网或公司出口网关 / 运营商侧，重启电脑不会让出口网关重拨；本次实测 2026-11-03 → 11-04 出口 IP 未变。会变的情况：重启路由器 / 光猫、校园网重新认证、运营商重新分配、切换 Wi-Fi / 手机热点、开或换 VPN / 代理。既然 `pnpm run doctor` 每次都会打印当前出口公网 IP，演示前扫一眼即可；变了就回后台更新可信 IP。要彻底免维护，就用带固定公网 IP 的云服务器部署后端（或把出口固定到该服务器）。

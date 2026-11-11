@@ -18,7 +18,7 @@ LinkHub 把飞书、钉钉、企业微信、邮箱的消息与待办收拢到一
 | 你想做什么 | 直接怎么做 | 预计耗时 | 详细步骤 |
 |---|---|---|---|
 | **Windows 上只想双击看效果** | 双击仓库根目录的 `start.bat`，自动起后端 + 前端并打开浏览器 | 约 1 分钟 | 下文「Windows 一键启动」 |
-| **我只想看效果**（零账号、零平台配置） | `cd unimsg-connector` → `corepack pnpm install` → `pnpm e2e` → 起后端+前端 | 约 5 分钟 | [docs/quickstart.md](docs/quickstart.md) |
+| **我只想看效果**（零账号、零平台配置） | `cd unimsg-connector` → `corepack enable`（重开终端）→ `pnpm install` → `pnpm e2e` → 起后端+前端 | 约 5 分钟 | [docs/quickstart.md](docs/quickstart.md) |
 | **我要换成自己的账号**（飞书 / 钉钉 / 企微 / 邮箱任选） | 复制 `.env.example` 为 `.env`，只填目标平台 → `pnpm run doctor` → 启动 | 约 10 分钟 | 下文「换一个账号，只要 3 步」+ [docs/swap-accounts.md](docs/swap-accounts.md) |
 | **我要现场演示 / 录视频** | 按分镜脚本走，含演示前 10 分钟检查清单与纯 Mock 兜底 | 5–8 分钟 | [docs/demo-script.md](docs/demo-script.md) |
 | **我要交付/打包给评审** | `pnpm run deliver`（git archive，自动排除 `.env`/日志/node_modules）+ 打包后自检 | 约 5 分钟 | [docs/delivery-checklist.md](docs/delivery-checklist.md) |
@@ -48,10 +48,10 @@ pnpm --filter @unimsg/server start
 
 | 平台 | 最少要填的变量 | 单平台自检 |
 |---|---|---|
-| 飞书 | `FEISHU_APP_ID` / `FEISHU_APP_SECRET` / `FEISHU_VERIFY_TOKEN` | `pnpm run doctor -- --platform=feishu` |
-| 钉钉 | `DINGTALK_CLIENT_ID` / `DINGTALK_CLIENT_SECRET` / `DINGTALK_ROBOT_CODE` / `DINGTALK_STREAM=true` | `pnpm run doctor -- --platform=dingtalk` |
-| 企业微信 | `WECOM_CORP_ID` / `WECOM_AGENT_ID` / `WECOM_SECRET`（收消息另加 `WECOM_TOKEN` / `WECOM_AES_KEY`） | `pnpm run doctor -- --platform=wecom` |
-| 邮箱 | `MAIL_<KEY>_ADDRESS` / `MAIL_<KEY>_AUTH_CODE`（授权码，不是登录密码） | `pnpm run doctor -- --platform=mail` |
+| 飞书 | `FEISHU_APP_ID` / `FEISHU_APP_SECRET` / `FEISHU_VERIFY_TOKEN` | `pnpm run doctor --platform=feishu` |
+| 钉钉 | `DINGTALK_CLIENT_ID` / `DINGTALK_CLIENT_SECRET` / `DINGTALK_ROBOT_CODE` / `DINGTALK_STREAM=true` | `pnpm run doctor --platform=dingtalk` |
+| 企业微信 | `WECOM_CORP_ID` / `WECOM_AGENT_ID` / `WECOM_SECRET`（收消息另加 `WECOM_TOKEN` / `WECOM_AES_KEY`） | `pnpm run doctor --platform=wecom` |
+| 邮箱 | `MAIL_<KEY>_ADDRESS` / `MAIL_<KEY>_AUTH_CODE`（授权码，不是登录密码） | `pnpm run doctor --platform=mail` |
 
 > ⚠️ 不要写 `pnpm doctor`：pnpm 9 自带同名内置命令会抢占它（变成诊断 pnpm 自身），本项目命令必须带 `run`，即 `pnpm run doctor`；在脚本里推荐写全路径 `pnpm --filter @unimsg/server run doctor`。
 
@@ -149,13 +149,13 @@ MAIL_MODE=real
 | 运行时可替换性（`config/runtime.ts`） | ✅ 完成：四平台独立 `*_MODE`、`auto` 自动判定、`missing/warnings/reason`，旧 `MOCK` 废弃兼容 |
 | 平台适配器（飞书 / 钉钉 / 企业微信 / 邮箱） | ✅ 代码与单测全部完成；钉钉 Stream 真实收发、邮箱四跳闭环已实测；飞书卡租户策略 `21001`；企微卡「企业可信 IP」 |
 | 邮箱数据源 | ✅ 任意数量 / 任意服务商（8 个常见服务商预设 + `custom`）；IMAP 收 + SMTP 发；993/465 隐式 TLS 与 143/587/25 STARTTLS 均支持 |
-| `doctor` 自检 | ✅ 环境 + 模式 + 逐平台探针（飞书 token / 钉钉 token + 机器人 + 通道 / 企微 gettoken / 邮箱 IMAP+SMTP 登录）+ 出口公网 IP + 中文修复建议；支持 `--json`、`--platform=`、`--help` |
+| `doctor` 自检 | ✅ 环境 + 模式 + 逐平台探针（飞书 token / 钉钉 token + 机器人 + 通道 / 企微 gettoken / 邮箱 IMAP+SMTP 登录）+ 大模型连通性（`llm:chat`，仅在未加 `--platform=` 时执行）+ 出口公网 IP + 中文修复建议；支持 `--json`、`--platform=`、`--help` |
 | 真实平台 API 接入 | ✅ 钉钉 Stream 端到端（真实收 + 回写）；✅ 邮箱四跳闭环；🟡 飞书适配器完成，token 被租户策略 `21001` 拦截；🟡 企微 `gettoken` 通过，真实发送卡「企业可信 IP」 |
 | 消息中枢：状态机 / 幂等 / 异步回写 / 回流 | ✅ 完成（状态回流单向防倒退） |
 | 安全：Bearer 鉴权 + WebSocket 握手校验 | ✅ 完成 |
 | 闭环日志（traceId 全链路可回放） | ✅ 完成（Mock 与真实通道分开描述） |
 | 边界降级：限流退避、OCR 置信度、意图失败回退、DLQ | ✅ 完成 |
-| 单元测试 / 端到端冒烟 | ✅ 2026-11-11 实测：server **270** 条、web **121** 条、e2e **20** 项断言、契约自检 **46** 项全绿 |
+| 单元测试 / 端到端冒烟 | ✅ 2026-11-11 实测：server / web 单测全绿（条数以实际输出为准）、e2e **20** 项断言、契约自检 **46** 项全绿 |
 | 上手与交付文档 | ✅ [quickstart.md](docs/quickstart.md)（5 分钟上手）/ [demo-script.md](docs/demo-script.md)（演示脚本）/ [delivery-checklist.md](docs/delivery-checklist.md)（交付打包）/ [ai-integration.md](docs/ai-integration.md)（AI 服务集成说明）/ [risk-register.md](docs/risk-register.md)（风险台账）；README 顶部有「30 秒选路径」 |
 | 健壮性加固（本轮） | ✅ webhook 空/畸形事件 400 不入库、端口占用中文提示、CORS 白名单、状态回流防倒退、日志脱敏、空 `API_TOKEN` 不关鉴权、邮箱嵌套 MIME/水位持久化/中文目录 |
 | 大模型真实调用（意图 / 摘要 / 回复草稿） | ✅ OpenAI 兼容协议（默认小米 MiMo `mimo-v2.6-flash`）；失败一律回退规则识别并如实标注来源；见 [ai-integration.md](docs/ai-integration.md) |
@@ -168,7 +168,7 @@ MAIL_MODE=real
 
 - **接收**：四类数据源统一接入。飞书 **长连接（WebSocket，免公网回调，事件明文推送）** 或 Webhook（校验 Verification Token，配置 Encrypt Key 时 AES 解密，支持 `url_verification` challenge）；钉钉 **Stream 长连接**（本机免公网）或 HTTP 回调（`timestamp + HMAC` 签名 + AES 解密）；企业微信 XML 回调（SHA1 验签 + AES 解密 + GET `echostr` 握手）；邮箱 IMAP 轮询（UID 水位，首轮只立基线）。Mock 下签名带 `mock` 或 `dev*` 前缀即通过。
 - **展示**：REST 列表 + WebSocket 实时推送，按平台 / 状态筛选。
-- **处理**：直接回复、标记完成；规则 Mock 给出意图与回复草稿（真实大模型调用尚未接入）。
+- **处理**：直接回复、标记完成；意图 / 摘要 / 回复草稿走大模型真实调用（OpenAI 兼容协议，默认 MiMo `mimo-v2.6-flash`），失败 / 超时 / 低置信一律回退内置关键词规则，界面如实标注「MiMo 识别」或「规则兜底」，见 [docs/ai-integration.md](docs/ai-integration.md)。
 - **回写**：按目标平台格式转换后异步发送，结果经 WS 推送，并写入 `delivery`。真实接口：飞书 `im/v1/messages`、钉钉机器人 `groupMessages/send` / `oToMessages/batchSend`、企微 `cgi-bin/message/send`、邮箱 SMTP（带 `In-Reply-To` 串回会话）。
 - **回流**：平台状态事件经 Webhook 回流（邮箱由轮询回收），`syncStatus` 更新本地并留痕，支持按 `traceId` 或 `externalId` 定位消息。
 
@@ -184,7 +184,7 @@ received → processing → replied → sent → synced
 - **可替换性**：换账号只改 `.env`；每个平台的 `mode / policy / 收 / 发 / missing / warnings / reason` 是纯函数解析结果，可单测、可被 API、日志、doctor 复用。
 - **幂等**：以 `(platform, externalId)` 为唯一键，平台重推直接返回已有记录（`duplicate=true`），不重复入库（DDL 中有 `UNIQUE` 约束）。邮箱的 `externalId` 为 `<账号>:<目录>:<UID>`，多账号、多目录互不撞车。
 - **异步回写**：`reply` 先同步推进到 `replied`，随即返回 `202 + taskId`，真正发送在后台完成，避免接口阻塞。
-- **边界降级**：限流令牌桶 + 指数退避只作用于发送路径（每平台容量 60、每秒补 30，重试上限 `SEND_MAX_RETRY`）；OCR 置信度低于 `OCR_CONFIDENCE_THRESHOLD`（默认 0.7）标记「待人工确认」；LLM 超时 / 失败回退「未分类」，绝不伪造意图；重试耗尽写入 DLQ。
+- **边界降级**：限流令牌桶 + 指数退避只作用于发送路径（每平台容量 60、每秒补 30，重试上限 `SEND_MAX_RETRY`）；OCR 置信度低于 `OCR_CONFIDENCE_THRESHOLD`（默认 0.7）标记「待人工确认」；LLM 超时 / 失败 / 低置信回退内置关键词规则并标注「规则兜底」，绝不伪造意图；重试耗尽写入 DLQ。
 - **密钥安全**：平台 / 大模型 / OCR 凭据只从服务端环境变量读取，绝不以 `VITE_` 注入前端，`.env` 已被 `.gitignore` 忽略。
 
 ## 前端设计与可访问性
@@ -264,15 +264,15 @@ LinkHub-test/
 
 | 想做什么 | 操作 | 实际动作 |
 |---|---|---|
-| 本地一键启动 | 双击 `start.bat` | 自动装依赖 → 起后端 `:3001` + 前端 `:5173` → 等两者就绪 → 打开浏览器 |
+| 本地一键启动 | 双击 `start.bat` | 自动装依赖 → 起后端（端口读 `.env` 的 `SERVER_PORT`，默认 `:3001`）+ 前端 `:5173` → 等两者就绪 → 打开浏览器 |
 | 纯离线演示（强制 Mock） | `start.bat mock` | 同上，但四平台全部强制 Mock，不调用任何真实平台接口 |
 | 配置 / 修改平台账号 | 双击 `setup-accounts.bat`（或 `start.bat accounts`） | 已有 `.env` 原样打开、没有则从模板创建，用记事本编辑 |
 | 账号自检 | `start.bat doctor` | 只读自检：凭据 / 收发能力 / 出口公网 IP / 中文修复建议 |
 | Docker 一键启动 | 双击 `start-docker.bat`（或 `start.bat docker`） | `docker compose up -d --build`，同源访问 `http://127.0.0.1:3001` |
-| 停止本地服务 | `start.bat stop` | 按 3001 / 5173 端口精确结束进程（不会误杀其他 Node 进程） |
+| 停止本地服务 | `start.bat stop` | 结束**占用后端端口（读 `.env` 的 `SERVER_PORT`，默认 3001）与 5173 的进程**。它按端口找占用者，**可能是别的程序，会被一并结束**；不确定时直接关掉那两个服务控制台窗口更安全 |
 | 停止 Docker | `start.bat stopdocker` | `docker compose down`，数据卷保留 |
 
-脚本自动处理：Node ≥ 20 检测、无全局 pnpm 时回退 `corepack pnpm`、首次运行 `pnpm install --frozen-lockfile`、**统计 `.env` 里非空凭据组数并打印账号状态**（0 组就明确提示「全 Mock」，不会再出现「以为配了其实没配」）、每次启动重写 `packages/web/.env` 让 `VITE_API_TOKEN` 永远与后端 `API_TOKEN` 一致（避免 401，自定义 `VITE_API_BASE` 则不覆盖）、端口占用检查（重复双击不会起第二份）、轮询 `/api/health` 与前端首页后再打开浏览器。
+脚本自动处理：Node ≥ 20 检测、无全局 pnpm 时回退 `corepack pnpm`、首次运行 `pnpm install --frozen-lockfile`、**统计 `.env` 里非空凭据组数并打印账号状态**（0 组就明确提示「全 Mock」，不会再出现「以为配了其实没配」）、每次启动重写 `packages/web/.env` 让 `VITE_API_TOKEN` 永远与后端 `API_TOKEN` 一致、`VITE_API_BASE` 指向当前 `SERVER_PORT`（避免 401 与端口漂移；指向非 `127.0.0.1` 的自定义 `VITE_API_BASE` 则不覆盖）、按 `SERVER_PORT` + 5173 做端口占用检查（重复双击不会起第二份；被别的程序占用时提示改 `SERVER_PORT` 或关掉该程序，而不是先强杀）、轮询 `/api/health` 与前端首页后再打开浏览器。
 
 ### 账号配置在哪？为什么「我明明配过」却没生效
 
@@ -295,7 +295,7 @@ cd unimsg-connector
 pnpm install
 ```
 
-未全局安装 pnpm 时，可用 Node 自带的 corepack：`corepack pnpm install`（本仓库实测即用此方式，pnpm 9.15.9）。
+未全局安装 pnpm 时，用 Node 自带的 corepack：先 `corepack enable` 让 `pnpm` 进入 PATH（**之后需重开终端**），再 `pnpm install`；也可以只用一条 `corepack pnpm install` 装依赖，但后续 `pnpm ...` 命令仍需走 `corepack pnpm ...`（根目录脚本内部会再调用 `pnpm -r`，所以推荐一次性 `corepack enable`）。本仓库实测 pnpm 9.15.9。
 
 ### 本地演示（无需域名 / 无需平台账号）
 
@@ -338,7 +338,7 @@ pnpm install
 
 | 变量 | 说明 |
 |---|---|
-| `SERVER_PORT` | 服务端口，默认 `3001` |
+| `SERVER_PORT` | 服务端口，默认 `3001`；`start.bat` / `start.bat stop` 也读它定位后端端口（前端固定 `5173`） |
 | `SERVER_HOST` | 监听地址；留空 = 所有网卡（局域网/容器可访问）。只想本机访问可设 `127.0.0.1`（注意：局域网访问时默认 `dev-token` 有风险，见安全提示） |
 | `API_TOKEN` | 入口鉴权令牌（默认 `dev-token`，生产务必修改；REST 用 Bearer，`/ws?token=` 用同名令牌）。**留空会回退 `dev-token` 并告警、仍强制鉴权**；`NODE_ENV=production` 且仍为空/默认时拒绝启动 |
 | `CORS_ORIGINS` | CORS 白名单，逗号分隔 Origin（如 `http://127.0.0.1:5173`）。**留空 = 放行所有来源**（兼容本地演示）；填了则名单外 Origin 返回 403 JSON |
@@ -346,7 +346,7 @@ pnpm install
 | `FEISHU_MODE` / `DINGTALK_MODE` / `WECOM_MODE` / `MAIL_MODE` | 每平台运行模式，`auto`（默认）/ `real` / `mock`，见上文「运行模式」 |
 | `MOCK` | **已废弃**，仅为兼容旧配置保留；只在没写 `*_MODE` 时作为默认策略，会打印废弃警告 |
 
-### 边界降级与智能（预留）
+### 边界降级与智能
 
 | 变量 | 说明 |
 |---|---|
@@ -410,10 +410,10 @@ pnpm install
 
 | 平台 | 收消息方式 | 需要公网吗 | 关键点 | 验证命令（在 `unimsg-connector/` 下） |
 |---|---|---|---|---|
-| 飞书 | 长连接（WebSocket，推荐免公网）或事件订阅 HTTP 回调 | 长连接否 / 回调是 | `im.message.receive_v1` 事件 +（`FEISHU_STREAM=true` 免公网；HTTP 回调需 Verification Token 与公网 URL） | `pnpm run doctor -- --platform=feishu` |
-| 钉钉 | Stream 长连接（推荐）或 HTTP 回调 | Stream 否 / 回调是 | 机器人消息接收模式选 Stream，`DINGTALK_STREAM=true`，发布版本 | `pnpm run doctor -- --platform=dingtalk` |
-| 企业微信 | 应用「API 接收」回调 | 是（需公网 URL） | Token / EncodingAESKey + 出口 IP 加入「企业可信 IP」 | `pnpm run doctor -- --platform=wecom` |
-| 邮箱 | 本机 IMAP 轮询 | 否 | 网页端开启 IMAP/SMTP + 生成授权码；可多账号 | `pnpm run doctor -- --platform=mail` |
+| 飞书 | 长连接（WebSocket，推荐免公网）或事件订阅 HTTP 回调 | 长连接否 / 回调是 | `im.message.receive_v1` 事件 +（`FEISHU_STREAM=true` 免公网；HTTP 回调需 Verification Token 与公网 URL） | `pnpm run doctor --platform=feishu` |
+| 钉钉 | Stream 长连接（推荐）或 HTTP 回调 | Stream 否 / 回调是 | 机器人消息接收模式选 Stream，`DINGTALK_STREAM=true`，发布版本 | `pnpm run doctor --platform=dingtalk` |
+| 企业微信 | 应用「API 接收」回调 | 是（需公网 URL） | Token / EncodingAESKey + 出口 IP 加入「企业可信 IP」 | `pnpm run doctor --platform=wecom` |
+| 邮箱 | 本机 IMAP 轮询 | 否 | 网页端开启 IMAP/SMTP + 生成授权码；可多账号 | `pnpm run doctor --platform=mail` |
 
 - 飞书：`https://<域名>/api/webhook/feishu`（配置回调 URL 时服务自动回 `challenge`）。
 - 钉钉 HTTP 回调：`https://<域名>/api/webhook/dingtalk`，把 Token / AES Key 填进 `DINGTALK_AES_TOKEN` / `DINGTALK_AES_KEY`。
@@ -444,13 +444,13 @@ pnpm install
 | 命令 | 实测结果 |
 |---|---|
 | `pnpm typecheck` | `shared` / `server` / `web` 三包检查通过（exit 0） |
-| `pnpm test`（server） | **217 passed / 217**（16 个测试文件：连接器、真实适配器、MIME、IMAP 水位/目录、webhook HTTP 级、app/CORS、doctor 探针/渲染/拼写检查等），约 1–2s |
-| `pnpm test:web` | **112 passed / 112**（16 个测试文件：httpApi / wsRealtime / appStore / mockApi / demoSamples / AccountsPage / FirstRunGuide / InboxPage / MessageCard / ReplyComposer / format / ink / due / footerState / morph / sparkline） |
+| `pnpm test`（server） | **全部通过**（条数以实际输出为准；覆盖连接器、真实适配器、MIME、IMAP 水位/目录、webhook HTTP 级、app/CORS、doctor 探针/渲染/拼写检查等），约 1–2s |
+| `pnpm test:web` | **全部通过**（条数以实际输出为准；覆盖 httpApi / wsRealtime / appStore / mockApi / demoSamples / AccountsPage / FirstRunGuide / InboxPage / MessageCard / ReplyComposer / format / ink / due / footerState / morph / sparkline） |
 | `pnpm e2e`（Windows PowerShell，默认 3001） | **20 项断言全部 PASS + `SMOKE OK`**，exit 0（约 10s）；强制四平台 `mock`，完全离线 |
 | `pnpm e2e:sh`（Git Bash，3123 端口） | 同上，**20 项 PASS + `SMOKE OK`**（CI 使用此命令） |
 | 契约自检（后端起 mock 后） | `node packages/web/scripts/verify-contract.mjs http://127.0.0.1:3001 dev-token` → **46 PASS / 0 FAIL**（含 `modes` / `sentMock` / `mode`+`policy` / 邮箱账号明细 / `delivery` / WS 握手） |
-| `pnpm run doctor` | **PASS 8 / FAIL 1 / SKIP 0，退出码 1**：唯一 FAIL 为飞书 `21001`（租户策略，代码无解）；退出码 1 是「有 FAIL」的约定结果 |
-| `pnpm run doctor -- --platform=mail` | **PASS 4 / FAIL 0**（两个邮箱账号的 IMAP 登录基线 + SMTP 认证；地址已脱敏） |
+| `pnpm run doctor` | PASS / FAIL / SKIP 计数**以实际输出为准**（已新增「大模型连通性」探针 `llm:chat`，仅在未加 `--platform=` 时执行）；2026-11-10 真实凭据实测唯一 FAIL 为飞书 `21001`（租户策略，代码无解），退出码 1 是「有 FAIL」的约定结果 |
+| `pnpm run doctor --platform=mail` | **PASS 4 / FAIL 0**（两个邮箱账号的 IMAP 登录基线 + SMTP 认证；地址已脱敏） |
 | CI（`.github/workflows/ci.yml`） | Ubuntu + Node 22 + pnpm 9.15.9：install → typecheck → server 测试 → web 测试 → web build → `e2e:sh 3121` |
 
 ### 本轮健壮性加固验收（2026-11-04 实测）
@@ -516,7 +516,7 @@ pnpm install
 | PostgreSQL / Redis 持久化 | ❌ 未实现 | 仅有 `001_init.sql` 与仓储接口；当前为单实例内存 + 文件快照，不是关系库 |
 | 真实大模型意图识别 | ✅ 已实现（OpenAI 兼容协议，默认 MiMo flash） | 2026-11-11 实测：5 条业务样例 **5/5** 命中（同批关键词规则仅 2/5），平均 5.47s、最大 9.3s；doctor 探针实跑 2.5s PASS。失败/超时/低置信一律回退规则并标注来源 |
 | OCR 真实调用 | ❌ 未实现 | 仍是占位实现；赛题 A 不依赖 OCR，配置项已预留 |
-| 三平台真实收发 | 🟡 部分 | 2026-11-10 用真实 `.env` 跑 `doctor`：**PASS 8 / FAIL 1**。钉钉 accessToken / 机器人编码 / 收消息通道、企微 access_token、163+QQ 邮箱 IMAP+SMTP 全部 PASS；唯一 FAIL 是飞书租户策略 `21001`（`start.bat doctor` 可复现） |
+| 三平台真实收发 | 🟡 部分 | 2026-11-10 用真实 `.env` 跑 `doctor`：钉钉 accessToken / 机器人编码 / 收消息通道、企微 access_token、163+QQ 邮箱 IMAP+SMTP 全部 PASS；唯一 FAIL 是飞书租户策略 `21001`（`start.bat doctor` 可复现）。计数以实际输出为准（此后新增了大模型连通性探针） |
 | 入口鉴权（Bearer + WS）| ✅ 已实现 | `/api/*` 与 `/ws` 同一 token；默认 `dev-token` 仅演示用，对外需改 |
 | CORS 白名单 | ✅ 已实现 | `CORS_ORIGINS` 白名单（不填保持 `*` 兼容本地；填了名单外 403 JSON） |
 | 日志脱敏 | ✅ 已实现 | 闭环日志不含正文；doctor 报告邮箱脱敏；启动日志与 `mock-send` 已不打印邮箱/正文 |
@@ -553,13 +553,13 @@ pnpm install
 | `pnpm dev` | 开发模式（tsx watch） |
 | `pnpm start` | 启动服务（:3001） |
 | `pnpm typecheck` | TypeScript 类型检查（shared + server + web） |
-| `pnpm test` | 服务端单元测试（245 条，含 doctor / webhook / MIME / 出站附件 / compose / 快照） |
-| `pnpm test:web` | 前端单元测试（117 条，含新建发送 / 附件工具） |
+| `pnpm test` | 服务端单元测试（条数以实际输出为准，含 doctor / webhook / MIME / 出站附件 / compose / 快照） |
+| `pnpm test:web` | 前端单元测试（条数以实际输出为准，含新建发送 / 附件工具） |
 | `pnpm --filter @unimsg/web lint:css` | 样式护栏：字号 rem / 色值走令牌 / 位移走 transform / 暗色块禁 `!important` / 圆角用尺阶 |
-| `pnpm run doctor` | 只读自检：环境 + 模式 + 逐平台探针 + 出口公网 IP + 中文修复建议；有 FAIL 时退出码 1 |
-| `pnpm run doctor -- --platform=feishu,mail` | 只检查指定平台 |
-| `pnpm run doctor -- --help` | 查看 doctor 全部参数与退出码 |
-| `pnpm --filter @unimsg/server run --silent doctor -- --json` | 机器可读 JSON（stdout 严格合法 JSON；`--silent` 避免 pnpm banner 混入） |
+| `pnpm run doctor` | 只读自检：环境 + 模式 + 逐平台探针 + 大模型连通性 + 出口公网 IP + 中文修复建议；有 FAIL 时退出码 1；四平台都没配凭据时结论为「⚠ 尚未配置任何平台」而非「✔ 自检通过」 |
+| `pnpm run doctor --platform=feishu,mail` | 只检查指定平台 |
+| `pnpm run doctor --help` | 查看 doctor 全部参数与退出码 |
+| `pnpm --filter @unimsg/server run --silent doctor --json` | 机器可读 JSON（stdout 严格合法 JSON；`--silent` 避免 pnpm banner 混入） |
 | `pnpm e2e` | 一键端到端冒烟（Windows PowerShell） |
 | `pnpm e2e:sh` | 一键端到端冒烟（macOS / Linux / Git Bash） |
 | `pnpm run deliver` | 交付打包：`git archive` 生成 zip，自动排除 `.env*` / 日志 / 状态文件 / `node_modules`（工作区不干净会拒绝） |
