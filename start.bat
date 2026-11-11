@@ -14,7 +14,7 @@ rem                               (default 3001) + frontend :5173
 rem    start.bat mock             same, but force all 4 platforms to MOCK (offline)
 rem    start.bat accounts         open unimsg-connector\.env for editing
 rem    start.bat doctor           read-only account / credential self-check
-rem    start.bat docker           Docker mode: one container, same origin :3001
+rem    start.bat docker           Docker mode: one container, host port from HOST_PORT (default 3001)
 rem    start.bat stop             end the processes owning backend port / 5173
 rem    start.bat stopdocker       docker compose down
 rem    start-docker.bat           double-click shortcut for Docker mode
@@ -42,17 +42,23 @@ if not exist "%APP%\package.json" (
 rem Backend port follows SERVER_PORT in unimsg-connector\.env (default 3001).
 rem Resolved HERE, before the mode dispatch, so every entry point sees it:
 rem :LOCAL, :MOCK (which jumps to :LOCAL) and a direct "start.bat stop".
-rem Only a non-empty SERVER_PORT wins; blank / commented / absent = 3001.
-rem The inner for /f keeps just the first word, so a trailing space or an
-rem inline "3002 # note" comment cannot leak into URLs or the port check.
+rem scripts\env-read.mjs mirrors dotenv semantics (BOM / spaces / inline # comments /
+rem quotes / case), and invalid ports fall back to 3001 instead of leaking "abc".
 set "BACKEND_PORT=3001"
-if exist "%APP%\.env" (
-  for /f "usebackq eol=# tokens=1,* delims==" %%A in ("%APP%\.env") do (
-    if /i "%%~A"=="SERVER_PORT" if not "%%~B"=="" (
-      for /f "tokens=1" %%P in ("%%~B") do set "BACKEND_PORT=%%P"
-    )
+set "DOCKER_PORT=3001"
+set "ENV_TOKEN="
+set "ENV_ACCT="
+where node >nul 2>nul
+if not errorlevel 1 (
+  for /f "usebackq tokens=1,* delims==" %%A in (`node "%APP%\scripts\env-read.mjs" all`) do (
+    if "%%A"=="PORT"      set "BACKEND_PORT=%%B"
+    if "%%A"=="HOST_PORT" set "DOCKER_PORT=%%B"
+    if "%%A"=="TOKEN"     set "ENV_TOKEN=%%B"
+    if "%%A"=="ACCOUNTS"  set "ENV_ACCT=%%B"
   )
 )
+if not defined ENV_TOKEN set "ENV_TOKEN=dev-token"
+if not defined ENV_ACCT set "ENV_ACCT=0"
 
 set "MODE=%~1"
 if "%MODE%"=="" set "MODE=local"
@@ -124,24 +130,10 @@ if exist "%APP%\packages\server\node_modules\.bin\tsx.cmd" (
 )
 
 rem [2/4] account status + point the frontend at the local backend ----------
-rem Count non-empty credential groups so a missing .env can never be mistaken
-rem for "accounts configured". Credential VALUES are never printed.
-rem Mail is multi-account by design: ANY non-empty MAIL_..._AUTH_CODE counts
-rem (qq / 163 / gmail / work / school2 ...), not just two hard-coded names.
-rem The key part must be non-empty, like the server-side discovery rule.
-set "DEMO_TOKEN=dev-token"
-set "ACCT=0"
-if exist "%APP%\.env" (
-  for /f "usebackq eol=# tokens=1,* delims==" %%A in ("%APP%\.env") do (
-    if /i "%%~A"=="API_TOKEN" if not "%%~B"=="" set "DEMO_TOKEN=%%~B"
-    if /i "%%~A"=="FEISHU_APP_SECRET"      if not "%%~B"=="" set /a "ACCT+=1"
-    if /i "%%~A"=="DINGTALK_CLIENT_SECRET" if not "%%~B"=="" set /a "ACCT+=1"
-    if /i "%%~A"=="WECOM_SECRET"           if not "%%~B"=="" set /a "ACCT+=1"
-    rem Mail: match the key shape, any provider. MAIL_ = 5 chars, _AUTH_CODE = 10.
-    set "KVAR=%%~A"
-    if /i "!KVAR:~0,5!"=="MAIL_" if /i "!KVAR:~-10!"=="_AUTH_CODE" if not "!KVAR:~5,-10!"=="" if not "%%~B"=="" set /a "ACCT+=1"
-  )
-)
+rem Counts come from scripts\env-read.mjs (same uppercase MAIL_<KEY>_AUTH_CODE
+rem rule as the server). Credential VALUES are never printed.
+set "DEMO_TOKEN=%ENV_TOKEN%"
+set "ACCT=%ENV_ACCT%"
 if defined FORCED_MOCK (
   echo [acct] %ACCT% credential group^(s^) in .env, but all platforms FORCED to MOCK.
   echo        No real platform API will be called in this run.
@@ -176,7 +168,9 @@ if defined CUSTOM_WEBENV (
 )
 
 rem [3/4] backend ------------------------------------------------------------
-rem The server reads SERVER_PORT from .env itself, so it binds BACKEND_PORT.
+rem Pin SERVER_PORT to the validated value so a malformed .env cannot make the
+rem server bind a different port than the health check / Web URL below.
+set "SERVER_PORT=%BACKEND_PORT%"
 echo [3/4] Starting backend on :%BACKEND_PORT% ...
 start "LinkHub Server :%BACKEND_PORT%" /D "%APP%" cmd /k "%PNPM% --filter @unimsg/server start"
 
@@ -298,7 +292,7 @@ rem ---------------------------------------------------------------------------
 :DOCKER
 rem ---------------------------------------------------------------------------
 echo.
-echo  LinkHub - Docker mode  ^(single container on :3001^)
+echo  LinkHub - Docker mode  ^(single container, host port %DOCKER_PORT%^)
 echo  ---------------------------------------------------------------
 where docker >nul 2>nul
 if errorlevel 1 (
@@ -316,10 +310,10 @@ if errorlevel 1 (
 docker compose ps
 popd
 echo.
-echo   Web      http://127.0.0.1:3001
+echo   Web      http://127.0.0.1:%DOCKER_PORT%
 echo   Token    linkhub-local-demo-2026-change-me  ^(override: LINKHUB_DEPLOY_TOKEN^)
 echo   Stop     start.bat stopdocker   or   docker compose down
-start "" http://127.0.0.1:3001
+start "" http://127.0.0.1:%DOCKER_PORT%
 echo.
 echo Press any key to close THIS launcher window (container keeps running).
 pause >nul
