@@ -68,6 +68,12 @@ function logRuntime(): void {
     // 地址脱敏后再打印：日志会被贴进 issue/截图，绝不暴露完整邮箱
     console.log(`[unimsg] 邮箱账号: ${config.mail.accounts.map((a) => `${a.label}<${maskAddress(a.address)}>[${a.folders.join(',')}]`).join(' / ')}`);
   }
+  // 大模型也如实标注通道：real 才真正调用，mock 是内置规则（绝不打印 Key）
+  console.log(
+    config.llm.mode === 'real'
+      ? `[unimsg] 大模型: ${config.llm.model} @ ${config.llm.endpoint}（真实调用，超时 ${config.llm.timeoutMs}ms）`
+      : `[unimsg] 大模型: 规则识别（${config.llm.reason}）`,
+  );
   console.log('[unimsg] 自检: pnpm run doctor（凭据/网络/出口IP/修复建议一文看清）');
 }
 
