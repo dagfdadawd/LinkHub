@@ -7,6 +7,8 @@
 > **配套文档**：[quickstart.md](quickstart.md)（5 分钟上手）｜[demo-script.md](demo-script.md)（现场演示脚本）｜[delivery-checklist.md](delivery-checklist.md)（交付/打包 checklist）｜[swap-accounts.md](swap-accounts.md)（换账号指南）
 >
 > **v1.1 收尾说明（Lead 补注）**：§7.3 中标 🧪 的修复已在收尾轮合并并验收（`pnpm typecheck` / server 测试 / web 测试 / `pnpm e2e` / 契约自检全绿，数字见 README「测试与验证」）；本台账保留原文用于复盘，状态以 README 与代码为准。R-02（`packages/web/.env` 与页脚状态）、R-19（日志脱敏）、R-24（UIDVALIDITY）均已有对应修复。
+>
+> **2026-11-11 补注**：§2 的 G4（大模型）已落**真实调用**（OpenAI 兼容协议，默认 MiMo `mimo-v2.6-flash`；失败/超时/低置信回退内置规则并标注来源，见 [ai-integration.md](ai-integration.md)），G1（独立部署）已提供 Docker 单容器方案（见 [deploy.md](deploy.md)）；G5（OCR）与 G2（PG/Redis）仍未实现。下文正文按 v1.0 原样保留，不改写当时的历史判断。
 
 ---
 

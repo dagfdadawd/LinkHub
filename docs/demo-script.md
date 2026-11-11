@@ -2,11 +2,11 @@
 
 > 原则：**只演示当前真实可用的能力**（钉钉 Stream 收 + 机器人回写；邮箱 IMAP 收 + SMTP 发）；飞书/企微用 Mock 通道演示，并在界面和口头上都明确「这是模拟发送，没有调用真实平台」。做不到的不现场承诺。
 > 操作人标记：**演示人**（讲 + 操作 UI/手机）/ **助手**（终端、起服务、灌消息）。
-> 相关文档：[quickstart.md](quickstart.md) · [swap-accounts.md](swap-accounts.md) · [risk-register.md](risk-register.md) · [README.md](../README.md)
+> 相关文档：[quickstart.md](quickstart.md) · [swap-accounts.md](swap-accounts.md) · [ai-integration.md](ai-integration.md) · [risk-register.md](risk-register.md) · [README.md](../README.md)
 
 ## 演示前 10 分钟检查清单
 
-- [ ] `cd unimsg-connector && pnpm run doctor -- --platform=dingtalk,mail` → 全 PASS（看到 `✔ 自检通过`、退出码 0）
+- [ ] `cd unimsg-connector && pnpm run doctor --platform=dingtalk,mail` → 全 PASS（看到 `✔ 自检通过`、退出码 0）
 - [ ] `pnpm e2e` 跑一遍 → 20 条 PASS + `SMOKE OK`（离线全 Mock，证明环境没坏；约 10–20 秒）
 - [ ] 起后端（在 `unimsg-connector/` 下，混合演示形态：飞书/企微 Mock，钉钉/邮箱真实）：
   - PowerShell：`$env:FEISHU_MODE="mock"; $env:WECOM_MODE="mock"` 后执行 `pnpm --filter @unimsg/server start`
@@ -24,13 +24,13 @@
 | 时间 | 画面 | 操作 | 成功信号 / 话术 |
 |---|---|---|---|
 | 0:00–0:30 | 首页 | 演示人：一句话痛点「消息散在飞书/钉钉/企微/邮箱四个入口」→ 依次点侧边栏「收件箱 / 待办 / 全链路回放 / 平台账号」 | 「统一消息模型 + 四类数据源，换账号只改配置」 |
-| 0:30–2:00 | 收件箱↔手机 | 演示人：手机钉钉**单聊**给机器人发「周五前交周报」（要演示群聊就在群里 @机器人；平台只推 @ 消息）；助手看收件箱 | 2 秒内新消息出现（WebSocket 推送，无需刷新）；点开详情能看到会话（单聊 / 群聊「群名」）、发送人、意图=待办 |
+| 0:30–2:00 | 收件箱↔手机 | 演示人：手机钉钉**单聊**给机器人发「周五前交周报」（要演示群聊就在群里 @机器人；平台只推 @ 消息）；助手看收件箱 | 2 秒内新消息出现（WebSocket 推送，无需刷新）；点开详情能看到会话（单聊 / 群聊「群名」）、发送人、意图=待办（意图为后台异步填充，稍等 1–10s；详情页标注「MiMo 识别」或「规则兜底」） |
 | 2:00–2:45 | 详情→手机 | 演示人：在详情里回复「收到，周五前完成」 | 状态 `replied → sent → synced`；**手机钉钉收到回复**；「投递方式」显示「真实接口」 |
 | 2:45–4:00 | 邮箱 | 演示人：另一个邮箱给被监听邮箱发中文邮件；等轮询（≤45s，或直接用提前发好的那封）→ 在 UI 回复 | 收件箱出现邮箱消息并带回信；发件邮箱收到 `Re:` 回信；话术「IMAP 收 + SMTP 发，同样不依赖公网回调」；若进垃圾箱如实说明 `FOLDERS=INBOX,Junk` |
 | 4:00–5:00 | 收件箱 | 助手执行「Mock 消息注入」两条命令（见下），演示人讲解 | 飞书/企微消息进入收件箱；回复后「投递方式」为**模拟发送（未调用真实平台）**；话术「飞书卡租户策略 21001、企微卡可信 IP 60020，所以这两家今天用 Mock 通道；**Mock 一定标注，绝不假成功**，这是设计原则」 |
 | 5:00–5:40 | 回放页 | 演示人：复制 traceId → 打开「全链路回放」 | 事件链 `received → intent → processing → replied → sent → synced`；Mock 的 sent/synced 写明「模拟发送/模拟状态回流」，真实钉钉那条写「真实接口」 |
 | 5:40–6:20 | 账号页 | 演示人：指 4 张卡的 `mode` Tag、`policy`、缺失变量、warnings | 「钉钉/邮箱=真实接口，飞书/企微=Mock 模拟」；话术「换账号只改 `.env` + 一条 `pnpm run doctor` 自检，不改代码」 |
-| 6:20–7:00 | 收尾 | 演示人：如实说边界 | 飞书需企业认证/合规租户；企微需可信 IP + 回调 Token/AESKey + 公网；**钉钉/企微群聊只能收 @机器人 的消息**（平台限制，非 @ 消息无法聚合）；PG/Redis、LLM/OCR、Docker 未实现（规则 Mock/内存）。边界清单见 [risk-register.md](risk-register.md) |
+| 6:20–7:00 | 收尾 | 演示人：如实说边界 | 飞书需企业认证/合规租户；企微需可信 IP + 回调 Token/AESKey + 公网；**钉钉/企微群聊只能收 @机器人 的消息**（平台限制，非 @ 消息无法聚合）；PG/Redis 未实现（内存 + 文件快照）、OCR 仍是占位；**大模型已接真实调用**（默认 MiMo，失败/超时/低置信回退规则并标注来源，见 [ai-integration.md](ai-integration.md)），Docker 单容器部署已提供（见 [deploy.md](deploy.md)）。边界清单见 [risk-register.md](risk-register.md) |
 
 ## Mock 消息注入（仅当后端以 `FEISHU_MODE=mock`、`WECOM_MODE=mock` 启动时）
 
@@ -47,9 +47,9 @@ node -e "fetch('http://127.0.0.1:3001/api/webhook/wecom',{method:'POST',headers:
 - **现场自证命令**（助手执行，演示人念结论）：
 
 ```bash
-pnpm run doctor -- --platform=feishu        # 预期 FAIL 21001 +「企业认证/换合规租户」建议（外部限制，代码无解）
-pnpm run doctor -- --platform=wecom         # gettoken 可能 PASS；若 60020，按建议把出口 IP 加入「企业可信 IP」
-pnpm run doctor -- --platform=dingtalk,mail # 真实可用：全 PASS
+pnpm run doctor --platform=feishu        # 预期 FAIL 21001 +「企业认证/换合规租户」建议（外部限制，代码无解）
+pnpm run doctor --platform=wecom         # gettoken 可能 PASS；若 60020，按建议把出口 IP 加入「企业可信 IP」
+pnpm run doctor --platform=dingtalk,mail # 真实可用：全 PASS
 ```
 
 - 话术：能力边界已如实写进 README「设计文档承诺 vs 当前实现」与 [risk-register.md](risk-register.md)，今天不演示未打通的通道，也不拿 Mock 冒充真实。
