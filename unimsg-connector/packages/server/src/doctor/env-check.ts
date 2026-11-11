@@ -10,7 +10,7 @@
 
 /** 文档中定义的全部精确变量名（与 .env.example / config 保持一致） */
 export const KNOWN_ENV_KEYS: readonly string[] = [
-  // 服务 / 存储 / 鉴权
+  // 服务 / 存储 / 鉴权 / 上传
   'SERVER_PORT',
   'SERVER_HOST',
   'CORS_ORIGINS',
@@ -18,19 +18,23 @@ export const KNOWN_ENV_KEYS: readonly string[] = [
   'DATABASE_URL',
   'REDIS_URL',
   'MOCK',
+  'MAX_UPLOAD_MB',
   // 运行模式
   'FEISHU_MODE',
   'DINGTALK_MODE',
   'WECOM_MODE',
   'MAIL_MODE',
-  // 边界 / 智能（预留）
+  // 边界 / 智能
   'OCR_CONFIDENCE_THRESHOLD',
   'SEND_MAX_RETRY',
   'RETRY_BASE_MS',
   'LLM_TIMEOUT_MS',
+  'PLATFORM_TIMEOUT_MS',
   'LLM_PROVIDER',
   'LLM_API_KEY',
+  'LLM_MODEL',
   'LLM_ENDPOINT',
+  'LLM_MIN_CONFIDENCE',
   'OCR_PROVIDER',
   'OCR_API_KEY',
   'OCR_SECRET_ID',
@@ -40,6 +44,7 @@ export const KNOWN_ENV_KEYS: readonly string[] = [
   'FEISHU_VERIFY_TOKEN',
   'FEISHU_ENCRYPT_KEY',
   'FEISHU_BASE_URL',
+  'FEISHU_STREAM',
   // 钉钉（含旧版兼容名）
   'DINGTALK_CLIENT_ID',
   'DINGTALK_CLIENT_SECRET',

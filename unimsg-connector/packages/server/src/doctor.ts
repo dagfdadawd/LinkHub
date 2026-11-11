@@ -18,6 +18,7 @@ import { Platform } from '@unimsg/shared';
 import { config } from './config';
 import { mailAccountSummary } from './config/runtime';
 import { runProbes, PROBE_TIMEOUT_MS, type ProbeInput } from './doctor/probes';
+import { parseCliArgs, type CliOptions } from './doctor/cli';
 import { findSuspiciousEnvVars } from './doctor/env-check';
 import {
   computeExitCode,
@@ -54,50 +55,15 @@ LinkHub 只读自检：检查 .env / 平台模式 / 凭据 / 网络连通 / 企�
 
 示例：
   pnpm run doctor                              # 在 unimsg-connector/ 下
-  pnpm run doctor -- --platform=wecom
+  pnpm run doctor --platform=wecom
   pnpm --filter @unimsg/server run doctor
-  pnpm --filter @unimsg/server run --silent doctor -- --json
+  pnpm --filter @unimsg/server run --silent doctor --json
 
 说明：加 --silent 是因为 pnpm 会把 "> @unimsg/server@1.0.0 doctor" 启动横幅
       写到 stdout，--json 场景下会破坏"stdout 只能是合法 JSON"的约定。
+      参数直接跟在 doctor 后面即可；写成「doctor -- --platform=...」也兼容（-- 会被忽略）。
 `;
 
-interface CliOptions {
-  json: boolean;
-  help: boolean;
-  platformFilter?: Platform[];
-}
-
-/** 解析命令行参数（参数少，手写即可；不引入依赖） */
-export function parseCliArgs(argv: string[]): { options: CliOptions; error?: string } {
-  const options: CliOptions = { json: false, help: false };
-  for (const arg of argv) {
-    if (arg === '-h' || arg === '--help') {
-      options.help = true;
-    } else if (arg === '--json') {
-      options.json = true;
-    } else if (arg.startsWith('--platform=')) {
-      const raw = arg.slice('--platform='.length).trim();
-      // 逗号为主；同时容忍空格（部分 shell 会把 a,b 拆成 "a b" 再传进来）
-      const items = raw
-        .split(/[,\s]+/)
-        .map((s) => s.trim().toLowerCase())
-        .filter(Boolean);
-      if (items.length === 0) {
-        return { options, error: '--platform 需要一个平台列表，例如 --platform=feishu,mail' };
-      }
-      const valid = Object.values(Platform) as string[];
-      const unknown = items.filter((item) => !valid.includes(item));
-      if (unknown.length > 0) {
-        return { options, error: `未知平台：${unknown.join(', ')}（可选：${valid.join(', ')}）` };
-      }
-      options.platformFilter = [...new Set(items)] as Platform[];
-    } else {
-      return { options, error: `未知参数：${arg}` };
-    }
-  }
-  return { options };
-}
 
 /** 通过 pnpm 脚本运行时，npm_config_user_agent 里带有 pnpm 版本 */
 function detectPnpmVersion(): string | undefined {
@@ -253,6 +219,8 @@ async function main(): Promise<number> {
     env,
     platforms,
     checks,
+    port: config.port,
+    tokenIsDefault: config.apiToken === 'dev-token',
     ...(egressIp ? { egressIp } : {}),
     ...(options.platformFilter && options.platformFilter.length > 0
       ? { platformFilter: options.platformFilter }

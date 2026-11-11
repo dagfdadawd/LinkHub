@@ -113,6 +113,10 @@ export interface DoctorReportInput {
   egressIp?: string;
   /** 本次 --platform 过滤（空/未传 = 全部平台） */
   platformFilter?: Platform[];
+  /** 后端实际监听端口（下一步提示用；缺省 3001） */
+  port?: number;
+  /** API_TOKEN 是否为演示默认值（false 时不再教用户用 dev-token） */
+  tokenIsDefault?: boolean;
 }
 
 export interface DoctorSummary {
@@ -312,12 +316,27 @@ function renderConclusion(input: DoctorReportInput, summary: DoctorSummary, exit
     lines.push(`  当前出口公网 IP：${input.egressIp}（企业微信「可信IP」需加入该 IP；出现 60020 时尤其注意）`);
   }
 
-  if (exitCode === 0) {
+  const port = input.port ?? 3001;
+  const tokenHint = input.tokenIsDefault === false ? '<你的 API_TOKEN>' : 'dev-token';
+
+  // 「什么都没配」不能亮绿灯：四平台都未配置时，PASS 0/FAIL 0/SKIP 的结论看起来像
+  // "一切正常"，实际连账号都没填（大模型探针 PASS 也不能代表平台已就绪）。
+  const nothingConfigured = input.platforms.length > 0 && input.platforms.every((p) => !p.configured);
+
+  if (exitCode === 0 && nothingConfigured) {
+    lines.push(`  ⚠ 尚未配置任何平台：PASS ${summary.pass} / FAIL ${summary.fail} / SKIP ${summary.skip}。`);
+    lines.push('    四个平台当前都会以本地 Mock 运行：可以完整演示闭环，但没有验证任何真实账号。');
+    lines.push('  下一步：');
+    lines.push('    1. 复制模板：cp .env.example .env（Windows PowerShell：Copy-Item .env.example .env）');
+    lines.push('    2. 只填你要用的那一个平台（飞书 / 钉钉 / 企微 / 邮箱任选其一），留空的平台自动回退 Mock');
+    lines.push('    3. 重跑自检：pnpm --filter @unimsg/server run doctor');
+    lines.push('    4. 只想先看效果：直接启动后端 + 前端，界面会如实标注「模拟发送」');
+  } else if (exitCode === 0) {
     lines.push(`  ✔ 自检通过：PASS ${summary.pass} / FAIL 0 / SKIP ${summary.skip}。`);
     lines.push('    所选平台已具备真实收发条件（或按策略处于合规的 Mock 状态），没有需要修复的项。');
     lines.push('  下一步：');
-    lines.push('    1. 启动后端：pnpm --filter @unimsg/server dev');
-    lines.push('    2. 查看接口：curl -H "Authorization: Bearer dev-token" http://localhost:3001/api/accounts');
+    lines.push('    1. 启动后端：pnpm --filter @unimsg/server start');
+    lines.push(`    2. 查看接口：curl -H "Authorization: Bearer ${tokenHint}" http://127.0.0.1:${port}/api/accounts`);
   } else {
     lines.push(`  ✖ 自检未通过：PASS ${summary.pass} / FAIL ${summary.fail} / SKIP ${summary.skip}。`);
     if (!input.env.nodeSatisfies) lines.push('    · 先解决 Node 版本过低的问题（升级到 Node 20+）。');
@@ -325,9 +344,9 @@ function renderConclusion(input: DoctorReportInput, summary: DoctorSummary, exit
     lines.push('  下一步：');
     lines.push('    1. 按 [FAIL] 建议修改 .env（注意：不要把真实凭据提交进 git）');
     lines.push('    2. 重跑自检：pnpm --filter @unimsg/server run doctor');
-    lines.push('    3. 只看某个平台：pnpm --filter @unimsg/server run doctor -- --platform=wecom');
+    lines.push('    3. 只看某个平台：pnpm --filter @unimsg/server run doctor --platform=wecom');
   }
-  lines.push('  其他命令：pnpm --filter @unimsg/server run --silent doctor -- --json（机器可读；--silent 避免 pnpm 自身 banner 混入 stdout）');
+  lines.push('  其他命令：pnpm --filter @unimsg/server run --silent doctor --json（机器可读；--silent 避免 pnpm 自身 banner 混入 stdout）');
   return lines;
 }
 

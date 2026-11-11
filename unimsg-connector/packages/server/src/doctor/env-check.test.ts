@@ -69,3 +69,16 @@ test('findSuspiciousEnvVars：正常配置零误报', () => {
   });
   assert.deepEqual(found, []);
 });
+
+test('回归：.env.example 里出现的每个键都必须被认作合法，否则 doctor 会把模板变量误报成拼错', async () => {
+  const { readFileSync } = await import('node:fs');
+  const text = readFileSync(new URL('../../../../.env.example', import.meta.url), 'utf8');
+  const keys = [...new Set(
+    text.split(/\r?\n/)
+      .map((line) => line.match(/^([A-Za-z0-9_]+)=/)?.[1])
+      .filter((k): k is string => Boolean(k)),
+  )];
+  assert.ok(keys.length > 20, `应解析出足够多的键，实际 ${keys.length}`);
+  const unknown = keys.filter((k) => !isKnownEnvKey(k));
+  assert.deepEqual(unknown, [], `这些 .env.example 键未被认作合法：${unknown.join(', ')}`);
+});
