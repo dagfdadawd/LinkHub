@@ -145,6 +145,11 @@ export interface UnifiedMessage {
   type: MsgType;
   body: string;
   intent?: string; // 大模型识别的意图
+  /**
+   * 意图来自哪条通道：真实大模型（llm）还是内置规则（rules）。
+   * 与 DeliveryMode 同一原则——前端如实标注，绝不把规则结果说成大模型。
+   */
+  intentSource?: 'llm' | 'rules';
   replyDraft?: string; // 大模型给出的可编辑回复草稿
   reply?: string; // 用户最终回写的文本（回写时发送此内容）
   done?: boolean; // 是否已标记完成（待办类）

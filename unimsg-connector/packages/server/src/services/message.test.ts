@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { Platform, MsgStatus } from '@unimsg/shared';
 import { InMemoryRepository } from '../db/repository';
 import { connectors } from '../connectors/registry';
-import { LlmService } from './llm';
+import { LlmService, type LlmResult } from './llm';
 import { OcrService } from './ocr';
 import { RateLimiter } from './rateLimiter';
 import {
@@ -20,6 +20,30 @@ function makeSvc() {
   return { repo, svc };
 }
 const wait = (ms = 80) => new Promise((r) => setTimeout(r, ms));
+
+async function waitFor(pred: () => boolean, timeoutMs = 1500): Promise<void> {
+  const started = Date.now();
+  while (!pred()) {
+    if (Date.now() - started > timeoutMs) throw new Error('waitFor timeout');
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
+/** 可手动放行的 LLM：验证「入库/广播」不等富化完成。
+ *  兜底 250ms 自动放行——旧实现若阻塞等待，测试会失败而不是永久挂住。 */
+class GatedLlm extends LlmService {
+  private release!: () => void;
+  private gate: Promise<void>;
+  constructor() {
+    super({ mode: 'mock' });
+    this.gate = new Promise<void>((r) => { this.release = r; });
+  }
+  async analyze(): Promise<LlmResult> {
+    await Promise.race([this.gate, new Promise<void>((r) => setTimeout(r, 250))]);
+    return { ok: true, intent: '待办', confidence: 0.9, summary: '摘要', replyDraft: '收到。', source: 'llm' };
+  }
+  open(): void { this.release(); }
+}
 
 test('ingest：同 externalId 重推幂等，不重复入库', async () => {
   const { svc, repo } = makeSvc();
@@ -196,4 +220,42 @@ test('onPlatformEvent：状态回流事件按 externalId 命中，且不会新�
   assert.equal(r.applied, true);
   assert.equal(repo.get(message.traceId)!.status, MsgStatus.PROCESSING);
   assert.equal(repo.list().length, 1, 'status 事件不能被当成新消息再入库');
+});
+
+// ---------- 富化不阻塞入库（真实 LLM 平均 5s+，不能卡住 Webhook 与收件箱） ----------
+
+test('ingest：先广播 received 立即返回，富化在后台完成后补广播 updated', async () => {
+  const repo = new InMemoryRepository();
+  const llm = new GatedLlm();
+  const events: Array<{ type: string; data?: unknown }> = [];
+  const svc = new MessageService(
+    repo, connectors, llm, new OcrService(), new RateLimiter(3, 5), (e) => events.push(e),
+  );
+
+  const { message } = await svc.ingest(Platform.FEISHU, feishuSample);
+
+  assert.equal(events.filter((e) => e.type === 'message.received').length, 1, '入库后应立即广播');
+  assert.equal(events.some((e) => e.type === 'message.updated'), false, 'LLM 未返回前不应有 updated');
+  assert.equal(repo.get(message.traceId)!.intent, undefined, 'ingest 不应等待意图识别');
+
+  llm.open();
+  await waitFor(() => repo.get(message.traceId)!.intent === '待办');
+  assert.ok(events.some((e) => e.type === 'message.updated'), '富化完成后应广播 updated');
+  assert.equal(repo.get(message.traceId)!.intentSource, 'llm', '真实模型结果要如实标注来源');
+});
+
+test('ingest：富化抛异常时不崩溃、不回滚入库，并写 enrich_failed 日志', async () => {
+  class BoomLlm extends LlmService {
+    constructor() { super({ mode: 'mock' }); }
+    async analyze(): Promise<LlmResult> { throw new Error('boom'); }
+  }
+  const repo = new InMemoryRepository();
+  const svc = new MessageService(
+    repo, connectors, new BoomLlm(), new OcrService(), new RateLimiter(3, 5), () => {},
+  );
+  const { message } = await svc.ingest(Platform.FEISHU, feishuSample);
+
+  await waitFor(() => repo.getLoopLog(message.traceId).some((e) => e.event === 'enrich_failed'));
+  assert.equal(repo.get(message.traceId)!.status, MsgStatus.RECEIVED, '消息照常保留');
+  assert.equal(repo.list().length, 1);
 });

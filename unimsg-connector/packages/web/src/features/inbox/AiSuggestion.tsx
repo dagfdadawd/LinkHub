@@ -27,6 +27,14 @@ export function AiSuggestion({
         ) : (
           <span className="ai-card__intent">
             意图 <IntentTag intent={message.intent} />
+            {message.intentSource && (
+              <span
+                className={`ai-card__source${message.intentSource === 'llm' ? ' is-llm' : ''}`}
+                title={message.intentSource === 'llm' ? '由真实大模型识别' : '真实模型不可用，已回退关键词规则'}
+              >
+                {message.intentSource === 'llm' ? 'MiMo 识别' : '规则兜底'}
+              </span>
+            )}
           </span>
         )}
         {!pending && <span className="ai-card__hint">{fallback ? '未识别，已回退未分类' : '可编辑后发送'}</span>}
@@ -46,7 +54,7 @@ export function AiSuggestion({
         >
           采用草稿
         </Button>
-        <Tooltip title="Mock 模式下由关键词规则生成">
+        <Tooltip title={message.intentSource === 'llm' ? '由真实大模型重新分析' : '当前使用关键词规则，未调用大模型'}>
           <Button size="small" type="text" icon={<ReloadOutlined />} onClick={onRegenerate}>
             重新生成
           </Button>

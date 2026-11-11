@@ -155,51 +155,62 @@ export class MessageService {
     counters.received += 1;
     writeTrace(this.repo, incoming, 'received');
 
-    await this.enrich(incoming);
-
-    const saved = this.repo.get(incoming.traceId)!;
-    this.broadcast({ type: 'message.received', data: saved });
-    return { message: saved, duplicate: false };
+    // 富化（OCR / 大模型）不阻塞入库与平台回调：真实 LLM 单次 2.9–9.3s，
+    // 同步等待会拖住 Webhook 响应（平台超时会重推）并让收件箱迟迟不出现新消息。
+    const received = this.repo.get(incoming.traceId)!;
+    this.broadcast({ type: 'message.received', data: received });
+    void this.enrich(incoming).catch((e) => {
+      writeTrace(this.repo, incoming, 'enrich_failed', e instanceof Error ? e.message : String(e));
+    });
+    return { message: received, duplicate: false };
   }
 
-  /** OCR + LLM 富化；全部可降级，不阻塞主闭环 */
+  /** OCR + LLM 富化；全部可降级，完成后补广播 message.updated 让前端就地刷新 */
   private async enrich(msg: UnifiedMessage): Promise<void> {
     const m = this.repo.get(msg.traceId);
     if (!m) return;
 
+    let body = m.body;
+    let needsReview = m.needsReview;
+
     if (m.type === 'image' || m.type === 'file') {
       const r = await this.ocr.recognize(m);
       if (r.ok) {
-        if (r.text) m.body = `${m.body ? `${m.body} ` : ''}${r.text}`;
+        if (r.text) body = `${body ? `${body} ` : ''}${r.text}`;
         if (r.confidence < config.ocrThreshold) {
-          m.needsReview = true;
-          m.body = `${m.body} [待人工确认]`;
+          needsReview = true;
+          body = `${body} [待人工确认]`;
           writeTrace(this.repo, m, 'ocr_low_confidence', `confidence=${r.confidence}`);
         } else {
           writeTrace(this.repo, m, 'ocr', `confidence=${r.confidence}`);
         }
       } else {
-        m.needsReview = true;
+        needsReview = true;
         writeTrace(this.repo, m, 'ocr_failed', r.reason);
       }
     }
 
-    const lr = await this.llm.analyze(m);
+    const lr = await this.llm.analyze({ ...m, body });
+    let intent: string;
+    let replyDraft = m.replyDraft;
+    let intentSource: 'llm' | 'rules';
     if (lr.ok) {
-      m.intent = lr.intent;
-      m.replyDraft = lr.replyDraft;
-      writeTrace(this.repo, m, 'intent', `${lr.intent}(${lr.confidence})`);
+      intent = lr.intent;
+      replyDraft = lr.replyDraft;
+      intentSource = lr.source;
+      const via = lr.source === 'llm'
+        ? `${lr.provider ?? 'llm'}/${lr.model ?? ''} ${lr.latencyMs ?? 0}ms ${lr.tokens ?? 0}tok`
+        : 'rules';
+      writeTrace(this.repo, m, 'intent', `${lr.intent}(${lr.confidence}) via ${via}`);
+      if (lr.fallbackReason) writeTrace(this.repo, m, 'intent_fallback', lr.fallbackReason);
     } else {
-      m.intent = '未分类';
+      intent = '未分类';
+      intentSource = 'rules';
       writeTrace(this.repo, m, 'intent_fallback', lr.reason);
     }
 
-    this.repo.update(m.traceId, {
-      body: m.body,
-      needsReview: m.needsReview,
-      intent: m.intent,
-      replyDraft: m.replyDraft,
-    });
+    const updated = this.repo.update(m.traceId, { body, needsReview, intent, replyDraft, intentSource });
+    if (updated) this.broadcast({ type: 'message.updated', data: updated });
   }
 
   // ---------- 展示 ----------
