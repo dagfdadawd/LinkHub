@@ -1,0 +1,21 @@
+# 构建上下文瘦身：node_modules / 构建产物 / 本地数据都不进镜像
+node_modules
+**/node_modules
+**/dist
+**/.vite
+.git
+.github
+.workbuddy
+
+# 凭据绝不进镜像（compose 通过 env_file / environment 注入）
+.env
+.env.*
+!.env.example
+
+# 演示素材与本地脚本不属于运行期
+test.photos
+docs
+documents
+*.log
+*.tmp
+linkhub-state.json

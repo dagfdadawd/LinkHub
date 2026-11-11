@@ -1,0 +1,54 @@
+# LinkHub 一键独立部署（赛题 A · 决赛「独立部署包」）
+#
+#   cd unimsg-connector
+#   cp .env.example .env          # 可选：填真实平台凭据；不填则自动走 Mock
+#   docker compose up -d --build
+#   打开 http://localhost:3001    默认入口令牌见下方 LINKHUB_DEPLOY_TOKEN
+#
+# 说明：
+#  - 单容器同源部署：/api/*、/ws 与前端页面都由 3001 提供，无需 nginx / DB；
+#  - LINKHUB_DEPLOY_TOKEN 同时用于「前端构建期」与「后端运行期」，
+#    修改后必须重新 --build，否则前端携带的旧令牌会被 401 拒绝；
+#  - linkhub-data 卷保存闭环快照，容器重启后收件箱与全链路回放仍可复现。
+name: linkhub
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE: "/"
+        VITE_API_TOKEN: ${LINKHUB_DEPLOY_TOKEN:-linkhub-local-demo-2026-change-me}
+    image: linkhub:latest
+    container_name: linkhub
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      NODE_ENV: production
+      # 生产模式的安全闸门要求非默认令牌；这里给一个可开箱演示、但必须替换的默认值
+      API_TOKEN: ${LINKHUB_DEPLOY_TOKEN:-linkhub-local-demo-2026-change-me}
+      SERVER_PORT: "3001"
+      SERVER_HOST: 0.0.0.0
+      DATA_DIR: /app/data
+      WEB_DIST: /app/packages/web/dist
+      MAX_UPLOAD_MB: "32"
+    ports:
+      - "${HOST_PORT:-3001}:3001"
+    volumes:
+      - linkhub-data:/app/data
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3001/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 5
+
+volumes:
+  linkhub-data:
