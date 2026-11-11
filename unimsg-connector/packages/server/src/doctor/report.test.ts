@@ -358,3 +358,53 @@ test('显示宽度：CJK 按 2 列、ASCII 按 1 列，padDisplay 能对齐中�
   assert.equal(padDisplay('飞书', 8), '飞书    ');
   assert.equal(padDisplay('feishu', 8), 'feishu  ');
 });
+
+test('结论：一个平台都没配（PASS 0 + 全部未配置）时不亮绿灯，改为「尚未配置」并给出下一步', () => {
+  const notConfigured = (p: Platform, label: string): PlatformReport =>
+    platformReport({ platform: p, label, configured: false, mode: 'mock', canSend: false, canReceive: false, reason: '未配置凭据，回退 Mock' });
+  const text = renderTextReport(
+    report({
+      platforms: [
+        notConfigured(Platform.FEISHU, '飞书'),
+        notConfigured(Platform.DINGTALK, '钉钉'),
+        notConfigured(Platform.WECOM, '企业微信'),
+        notConfigured(Platform.MAIL, '邮箱'),
+      ],
+      checks: [check({ status: 'SKIP', detail: '未启用真实通道' })],
+      env: env({ mailAccountCount: 0, mailEnabled: false, envFiles: [{ path: 'C:/proj/unimsg-connector/.env', exists: false }] }),
+    }),
+  );
+  assert.ok(text.includes('尚未配置任何平台'), '应明确提示尚未配置');
+  assert.ok(!text.includes('✔ 自检通过'), '不能显示为自检通过');
+  assert.ok(text.includes('cp .env.example .env'), '应给出填 .env 的下一步');
+});
+
+test('结论：下一步使用实际端口，非默认令牌时不打印 dev-token', () => {
+  const text = renderTextReport(report({ port: 3101, tokenIsDefault: false }));
+  assert.ok(text.includes('127.0.0.1:3101'), '应使用实际端口');
+  assert.ok(!text.includes('Bearer dev-token'), '自定义令牌时不应再教用户用 dev-token');
+});
+
+test('结论：四平台均未配置但大模型探针 PASS 时，计数用真实 summary 而非写死的 0', () => {
+  const notConfigured = (p: Platform, label: string): PlatformReport =>
+    platformReport({ platform: p, label, configured: false, mode: 'mock', canSend: false, canReceive: false, reason: '未配置凭据，回退 Mock' });
+  const text = renderTextReport(
+    report({
+      platforms: [
+        notConfigured(Platform.FEISHU, '飞书'),
+        notConfigured(Platform.DINGTALK, '钉钉'),
+        notConfigured(Platform.WECOM, '企业微信'),
+        notConfigured(Platform.MAIL, '邮箱'),
+      ],
+      checks: [
+        check({ group: 'llm', id: 'llm:chat', title: '大模型连通性（意图识别）', status: 'PASS', detail: '大模型返回可用' }),
+        check({ id: 'feishu:token', status: 'SKIP', detail: '未启用真实通道' }),
+      ],
+      env: env({ mailAccountCount: 0, mailEnabled: false }),
+    }),
+  );
+  assert.ok(text.includes('[PASS] 大模型连通性（意图识别）'), '探针段落应显示大模型 PASS');
+  assert.ok(text.includes('尚未配置任何平台'), '应明确提示尚未配置');
+  assert.ok(!text.includes('✔ 自检通过'), '不能显示为自检通过');
+  assert.ok(text.includes('PASS 1 / FAIL 0 / SKIP 1'), '结论计数必须与 summary 一致，不能写死 PASS 0 / FAIL 0');
+});
