@@ -53,7 +53,7 @@ pnpm --filter @unimsg/server start
 | 企业微信 | `WECOM_CORP_ID` / `WECOM_AGENT_ID` / `WECOM_SECRET`（收消息另加 `WECOM_TOKEN` / `WECOM_AES_KEY`） | `pnpm run doctor --platform=wecom` |
 | 邮箱 | `MAIL_<KEY>_ADDRESS` / `MAIL_<KEY>_AUTH_CODE`（授权码，不是登录密码） | `pnpm run doctor --platform=mail` |
 
-> ⚠️ 不要写 `pnpm doctor`：pnpm 9 自带同名内置命令会抢占它（变成诊断 pnpm 自身），本项目命令必须带 `run`，即 `pnpm run doctor`；在脚本里推荐写全路径 `pnpm --filter @unimsg/server run doctor`。
+> ⚠️ 不要写 `pnpm doctor`：pnpm 9 自带同名内置命令会抢占它，实测**没有任何输出、退出码 0**——看起来像成功了，实际本项目自检根本没运行。必须带 `run`，即 `pnpm run doctor`；在脚本里推荐写全路径 `pnpm --filter @unimsg/server run doctor`。
 
 ## 运行模式（auto / real / mock）
 
@@ -268,7 +268,7 @@ LinkHub-test/
 | 纯离线演示（强制 Mock） | `start.bat mock` | 同上，但四平台全部强制 Mock，不调用任何真实平台接口 |
 | 配置 / 修改平台账号 | 双击 `setup-accounts.bat`（或 `start.bat accounts`） | 已有 `.env` 原样打开、没有则从模板创建，用记事本编辑 |
 | 账号自检 | `start.bat doctor` | 只读自检：凭据 / 收发能力 / 出口公网 IP / 中文修复建议 |
-| Docker 一键启动 | 双击 `start-docker.bat`（或 `start.bat docker`） | `docker compose up -d --build`，同源访问 `http://127.0.0.1:3001` |
+| Docker 一键启动 | 双击 `start-docker.bat`（或 `start.bat docker`） | `docker compose up -d --build`，同源访问 `http://127.0.0.1:<HOST_PORT，默认 3001>` |
 | 停止本地服务 | `start.bat stop` | 结束**占用后端端口（读 `.env` 的 `SERVER_PORT`，默认 3001）与 5173 的进程**。它按端口找占用者，**可能是别的程序，会被一并结束**；不确定时直接关掉那两个服务控制台窗口更安全 |
 | 停止 Docker | `start.bat stopdocker` | `docker compose down`，数据卷保留 |
 
