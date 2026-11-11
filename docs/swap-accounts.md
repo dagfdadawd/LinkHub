@@ -20,7 +20,7 @@
 1. **只改 `.env`**：平台凭据、邮箱账号、运行模式全部走环境变量，代码不需要动。改完**重启后端**（`config.ts` 只在启动时读取 `.env`）。
 2. **换完账号先跑 `doctor`**：`pnpm run doctor` 会检查 Node、`.env`、平台模式、逐平台探针、大模型连通性与出口公网 IP，并给出中文修复建议；有 FAIL 时退出码为 1。大模型探针（`llm:chat`）只在**未加** `--platform=` 时执行，所以下文各平台的示意输出不含它。
 3. **Mock 是合法状态，但一定标注**：没配凭据或配得不全时，`auto` 会自动回退本地模拟；回写消息里会写 `delivery.mode=mock`，闭环日志与前端都显示「模拟发送」，**不会假装真实平台已收到**。
-4. **命令写法**：在 `unimsg-connector/` 目录下用 `pnpm run doctor`；**不要写 `pnpm doctor`**——pnpm 9 自带同名内置命令（诊断 pnpm 自身），会抢走本项目命令。在脚本 / CI 里推荐全路径：`pnpm --filter @unimsg/server run doctor`。
+4. **命令写法**：在 `unimsg-connector/` 目录下用 `pnpm run doctor`；**不要写 `pnpm doctor`**——pnpm 9 会命中同名内置命令（实测无输出、退出码 0），看起来像成功但本项目自检根本没运行。在脚本 / CI 里推荐全路径：`pnpm --filter @unimsg/server run doctor`。
 
 > 更多架构、API、测试说明见根目录 [README.md](../README.md)。
 
@@ -166,8 +166,8 @@ curl -H "Authorization: Bearer dev-token" http://127.0.0.1:3001/api/accounts
 | 收到加密事件但报「未配置 FEISHU_ENCRYPT_KEY」 | 后台开了加密策略但 `.env` 没填 Encrypt Key | 填上 Encrypt Key 并重启 |
 | 解密失败 / JSON 解析失败 | Encrypt Key 错误，或后台关闭加密但 `.env` 仍按加密处理 | 两处保持一致；改完重启 |
 | 能发不能收 | 缺 `FEISHU_VERIFY_TOKEN`、事件未订阅、权限未开通或版本未发布 | 看 `/api/accounts` 的 `missing` / `warnings`，逐项补齐 |
-| 长连接保存时提示「连接校验失败」 | 本地后端未启动，或 `FEISHU_STREAM=true` 未设，或应用未发布启用 | 先 `FEISHU_STREAM=true` 启动后端，确认日志出现 `[feishu-stream] 飞书长连接已启动`，再回后台保存订阅方式 |
-| 长连接启动后日志无「已启动」 | `FEISHU_STREAM` 未开，或 `FEISHU_MODE≠real`，或 21001（应用未发布/未启用） | 看 `[feishu-stream]` 日志；21001 见「现实说明」 |
+| 长连接保存时提示「连接校验失败」 | 本地后端未启动，或 `FEISHU_STREAM=true` 未设，或应用未发布启用 | 先 `FEISHU_STREAM=true` 启动后端，确认日志出现 `[feishu-stream] 飞书长连接启动指令已下发` 且随后出现「已就绪」，再回后台保存订阅方式 |
+| 长连接启动后日志无「已就绪」 | `FEISHU_STREAM` 未开，或 `FEISHU_MODE≠real`，或 21001（应用未发布/未启用），或 appId 格式不对 | 看 `[feishu-stream]` 日志（SDK 异步建连，启动指令下发 ≠ 已连通）；21001 见「现实说明」 |
 | 长连接能收但回复发失败 | 缺 `im:message:send_as_bot` 权限，或版本未发布 | 开通权限并重新发布版本 |
 
 ### 3.5 现实说明：飞书 21001 与企业认证
@@ -573,4 +573,4 @@ A：不能。21001 是租户级策略，已排除 Secret（10014）、IP 白名�
 A：四个平台都设 `*_MODE=mock`（或什么都不填，`auto` 自动 Mock），启动后端 + 前端即可走通「收件箱 → 回复 → 回放」；或直接 `pnpm e2e`（强制四平台 mock，完全离线，20 项断言 + `SMOKE OK`）。
 
 **Q：`pnpm doctor` 为什么输出的是 pnpm 自己的诊断？**
-A：pnpm 9 自带同名内置命令。本项目命令必须写 `pnpm run doctor`（或全路径 `pnpm --filter @unimsg/server run doctor`）。
+A：pnpm 9 自带同名内置命令，实测无输出、退出码 0。本项目命令必须写 `pnpm run doctor`（或全路径 `pnpm --filter @unimsg/server run doctor`）。

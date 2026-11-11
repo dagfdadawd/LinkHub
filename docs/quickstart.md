@@ -52,7 +52,7 @@ pnpm --filter @unimsg/web dev        # 约 2 秒；浏览器打开 http://127.0.
 
 > **两种「看效果」方式别混用**：不配 `VITE_API_BASE` 时前端用内置 Mock 数据；一旦存在 `packages/web/.env` 且写了 `VITE_API_BASE`，前端就会去连后端。
 > 如果页面出现「数据加载异常」，多半是目录里带着别人的 `packages/web/.env`：先改名/删除它再重启前端（交付包默认不带这个文件）。
-> 另一个常见来源：仓库根的 `start.bat` **每次启动都会重写 `packages/web/.env`**（写回 `VITE_API_BASE=http://127.0.0.1:3001`；你自定义过该值则保留不动）。所以用过一键启动后再单独起前端，就必然去连后端——后端没起便报「数据加载异常」。
+> 另一个常见来源：仓库根的 `start.bat` **每次启动都会重写 `packages/web/.env`**（写回当前后端端口 `VITE_API_BASE=http://127.0.0.1:<SERVER_PORT>`；只有非 127.0.0.1 的自定义地址才会原样保留，本地端口会被刷新）。所以用过一键启动后再单独起前端，就必然去连后端——后端没起便报「数据加载异常」。
 > 想纯前端 Mock 演示：`mv packages/web/.env packages/web/.env.bak`（PowerShell：`Rename-Item packages/web/.env .env.bak`）再重启 Vite；要接回后端把名字改回来即可。
 
 ### 想把界面接到刚起的后端，看更真实的闭环
@@ -89,7 +89,7 @@ pnpm run doctor
 pnpm --filter @unimsg/server start
 ```
 
-> ⚠️ 必须写 **`pnpm run doctor`**，不要写 `pnpm doctor`：pnpm 9 自带同名内置命令会抢走它（变成诊断 pnpm 自身）。
+> ⚠️ 必须写 **`pnpm run doctor`**，不要写 `pnpm doctor`：pnpm 9 自带同名内置命令会抢走它，实测没有输出、退出码 0，看起来像成功但本项目自检根本没运行。
 > 只想看某一平台：`pnpm run doctor --platform=dingtalk,mail`。
 
 > `API_TOKEN` 不要留空：演示保持默认 `dev-token`，对外部署必须改成强随机值。**留空会回退 dev-token 并打印告警，仍强制 Bearer 鉴权**（不会出现"空令牌 = 不鉴权"）；`NODE_ENV=production` 且仍是默认/空令牌时服务会拒绝启动。
@@ -119,8 +119,9 @@ pnpm --filter @unimsg/server start
 | 现象 | 原因 | 一句话解决 |
 |---|---|---|
 | `pnpm: command not found` | 没装 pnpm 或没进 PATH | `corepack enable` → **重开终端** → `pnpm -v` 确认；或 `npm i -g pnpm@9`（只跑 `corepack pnpm install` 不够：依赖装了但 `pnpm` 仍不在 PATH） |
+| 首次 install 成功，前端却报 `Cannot find module ... rollup` | 依赖目录不完整（少见；本机曾出现一次，重装未复现） | 在 `unimsg-connector/` 下执行 `pnpm install --force` 后重启 Vite |
 | 报 Node 版本 / `tsx` 不兼容 | Node < 20 | 装 Node 20 或 22 LTS，重开终端再试 |
-| `启动失败：端口 3001 已被占用` | 上次进程没关 / 别的软件占用 | 改 `.env` 的 `SERVER_PORT=3101` 并把前端 `VITE_API_BASE` 同步到 3101；或按提示 `netstat -ano | findstr :3001` + `taskkill`（macOS/Linux 用 `lsof -i :3001` + `kill`）；e2e 用 `pnpm e2e -Port 3102` |
+| `启动失败：端口 3001 已被占用` | 上次进程没关 / 别的软件占用 | 改 `.env` 的 `SERVER_PORT=3101` 后重新 `start.bat`（它会自动同步前端 `VITE_API_BASE`，并用实际端口做健康检查）；手动起服务时再同步 `VITE_API_BASE`；确认占用者是 LinkHub 才用 `netstat -ano | findstr :3101` + `taskkill`（macOS/Linux 用 `lsof -i :3101` + `kill`）；e2e 用 `pnpm e2e -Port 3102` |
 | 配了账号，页面却全是 Mock | `.env` 放错目录（必须在 `unimsg-connector/.env`，仓库根的不加载）或变量名拼错（如 `FEISHU_APPID`） | 照 `.env.example` 检查拼写；`pnpm run doctor` 会提示「疑似拼错的变量」；改完重启后端 |
 | `doctor` 里全是 SKIP | 当前是 Mock 状态，doctor 按约定不跑真实探针 | 不是失败；填好凭据会自动变 `real`，或显式设 `*_MODE=real` 强制自检 |
 | 接口 401 / 页面提示未授权 | 前端 `VITE_API_TOKEN` 与后端 `API_TOKEN` 不一致 | 两处改成同一个值（默认 `dev-token`），重启后端与 Vite |
