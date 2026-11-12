@@ -23,6 +23,7 @@ import {
   reconcileIdentityChannels,
 } from './services/identityChannels';
 import { identityStartupLines, warmIdentityProbes } from './services/identity';
+import { maybeAutoEnableDingtalkPersonalIdentity } from './services/personalIdentity';
 import { dingtalkPersonalClient } from './connectors/dingtalkPersonal';
 import { initWs, wsBroadcast } from './ws';
 
@@ -56,11 +57,15 @@ const svc = new MessageService(
  */
 const mailAccountsStore = initMailAccounts({
   onChange: () => {
+    // P0-3：账号增删/验证后 config.runtime[MAIL] 已重算；据此启停/热加载轮询，无需重启
+    const mailReal = config.runtime[Platform.MAIL].mode === 'real';
+    if (!mailReal || config.mail.accounts.length === 0) {
+      stopMailPoller();
+      return;
+    }
     if (!reloadMailPoller('邮箱账号变更')) {
-      // 典型场景：启动时没有任何邮箱账号 → startMailPoller 当时直接跳过；运行中第一次添加账号后按需启动。
-      if (config.mail.accounts.length > 0 && config.runtime[Platform.MAIL].mode === 'real') {
-        startMailPoller(svc);
-      }
+      // 典型场景：启动时没有任何可用账号 → startMailPoller 当时直接跳过；运行中账号可用后按需启动。
+      startMailPoller(svc);
     }
   },
 });
@@ -179,8 +184,14 @@ void (async () => {
   for (const line of identityStartupLines()) console.log(line);
   // ① 启动 warm 之后对齐一次
   await identityChannels.reconcile();
-  // 登录子进程结束（通常是浏览器授权成功）→ 立刻对齐，无需等前端轮询/兜底定时器
-  dingtalkPersonalClient().setLoginFinishedHandler(() => reconcileIdentityChannels('钉钉登录会话结束'));
+  // 登录子进程结束（通常是浏览器授权成功）→ 若尚无机器人凭据且身份策略为 auto，
+  // 自动热应用「仅本人身份」（未完成授权/未登录则什么都不改），再对齐接收通道
+  dingtalkPersonalClient().setLoginFinishedHandler(() => {
+    void (async () => {
+      await maybeAutoEnableDingtalkPersonalIdentity('dws 登录会话结束').catch(() => undefined);
+      reconcileIdentityChannels('钉钉登录会话结束');
+    })();
+  });
   // ⑥ 兜底定时 reconcile（unref：不阻塞进程退出）
   const timer = setInterval(() => reconcileIdentityChannels('定时对齐'), IDENTITY_CHANNELS_RECONCILE_MS);
   timer.unref?.();

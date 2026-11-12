@@ -72,6 +72,11 @@ test('GET /api/onboarding：Bearer 鉴权 + 4 步聚合 + dws 来源 + 无任何
     // DWS_BIN 显式指定 → 来源如实标 env
     assert.equal(data.dws.source, 'env');
     assert.equal(typeof data.dws.available, 'boolean');
+    // P3：认证接口的路径字段只给 basename（不泄露本机绝对路径）
+    if (data.envFile) assert.equal(data.envFile.path, '.env');
+    const mailStep = data.steps.find((step: { id: string }) => step.id === 'mail');
+    assert.ok(!String(JSON.stringify(mailStep)).includes('C:\\'), 'mail detail 不应包含本机绝对路径');
+    assert.equal(mailStep.detail.filePath, mailStep.detail.filePath.split(/[\\/]/).pop());
     // 各步骤有 state/summary/hints/actions 结构
     for (const step of data.steps) {
       assert.ok(['ready', 'needs_user_auth', 'needs_install', 'needs_admin', 'mock', 'error'].includes(step.state));

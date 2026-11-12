@@ -16,6 +16,7 @@ import { feishuOAuthCallbackRouter, feishuOAuthRouter } from './routes/feishuOAu
 import { dingtalkPersonalRouter } from './routes/dingtalkPersonal';
 import { onboardingRouter } from './routes/onboarding';
 import { mailAccountsRouter } from './routes/mailAccounts';
+import { appConfigRouter } from './routes/appConfig';
 import { apiAuth } from './middlewares/auth';
 import { config } from './config';
 
@@ -97,6 +98,7 @@ export function createApp(svc: MessageService, options: CreateAppOptions = {}) {
   app.use('/api', apiAuth, dingtalkPersonalRouter()); // Bearer 鉴权：钉钉本人身份（dws 登录/状态/注销）
   app.use('/api', apiAuth, onboardingRouter()); // Bearer 鉴权：授权中心/首次使用向导聚合视图
   app.use('/api', apiAuth, mailAccountsRouter()); // Bearer 鉴权：邮箱账号运行时导入（个人版）
+  app.use('/api', apiAuth, appConfigRouter()); // Bearer 鉴权：本地应用配置（白号：GUI 填凭据/切模式）
 
   // 同源部署（Docker 单容器）：server 直接托管前端构建产物 + SPA 回退。
   // 只在 WEB_DIST 指向真实 index.html 时启用，本地 dev 走 Vite 5173 不受影响。

@@ -141,6 +141,20 @@ export function sendIdentityLabel(delivery?: DeliveryInfo): string | undefined {
 }
 
 /**
+ * 是否「自己在 Mock 演示里主动发出的消息」。
+ * 这类消息不是收到的来信：不计未读，并在列表标「我发出的（模拟）」。
+ */
+export function isSelfComposedMock(message: {
+  delivery?: DeliveryInfo;
+  sender?: { id?: string };
+  externalId?: string;
+}): boolean {
+  if (message.delivery?.mode !== 'mock') return false;
+  if (message.sender?.id === 'linkhub') return true;
+  return /(^|:)compose:/.test(message.externalId ?? '');
+}
+
+/**
  * 会话类型文案（详情页「会话」一行）：
  * 群聊消息必须一眼看出回复会发回群里，而不是私聊给发送人。
  */

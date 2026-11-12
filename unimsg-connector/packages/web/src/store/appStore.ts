@@ -9,7 +9,8 @@ import type {
   ComposeRequest, MsgType, OutboundAttachment, Platform, UnifiedMessage,
 } from '../types';
 import type {
-  AccountInfo, DingtalkLoginOptions, DingtalkLoginStart, DingtalkPersonalStatus, FeishuOAuthStart, HealthInfo,
+  AccountInfo, AppConfigSaveResult, AppConfigUpdate, AppConfigView,
+  DingtalkLoginOptions, DingtalkLoginStart, DingtalkPersonalStatus, FeishuOAuthStart, HealthInfo,
   MailAccountInput, MailAccountTestResult, MailAccountView, MessageApi, OnboardingView,
 } from '../services/api';
 import { isDemoApi } from '../services/api';
@@ -44,6 +45,8 @@ export interface AppState {
   sendFailure: { traceId: string; reason?: string; at: number } | null;
   /** 授权中心聚合状态（GET /api/onboarding）；旧后端不支持时为 null */
   onboarding: OnboardingView | null;
+  /** 平台应用凭据 / 运行配置（GET /api/app-config）；旧后端不支持时为 null */
+  appConfig: AppConfigView | null;
 }
 
 export const DEFAULT_FILTERS: Filters = {
@@ -89,6 +92,7 @@ export class AppStore {
     initialized: false,
     sendFailure: null,
     onboarding: null,
+    appConfig: null,
   };
 
   private listeners = new Set<() => void>();
@@ -136,6 +140,8 @@ export class AppStore {
       this.set({ messages, accounts, health, loading: false, error: null });
       // 授权中心是首启锦上添花：旧后端没有该接口时不阻塞主流程
       void this.refreshOnboarding();
+      // 平台应用凭据（白号配置入口）：旧后端没有该接口时同样静默
+      void this.refreshAppConfig();
     } catch (e) {
       this.set({ loading: false, error: e instanceof Error ? e.message : '加载失败' });
     }
@@ -305,6 +311,38 @@ export class AppStore {
     await Promise.all([this.refreshOnboarding(), this.refreshAccounts()]);
   }
 
+  /** 验证已保存的邮箱账号（真实 IMAP/SMTP 自检；成功后账号标记「已验证」） */
+  async mailAccountVerify(key: string): Promise<MailAccountTestResult> {
+    const result = await this.api.mailAccountVerify(key);
+    if (result.ok) await Promise.all([this.refreshOnboarding(), this.refreshAccounts()]);
+    return result;
+  }
+
+  /** 刷新平台应用凭据 / 运行配置；失败返回 null，不阻塞页面 */
+  async refreshAppConfig(): Promise<AppConfigView | null> {
+    try {
+      const appConfig = await this.api.getAppConfig();
+      this.set({ appConfig });
+      return appConfig;
+    } catch {
+      return null;
+    }
+  }
+
+  /** 读取配置（配置弹窗需要失败时给出中文错误，因此不吞异常） */
+  async loadAppConfig(): Promise<AppConfigView> {
+    const appConfig = await this.api.getAppConfig();
+    this.set({ appConfig });
+    return appConfig;
+  }
+
+  /** 保存配置（部分更新）：返回是否需重启 / 是否热应用，并刷新本地缓存与健康状态 */
+  async saveAppConfig(patch: AppConfigUpdate): Promise<AppConfigSaveResult> {
+    const result = await this.api.updateAppConfig(patch);
+    await Promise.all([this.refreshAppConfig(), this.refreshHealth()]);
+    return result;
+  }
+
   /** 静默重拉全量数据（断线重连后的状态兜底；失败则保持现有数据） */
   private async reload(): Promise<void> {
     try {
@@ -315,6 +353,7 @@ export class AppStore {
       ]);
       this.set({ messages, accounts, health });
       void this.refreshOnboarding();
+      void this.refreshAppConfig();
     } catch {
       // 静默失败：保持现有数据，等待下一次实时推送
     }

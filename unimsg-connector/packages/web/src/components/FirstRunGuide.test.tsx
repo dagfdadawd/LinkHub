@@ -24,7 +24,7 @@ const BASE_PROPS = {
 
 /** 内存存储：测试不依赖 jsdom localStorage，断言写入值 */
 function memoryStorage(initial: Record<string, string> = {}) {
-  const map = new Map<string, string>(Object.entries(initial));
+  const map = new Map(Object.entries(initial));
   const storage: FirstRunStorage = {
     getItem: (key) => map.get(key) ?? null,
     setItem: (key, value) => {
@@ -43,36 +43,74 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('FirstRunGuide 显示条件', () => {
-  it('真实后端 + 空数据：展示引导、四平台通道 Tag 与两条可复制命令', () => {
+describe('FirstRunGuide 客户化（白号 P0-1/P1-5）', () => {
+  it('首屏只给客户路径：去连接账号 / 先体验演示，不暴露开发者命令与 env 键名', () => {
     const { storage } = memoryStorage();
-    render(<FirstRunGuide {...BASE_PROPS} storage={storage} />);
+    render(
+      <FirstRunGuide
+        {...BASE_PROPS}
+        storage={storage}
+        needsAdminCount={2}
+        needsAuthCount={2}
+        onOpenConnect={() => {}}
+        onDemo={() => {}}
+      />,
+    );
 
     expect(screen.getByTestId('first-run-guide')).toBeInTheDocument();
     expect(screen.getByText('后端已连上，但还没有消息')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /去连接账号/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /先体验演示（注入示例消息）/ })).toBeInTheDocument();
 
-    // 四平台当前通道：fixtures 中飞书/邮箱=真实，钉钉/企微=Mock
+    // 四平台当前通道：Mock 统一叫「演示模式」，不再出现「Mock 模拟」混用
     for (const platform of [Platform.FEISHU, Platform.DINGTALK, Platform.WECOM, Platform.MAIL]) {
       expect(screen.getByTestId(`first-run-mode-${platform}`)).toBeInTheDocument();
     }
     expect(screen.getByTestId('first-run-mode-feishu')).toHaveTextContent('飞书 · 真实接口');
-    expect(screen.getByTestId('first-run-mode-dingtalk')).toHaveTextContent('钉钉 · Mock 模拟');
-    expect(screen.getByTestId('first-run-mode-wecom')).toHaveTextContent('企业微信 · Mock 模拟');
+    expect(screen.getByTestId('first-run-mode-dingtalk')).toHaveTextContent('钉钉 · 演示模式');
+    expect(screen.getByTestId('first-run-mode-wecom')).toHaveTextContent('企业微信 · 演示模式');
     expect(screen.getByTestId('first-run-mode-mail')).toHaveTextContent('邮箱 · 真实接口');
-    // 缺失变量沿用账号页「缺 xxx」的简洁文案
-    expect(screen.getByTestId('first-run-mode-wecom')).toHaveTextContent(
-      '缺 WECOM_SECRET、WECOM_AGENT_ID',
+
+    // 开发者命令默认折叠，不在首屏直接铺开（展开后才可见）
+    const devDetails = screen.getByText('开发者：命令行方式（可选）').closest('details');
+    expect(devDetails).not.toBeNull();
+    expect(devDetails?.open).toBe(false);
+    expect(devDetails?.textContent).toContain('python scripts/smoke.py');
+    expect(devDetails?.textContent).toContain('pnpm run doctor');
+
+    // 不再把内部变量名直接铺给客户（折叠进「需要管理员配置」）
+    const visibleText = document.body.textContent ?? '';
+    expect(visibleText).not.toContain('FEISHU_APP_ID');
+    expect(visibleText).not.toContain('WECOM_SECRET');
+    const adminDetails = screen.getByTestId('first-run-admin-config');
+    expect(adminDetails.textContent).toContain('需要管理员配置（2 个平台）');
+    expect(adminDetails.textContent).toContain('另有 2 项可自己登录/添加');
+  });
+
+  it('主 CTA：去连接账号；次 CTA：先体验演示', async () => {
+    const user = userEvent.setup();
+    const onOpenConnect = vi.fn();
+    const onDemo = vi.fn();
+    const { storage } = memoryStorage();
+    render(
+      <FirstRunGuide
+        {...BASE_PROPS}
+        storage={storage}
+        onOpenConnect={onOpenConnect}
+        onDemo={onDemo}
+      />,
     );
 
-    // 三条可照做的命令（含启动前后端提示）
-    expect(screen.getByText(`python scripts/smoke.py ${DEFAULT_SMOKE_BASE}`)).toBeInTheDocument();
-    expect(screen.getByText('pnpm run doctor')).toBeInTheDocument();
-    expect(screen.getByText('pnpm --filter @unimsg/server start')).toBeInTheDocument();
-    expect(screen.getByText('pnpm --filter @unimsg/web dev')).toBeInTheDocument();
-    // 新能力入口：连接本人账号（推荐，免拉机器人进群）
-    expect(screen.getByText(/连接本人账号（推荐，免拉机器人进群）/)).toBeInTheDocument();
-    // 命令可一键复制：4 条命令各带一个复制按钮（aria-label 取自 tooltips[0]）
-    expect(screen.getAllByRole('button', { name: '复制命令' })).toHaveLength(4);
+    await user.click(screen.getByRole('button', { name: /去连接账号/ }));
+    expect(onOpenConnect).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole('button', { name: /先体验演示（注入示例消息）/ }));
+    expect(onDemo).toHaveBeenCalledTimes(1);
+  });
+
+  it('第 3 步指向真实存在的「连接账号」入口，不再写「平台账号页点连接本人账号」', () => {
+    render(<FirstRunGuide {...BASE_PROPS} onOpenConnect={() => {}} />);
+    expect(screen.getByRole('button', { name: /去「连接账号」查看状态/ })).toBeInTheDocument();
+    expect(screen.queryByText(/到「平台账号」页点「连接本人账号」/)).not.toBeInTheDocument();
   });
 
   it('已有消息时不显示', () => {
@@ -133,16 +171,6 @@ describe('FirstRunGuide 显示条件', () => {
     const { storage } = memoryStorage();
     render(<FirstRunGuide {...BASE_PROPS} connection="reconnecting" storage={storage} />);
     expect(screen.getByText('实时连接重连中')).toBeInTheDocument();
-  });
-
-  it('传入 onOpenAccounts 时，第 3 步可跳转平台账号页', async () => {
-    const user = userEvent.setup();
-    const onOpenAccounts = vi.fn();
-    const { storage } = memoryStorage();
-    render(<FirstRunGuide {...BASE_PROPS} storage={storage} onOpenAccounts={onOpenAccounts} />);
-
-    await user.click(screen.getByRole('button', { name: /查看平台账号/ }));
-    expect(onOpenAccounts).toHaveBeenCalledTimes(1);
   });
 
   it('localStorage 读写抛错时不影响展示与关闭（隐私模式降级）', async () => {

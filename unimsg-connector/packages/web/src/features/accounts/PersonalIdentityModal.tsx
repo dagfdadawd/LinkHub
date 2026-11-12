@@ -164,7 +164,7 @@ function WhyLogin() {
       </li>
       <li>
         <strong>随时可回退</strong>：不登录或注销后，消息会自动走机器人通道兜底；也可以把
-        DINGTALK_IDENTITY 设为 bot 固定用机器人。
+        身份策略已被部署配置固定为「只用机器人」。
       </li>
     </ul>
   );
@@ -174,19 +174,28 @@ export function PersonalIdentityModal({
   open,
   identity,
   mockMode = false,
+  autoStart,
   onClose,
   onRefresh,
+  successToast,
   pollIntervalMs = 2_000,
   pollTimeoutMs = 120_000,
   countdownIntervalMs = 1_000,
 }: {
   open: boolean;
   identity?: PlatformIdentityView;
-  /** 平台整体为 Mock：不能登录真实账号，先提示配置凭据 */
+  /**
+   * 平台整体为 Mock（运行态 effective=mock）：
+   * 白号允许直接登录本人账号（后端不禁），登录后还需启用「仅用本人身份」才会真实收发。
+   */
   mockMode?: boolean;
+  /** 打开后自动发起登录（连接账号页「用钉钉本人账号登录（推荐）」一登即用） */
+  autoStart?: 'browser' | 'device';
   onClose: () => void;
   /** 状态变化后让账号页重拉 /api/accounts */
   onRefresh?: () => void;
+  /** 登录成功后的 toast 文案（连接账号页「一登即用」需要说明身份已自动启用） */
+  successToast?: string;
   /** 轮询间隔（测试注入更短的值） */
   pollIntervalMs?: number;
   /** 没有进行中登录时最多自动检测多久；有 expiresAt 时会自动延长到过期后 30s */
@@ -209,8 +218,10 @@ export function PersonalIdentityModal({
 
   const onCloseRef = useRef(onClose);
   const onRefreshRef = useRef(onRefresh);
+  const successToastRef = useRef(successToast);
   onCloseRef.current = onClose;
   onRefreshRef.current = onRefresh;
+  successToastRef.current = successToast;
 
   const user = identity?.user;
   const linked = Boolean(user?.linked);
@@ -220,6 +231,13 @@ export function PersonalIdentityModal({
   // 给「只在打开时执行一次」的 effect 读取最新值，避免状态刷新导致重复恢复/重复轮询
   const linkedRef = useRef(linked);
   linkedRef.current = linked;
+  const canLinkRef = useRef(canLink);
+  canLinkRef.current = canLink;
+  const mockModeRef = useRef(mockMode);
+  mockModeRef.current = mockMode;
+  const autoStartRef = useRef(autoStart);
+  autoStartRef.current = autoStart;
+  const autoStartedRef = useRef(false);
   const activeRef = useRef<ActiveLogin>();
   activeRef.current = active;
   /** 用户发起过登录（用于「父级刷新后 identity.linked=true」时自动关闭） */
@@ -231,7 +249,15 @@ export function PersonalIdentityModal({
   function successClose(): void {
     if (successRef.current) return;
     successRef.current = true;
-    toast.success(DINGTALK_SUCCESS_TOAST);
+    if (mockModeRef.current) {
+      // P0-2：登录成功 ≠ 能真实收发——运行态仍是 Mock 时必须如实提醒
+      toast.warning(
+        '钉钉本人账号已登录，但平台当前仍是 Mock 运行态：'
+        + '请在「连接账号」启用「仅用本人身份」（热应用，无需重启）后才会真实收发。',
+      );
+    } else {
+      toast.success(successToastRef.current ?? DINGTALK_SUCCESS_TOAST);
+    }
     onRefreshRef.current?.();
     onCloseRef.current();
   }
@@ -250,9 +276,10 @@ export function PersonalIdentityModal({
     setNow(Date.now());
     attemptedRef.current = false;
     successRef.current = false;
+    autoStartedRef.current = false;
 
-    // 已连接（查看 / 换账号视图）与 Mock / 未安装场景不需要探测登录流程
-    if (mockMode || linkedRef.current || !canLink) return;
+    // Mock 运行态也允许登录（白号 P1-1）；已连接 / 不可登录场景不需要探测
+    if (linkedRef.current || !canLink) return;
 
     let alive = true;
     setRestoring(true);
@@ -271,6 +298,12 @@ export function PersonalIdentityModal({
           setNow(Date.now());
           attemptedRef.current = true;
           setPhase('waiting');
+          return;
+        }
+        // 「一登即用」：打开即自动拉起浏览器登录（同一时间只发起一次）
+        if (autoStartRef.current && !autoStartedRef.current) {
+          autoStartedRef.current = true;
+          await startLogin(autoStartRef.current);
         }
       } catch {
         // 状态接口抖动：保持可手动发起登录，不阻塞弹窗
@@ -281,7 +314,7 @@ export function PersonalIdentityModal({
     return () => {
       alive = false;
     };
-    // 只在「打开」时执行；linked/canLink/mockMode 用 ref 读取，避免账号页刷新时重复恢复
+    // 只在「打开」时执行；linked/canLink/mockMode/autoStart 用 ref 读取
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -300,7 +333,7 @@ export function PersonalIdentityModal({
    * 未登录本人身份时才轮询；已连接（换账号视图）不轮询，避免旧 token 让弹窗误判成功。
    */
   useEffect(() => {
-    if (!open || mockMode || linked || !canLink) return;
+    if (!open || linked || !canLink) return;
     let cancelled = false;
     let timer: number | undefined;
     const startedAt = Date.now();
@@ -356,7 +389,7 @@ export function PersonalIdentityModal({
       if (timer) window.clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, mockMode, linked, canLink, pollIntervalMs, pollTimeoutMs]);
+  }, [open, linked, canLink, pollIntervalMs, pollTimeoutMs]);
 
   // 父级刷新后 identity 变成「已连接」且本次确实发起过登录：自动收尾（不等下一次轮询）
   useEffect(() => {
@@ -865,15 +898,31 @@ export function PersonalIdentityModal({
   }
 
   let body: ReactNode;
-  if (mockMode) {
-    body = (
+  if (mockMode && user) {
+    const mockAlert = (
       <Alert
-        type="info"
+        className="personal-modal__mock-alert"
+        type="warning"
         showIcon
-        message="当前平台通道是 Mock 模拟，无法登录真实钉钉账号"
-        description="先在 .env 配置钉钉应用凭据（DINGTALK_CLIENT_ID / DINGTALK_CLIENT_SECRET）并把 DINGTALK_MODE 设为 real，重启后端后再回来连接。Mock 模式不会真实收发，也不会假成功。"
+        message={
+          linked
+            ? '本人账号已登录，但平台当前仍是 Mock 运行态'
+            : '钉钉当前是 Mock 运行态：可以先登录本人账号'
+        }
+        description={
+          linked
+            ? '登录本身已成功，但收发仍走模拟通道。请到「连接账号」页启用「仅用本人身份」（后端热应用，无需重启），之后消息才会以本人身份真实收发。'
+            : '没有企业机器人应用也能用本人身份：登录后到「连接账号」页点「用钉钉本人账号登录（推荐）」，会先切换身份模式（热应用、无需重启），再用浏览器完成授权。Mock 下不会真实收发，也不会假成功。'
+        }
       />
     );
+    if (linked && !reloginMode) {
+      body = <Space direction="vertical" size="middle" style={{ width: '100%' }}>{mockAlert}{renderLinked()}</Space>;
+    } else if (unavailable) {
+      body = renderInstall();
+    } else {
+      body = <Space direction="vertical" size="middle" style={{ width: '100%' }}>{mockAlert}{renderLogin()}</Space>;
+    }
   } else if (!identity || !user) {
     body = (
       <Space direction="vertical" size="middle" style={{ width: '100%' }}>

@@ -188,3 +188,19 @@ describe('MockApi 授权中心（纯前端演示）', () => {
     await expect(api.mailAccountDelete('local-1')).rejects.toThrow(/演示模式/);
   });
 });
+
+describe('MockApi 应用配置（演示模式）', () => {
+  it('getAppConfig 返回全「未配置」视图；保存/验证不假成功', async () => {
+    const { api } = makeApi();
+    const view = await api.getAppConfig();
+    expect(view.restartRequired).toBe(false);
+    expect(view.identity.dingtalk).toBe('auto');
+    expect(view.platforms.feishu.fields.appId.configured).toBe(false);
+    expect(view.platforms.feishu.fields.appId.source).toBe('none');
+
+    await expect(api.updateAppConfig({ identity: { dingtalk: 'user' } })).rejects.toThrow(/演示模式/);
+    const verified = await api.mailAccountVerify('local-1');
+    expect(verified.ok).toBe(false);
+    expect(verified.message).toContain('演示模式');
+  });
+});

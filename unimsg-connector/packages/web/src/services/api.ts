@@ -170,13 +170,98 @@ export interface HealthInfo {
    * 后端启动时读取的 .env 文件信息（只有路径与修改时间，绝不含内容）。
    * 不存在 .env 时为 null；后端版本较旧时字段缺失。
    */
-  envFile?: { path: string; mtime: string } | null;
+  envFile?: { path: string; mtime: string | null } | null;
+  /**
+   * 后端启动时读取的本地配置文件（DATA_DIR/linkhub-config.json）信息：
+   * 只有路径与修改时间，绝不包含内容；不存在 / 旧后端时缺失或 null。
+   */
+  settingsFile?: { path: string; mtime: string | null } | null;
 }
 
 export interface TraceResult {
   data: UnifiedMessage[];
   log: TraceEntry[];
 }
+
+// ---------------------------------------------------------------------------
+// 平台应用凭据 / 运行配置（GET/PUT /api/app-config）
+// 白号首次使用 P0：客户必须能在界面填写 App 凭据，而不是只能改 .env。
+// 安全：secret 只下发「已配置」/脱敏值；保存后不回显明文。
+// ---------------------------------------------------------------------------
+
+/** 字段来源：env=.env 已配置（GUI 不可覆盖）；local=本地配置文件；none=未配置；unknown=旧后端未标注 */
+export type AppConfigSource = 'env' | 'local' | 'none' | 'unknown';
+
+export interface AppConfigField {
+  configured: boolean;
+  /** 脱敏后的展示值（secret 通常只显示「已配置」或末 4 位） */
+  display?: string;
+  source: AppConfigSource;
+  /** 对应环境变量名（后端可给，便于提示「也可写 .env」） */
+  key?: string;
+  /** 非 secret 的布尔/枚举字段（如 stream 开关）后端会回传真实值 */
+  value?: string | boolean;
+}
+
+export type AppConfigFieldMap = Record<string, AppConfigField>;
+
+export type AppConfigPlatformId = 'feishu' | 'dingtalk' | 'wecom';
+
+export interface AppConfigPlatformView {
+  fields: AppConfigFieldMap;
+  /** 还缺的环境变量 / 配置键名（来自 /api/onboarding detail.missing 或 app-config） */
+  missing: string[];
+}
+
+export interface AppConfigView {
+  /** 身份策略：如 {dingtalk:'user'|'auto'|'bot', feishu:...} */
+  identity: Record<string, string | boolean | undefined>;
+  /** 身份策略来源（来自 .env 时 GUI 不可覆盖） */
+  identitySources?: Record<string, 'env' | 'local' | 'none'>;
+  platforms: Record<AppConfigPlatformId, AppConfigPlatformView>;
+  llm: AppConfigFieldMap;
+  modes?: Record<string, string>;
+  /** true = 配置文件比进程启动新，保存后需要重启 LinkHub 才生效 */
+  restartRequired: boolean;
+  envFile?: { path: string; mtime: string | null } | null;
+  settingsFile?: { path: string; mtime: string | null } | null;
+}
+
+/** PUT /api/app-config 请求体：只传要修改的字段（省略=不改） */
+export interface AppConfigUpdate {
+  identity?: Record<string, string | undefined>;
+  platforms?: Partial<Record<AppConfigPlatformId, Record<string, string | boolean | undefined>>>;
+  llm?: Record<string, string | undefined>;
+  modes?: Record<string, string | undefined>;
+}
+
+export interface AppConfigSaveResult {
+  saved: boolean;
+  /** true = 需要重启 LinkHub 才生效（应用凭据类配置） */
+  restartRequired: boolean;
+  /** true = 已热应用，无需重启（如 identity.dingtalk 切「仅本人身份」） */
+  hotApplied?: boolean;
+  /** 本次实际热应用成功的键（identity.*），便于前端精确提示 */
+  hotAppliedKeys?: string[];
+  /** 静态键（需要重启才生效）列表 */
+  staticKeys?: string[];
+  /** 因 .env 显式优先而被忽略的键（GUI 不覆盖运维已写的环境变量） */
+  ignoredByEnv?: string[];
+  /** 后端保存提示（中文；可直接展示） */
+  message?: string;
+  warnings?: string[];
+  changedKeys: string[];
+}
+
+/** 各平台应用凭据字段（PUT 只提交有值的字段；GET 归一化时保证这些键总是存在） */
+export const APP_CONFIG_PLATFORM_FIELD_KEYS: Record<AppConfigPlatformId, string[]> = {
+  feishu: ['appId', 'appSecret', 'verifyToken', 'encryptKey', 'stream'],
+  dingtalk: ['clientId', 'clientSecret', 'robotCode', 'aesToken', 'aesKey', 'stream'],
+  wecom: ['corpId', 'agentId', 'secret', 'token', 'aesKey'],
+};
+
+/** AI 模型（可选）字段 */
+export const APP_CONFIG_LLM_FIELD_KEYS = ['provider', 'apiKey', 'baseUrl', 'model'];
 
 // ---------------------------------------------------------------------------
 // 授权中心 / 首次使用向导（个人版）
@@ -202,6 +287,10 @@ export interface OnboardingAction {
   /** kind=api 时后端建议的接口路径（前端只识别已知动作，不做任意请求） */
   path?: string;
   method?: string;
+  /** kind=api 且 path=/api/app-config 时的请求体（后端新 schema） */
+  payload?: Record<string, unknown>;
+  /** 主调用完成后按顺序继续调（例如先 PUT 身份模式，再 POST 拉起登录） */
+  then?: Array<{ path: string; method?: string; payload?: Record<string, unknown> }>;
   /** kind=link：官方后台 / 文档深链 */
   url?: string;
   /** kind=copy：要复制的管理员清单 / 说明文本 */
@@ -236,7 +325,7 @@ export interface OnboardingView {
   /** 后端判定是否「首次使用」：环境仍是模板 / 没有可用账号 */
   firstRun: boolean;
   startedAt?: string;
-  envFile?: { path: string; mtime: string } | null;
+  envFile?: { path: string; mtime: string | null } | null;
   dws: OnboardingDwsInfo;
   overall: { ready: number; total: number; needsAction: number };
   /** 平台卡片；前端按邮箱 → 钉钉 → 飞书 → 企微 排序 */
@@ -256,6 +345,9 @@ export interface MailAccountView {
   source: 'env' | 'file';
   /** 后端标记是否可在本地删除（file=true；旧后端可能缺失，页面按 source 兜底） */
   removable?: boolean;
+  /** 是否已通过「测试连接」验证（未验证账号不算邮箱平台 ready） */
+  verified?: boolean;
+  verifiedAt?: string;
   folders?: string[];
   mode?: DeliveryMode;
 }
@@ -271,6 +363,8 @@ export interface MailAccountInput {
   imapPort?: number;
   smtpHost?: string;
   smtpPort?: number;
+  /** 先真实连接测试通过才保存（后端 verify:true；失败不会保存半成品账号） */
+  verify?: boolean;
 }
 
 /** 邮箱连接测试结果（IMAP + SMTP 登录自检） */
@@ -314,6 +408,12 @@ export interface MessageApi {
   mailAccountCreate(input: MailAccountInput): Promise<void>;
   /** 删除本地保存的邮箱账号（.env 来源不可删） */
   mailAccountDelete(key: string): Promise<void>;
+  /** 对已保存的本地邮箱账号跑一次真实 IMAP/SMTP 自检（成功后标记「已验证」） */
+  mailAccountVerify(key: string): Promise<MailAccountTestResult>;
+  /** 读取平台应用凭据 / 运行配置（脱敏，不含 secret 明文） */
+  getAppConfig(): Promise<AppConfigView>;
+  /** 保存平台应用凭据 / 身份模式（部分更新；返回是否需要重启） */
+  updateAppConfig(patch: AppConfigUpdate): Promise<AppConfigSaveResult>;
   markDone(id: string): Promise<UnifiedMessage>;
   /** 标记已读 / 未读（阅读状态独立于业务状态） */
   markRead(id: string, read: boolean): Promise<UnifiedMessage>;

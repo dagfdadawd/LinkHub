@@ -8,6 +8,7 @@
  *
  * 安全：authCode 只在服务端内存/本地文件中；响应、日志、错误信息都不含授权码。
  */
+import { basename } from 'node:path';
 import { Router, type Request, type Response } from 'express';
 import { currentMailAccounts, MailAccountsError, maskMailAddress, type MailAccountsStore } from '../services/mailAccounts';
 import { testMailAccountInput } from '../services/mailAccountTest';
@@ -30,6 +31,28 @@ function sendError(res: Response, e: unknown): void {
   res.status(500).json({ ok: false, error: `邮箱账号操作失败：${message}` });
 }
 
+/** 已保存账号 → 测试输入（验证接口用；authCode 只在服务端内流转，绝不下发） */
+function accountToInput(account: {
+  key: string; address: string; authCode: string; provider: string; label: string;
+  imapHost: string; imapPort: number; imapSecure: boolean;
+  smtpHost: string; smtpPort: number; smtpSecure: boolean; folders: string[];
+}): MailAccountInput {
+  return {
+    key: account.key,
+    address: account.address,
+    authCode: account.authCode,
+    provider: account.provider,
+    label: account.label,
+    imapHost: account.imapHost,
+    imapPort: account.imapPort,
+    imapSecure: account.imapSecure,
+    smtpHost: account.smtpHost,
+    smtpPort: account.smtpPort,
+    smtpSecure: account.smtpSecure,
+    folders: account.folders,
+  };
+}
+
 /** 请求体必须是对象（避免数组/字符串导致字段访问异常） */
 function bodyObject(req: Request): Record<string, unknown> {
   const body = req.body;
@@ -50,7 +73,8 @@ export function mailAccountsRouter(deps: MailAccountsRouterDeps = {}): Router {
         ok: true,
         data: {
           accounts: snapshot.masked,
-          filePath: snapshot.filePath,
+          // P3：认证接口只给 basename，不暴露本机绝对路径
+          filePath: basename(snapshot.filePath),
           issues: snapshot.issues,
           providers: ['qq', '163', '126', 'yeah', 'gmail', 'outlook', 'icloud', 'custom'],
         },
@@ -81,10 +105,48 @@ export function mailAccountsRouter(deps: MailAccountsRouterDeps = {}): Router {
     }
   });
 
-  r.post('/mail/accounts', (req: Request, res: Response) => {
+  r.post('/mail/accounts', async (req: Request, res: Response) => {
     res.setHeader('Cache-Control', 'no-store');
     try {
-      const { account, warnings, snapshot } = store().addOrUpdate(bodyObject(req) as MailAccountInput);
+      const body = bodyObject(req);
+      const wantVerify = body.verify === true;
+      if (wantVerify) {
+        // 先做一次真实 IMAP/SMTP 登录自检：通过才保存并直接标记已验证（「测试通过才保存」语义）
+        const built = createMailAccountFromInput(body as MailAccountInput);
+        if (!built.account) {
+          res.status(400).json({ ok: false, error: built.errors.join('；'), errors: built.errors });
+          return;
+        }
+        const tested = await testAccount(body as MailAccountInput);
+        if (tested.errors) {
+          res.status(400).json({ ok: false, error: tested.errors.join('；'), errors: tested.errors });
+          return;
+        }
+        if (!tested.result?.ok) {
+          res.status(200).json({
+            ok: false,
+            saved: false,
+            error: '测试连接未通过，账号未保存。请按提示修正授权码/服务器后重试（也可取消勾选「测试通过再保存」先保存待验证）。',
+            test: tested.result,
+          });
+          return;
+        }
+        const saved = store().addOrUpdate(body as MailAccountInput);
+        const marked = store().markVerified(saved.account.key);
+        const source = marked.snapshot.sources[saved.account.key] ?? 'file';
+        res.status(201).json({
+          ok: true,
+          data: {
+            account: store().maskedOf(marked.account, source),
+            warnings: saved.warnings,
+            hotReloaded: true,
+            verified: true,
+            message: '邮箱连接测试通过，账号已保存并标记为已验证（无需重启，下一轮开始收信）。',
+          },
+        });
+        return;
+      }
+      const { account, warnings, snapshot } = store().addOrUpdate(body as MailAccountInput);
       const source = snapshot.sources[account.key] ?? 'file';
       res.status(201).json({
         ok: true,
@@ -94,6 +156,52 @@ export function mailAccountsRouter(deps: MailAccountsRouterDeps = {}): Router {
           hotReloaded: true,
           message: '邮箱账号已保存到本地并热加载（无需重启后端）。重启后会从本地文件自动恢复。',
         },
+      });
+    } catch (e) {
+      sendError(res, e);
+    }
+  });
+
+  // 对「已保存的本地账号」跑真实 IMAP+SMTP 登录自检；成功才写 verifiedAt（未验证不算已就绪）
+  r.post('/mail/accounts/:key/verify', async (req: Request, res: Response) => {
+    res.setHeader('Cache-Control', 'no-store');
+    try {
+      const key = String(req.params.key ?? '');
+      const storeRef = store();
+      const account = storeRef.accountOf(key);
+      if (!account) {
+        res.status(404).json({ ok: false, error: `本地没有找到邮箱账号「${key}」（可能已删除）` });
+        return;
+      }
+      if (storeRef.sourceOf(key) === 'env') {
+        res.status(400).json({
+          ok: false,
+          error: `邮箱账号「${key}」来自 .env：默认视为已验证，无需在页面验证（要改凭据请修改 .env 并重启）。`,
+        });
+        return;
+      }
+      const tested = await testAccount(accountToInput(account));
+      if (tested.errors) {
+        res.status(400).json({ ok: false, error: tested.errors.join('；'), errors: tested.errors });
+        return;
+      }
+      if (!tested.result?.ok) {
+        res.json({
+          ok: false,
+          verified: false,
+          error: '测试连接未通过：账号保持「未验证」，请按提示修正后重试。',
+          imap: tested.result?.imap,
+          smtp: tested.result?.smtp,
+        });
+        return;
+      }
+      const marked = storeRef.markVerified(key);
+      res.json({
+        ok: true,
+        verified: true,
+        verifiedAt: marked.account.verifiedAt,
+        account: storeRef.maskedOf(marked.account, 'file'),
+        message: '验证通过：邮箱账号已标记为已验证，下一轮开始真实收信。',
       });
     } catch (e) {
       sendError(res, e);

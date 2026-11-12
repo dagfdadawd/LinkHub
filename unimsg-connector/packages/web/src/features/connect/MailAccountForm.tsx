@@ -62,13 +62,15 @@ export function MailAccountForm({
   onSaved?: () => void;
   onCancel?: () => void;
 }) {
-  const { message } = AntApp.useApp();
+  const { message, modal } = AntApp.useApp();
   const [form] = Form.useForm<MailFormValues>();
   const provider = Form.useWatch('provider', form);
   const preset = findMailProvider(provider);
   const [testing, setTesting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [result, setResult] = useState<MailAccountTestResult | null>(null);
+  /** 本次表单是否已通过「测试连接」：未通过/未测试就保存需二次确认（P2-3） */
+  const [testedOk, setTestedOk] = useState(false);
 
   /** 切换服务商：自动带出官方 IMAP/SMTP 预设，用户仍可在高级设置里覆盖 */
   function applyProvider(value: string): void {
@@ -81,6 +83,7 @@ export function MailAccountForm({
       smtpPort: next.smtpPort,
     });
     setResult(null);
+    setTestedOk(false);
   }
 
   async function validateValues(): Promise<MailFormValues | undefined> {
@@ -99,6 +102,7 @@ export function MailAccountForm({
     try {
       const res = await store.mailAccountTest(buildMailAccountInput(values));
       setResult(res);
+      setTestedOk(res.ok);
       if (res.ok) message.success(res.message ?? '邮箱连接测试通过');
       else message.error(res.message ?? '邮箱连接测试失败，请检查授权码与服务器地址');
     } catch (e) {
@@ -107,6 +111,7 @@ export function MailAccountForm({
         message: e instanceof Error ? e.message : '测试连接失败，请检查后端服务',
       };
       setResult(failure);
+      setTestedOk(false);
       message.error(failure.message ?? '测试连接失败');
     } finally {
       setTesting(false);
@@ -116,10 +121,33 @@ export function MailAccountForm({
   async function handleSave(): Promise<void> {
     const values = await validateValues();
     if (!values) return;
+    // 未测试 / 测试失败的账号保存后是「未验证」：给一次明确确认，避免客户以为已连上（P2-3）
+    if (!testedOk) {
+      const confirmed = await new Promise<boolean>((resolve) => {
+        modal.confirm({
+          title: '还没有通过连接测试',
+          content: '保存后账号会标记为「未验证」，需要点「测试连接」通过后才会真实收信。仍要保存吗？',
+          okText: '仍然保存',
+          cancelText: '再测试一次',
+          onOk: () => resolve(true),
+          onCancel: () => resolve(false),
+        });
+      });
+      if (!confirmed) return;
+    }
     setSaving(true);
     try {
-      await store.mailAccountCreate(buildMailAccountInput(values));
-      message.success('邮箱账号已保存，收件箱会在下一轮轮询中同步（不需要重启后端）');
+      // 测试已通过：让后端 verify:true 再校验一次并直接标记「已验证」；
+      // 未测试/失败则保存为「未验证」（仍需测试连接后才算就绪）。
+      await store.mailAccountCreate({
+        ...buildMailAccountInput(values),
+        ...(testedOk ? { verify: true } : {}),
+      });
+      message.success(
+        testedOk
+          ? '邮箱账号已保存并生效（已通过测试验证，可直接真实收信；首轮只建立 UID 基线，不会导入历史邮件）。'
+          : '邮箱账号已保存为未验证账号：点「测试连接」验证通过后才会真实收信（首轮只建立 UID 基线，不会导入历史邮件）。',
+      );
       form.resetFields();
       form.setFieldsValue({
         provider: 'qq',
@@ -129,6 +157,7 @@ export function MailAccountForm({
         smtpPort: 465,
       });
       setResult(null);
+      setTestedOk(false);
       onSaved?.();
     } catch (e) {
       message.error(e instanceof Error ? e.message : '保存邮箱账号失败，请稍后重试');
@@ -254,13 +283,26 @@ export function MailAccountForm({
           message={result.ok ? '连接测试通过' : '连接测试失败'}
           description={
             <div>
-              {result.message && <div>{result.message}</div>}
+              <div>
+                {result.ok
+                  ? (result.message ?? 'IMAP / SMTP 登录成功。')
+                  : (result.message ?? '请检查邮箱地址、授权码（不是登录密码）与服务商 IMAP 设置。')}
+              </div>
+              {!result.ok && (
+                <div className="mail-form__hint-source">
+                  这是页面添加的账号：请核对邮箱地址 / 授权码 / IMAP 服务器；
+                  如果是 .env 里的旧账号，请修改 .env 后重启后端。
+                </div>
+              )}
               {result.details && result.details.length > 0 && (
-                <ul className="mail-form__checks">
-                  {result.details.map((item) => (
-                    <li key={item}>{item}</li>
-                  ))}
-                </ul>
+                <details className="mail-form__tech">
+                  <summary>技术详情（给管理员看）</summary>
+                  <ul className="mail-form__checks">
+                    {result.details.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                </details>
               )}
             </div>
           }
@@ -275,6 +317,7 @@ export function MailAccountForm({
         >
           测试连接
         </Button>
+        <span className="mail-form__test-note">测试会真实连接一次邮箱服务器（不会保存账号）</span>
         <Button
           type="primary"
           icon={<SaveOutlined />}
@@ -290,7 +333,7 @@ export function MailAccountForm({
         )}
       </div>
       <div className="mail-form__note">
-        <LinkOutlined /> 保存后立即生效（不需要重启）；授权码只发送给本机后端，不会写进浏览器存储。
+        <LinkOutlined /> 保存后立即生效（首轮只建立 UID 基线，不会导入历史邮件）；授权码只发送给本机后端，不会写进浏览器存储。
       </div>
     </div>
   );

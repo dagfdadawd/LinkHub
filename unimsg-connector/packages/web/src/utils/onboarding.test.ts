@@ -70,8 +70,9 @@ describe('shouldShowOnboardingBanner（首启横幅判定）', () => {
     expect(shouldShowOnboardingBanner({ demoMode: false, onboarded: true, firstRun: false })).toBe(false);
   });
 
-  it('后端 firstRun=true 时即使本地有旧标记也重新提示（换环境后仍有用）', () => {
-    expect(shouldShowOnboardingBanner({ demoMode: false, onboarded: true, firstRun: true })).toBe(true);
+  it('本地点过「去连接 / 稍后」优先：即使后端 firstRun=true 也不再出现（P1-6）', () => {
+    expect(shouldShowOnboardingBanner({ demoMode: false, onboarded: true, firstRun: true })).toBe(false);
+    expect(shouldShowOnboardingBanner({ demoMode: false, onboarded: false, firstRun: true })).toBe(true);
   });
 
   it('全部平台已就绪时不再打扰', () => {

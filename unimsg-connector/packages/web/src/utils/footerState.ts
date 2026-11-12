@@ -39,11 +39,11 @@ export function footerState(
 
   switch (connection) {
     case 'connected':
-      return { badge: '真实后端', text: '已接入 LinkHub Server', tone: 'ok' };
+      return { badge: '服务已连接', text: '本地后端已连接（不代表平台账号已连接）', tone: 'ok' };
     case 'reconnecting':
-      return { badge: '真实后端', text: '后端连接中…', tone: 'pending' };
+      return { badge: '本地后端', text: '正在重连本地后端…', tone: 'pending' };
     case 'offline':
-      return { badge: '真实后端', text: '后端未连接（检查后端是否启动）', tone: 'error' };
+      return { badge: '本地后端', text: '本地后端未连接（检查后端是否启动）', tone: 'error' };
   }
 }
 
@@ -53,7 +53,8 @@ export function footerState(
  */
 export function footerShortLabel(footer: FooterState): string {
   if (footer.tone === 'demo') return '演示';
-  if (footer.tone === 'ok') return '已连接';
+  if (footer.tone === 'ok') return '服务已连接';
   if (footer.tone === 'pending') return '重连中';
   return footer.badge === '连接异常' ? '异常' : '未连接';
 }
+

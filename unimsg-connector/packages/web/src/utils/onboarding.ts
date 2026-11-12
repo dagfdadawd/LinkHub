@@ -16,9 +16,13 @@ import type {
 /** 「已在向导里点过连接/稍后」的本地标记；清掉它即可让首启提示重新出现 */
 export const ONBOARDED_KEY = 'linkhub.onboarded';
 
+/** 首启「3 步上手」的「知道了」标记（与横幅分开，设置里可一起重置） */
+export const FIRST_RUN_DISMISS_KEY = 'linkhub.firstRunDismissed';
+
 export interface OnboardingFlagStorage {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
+  removeItem?(key: string): void;
 }
 
 /** localStorage 在隐私模式 / 非浏览器环境可能不可用：失败时静默降级为「不记忆」 */
@@ -60,8 +64,8 @@ export function resetOnboarded(storage: OnboardingFlagStorage | null = defaultOn
  * 收件箱顶部首启提示是否出现：
  *  - 纯前端演示模式不打扰（没有真实账号可连，引导只会添乱）；
  *  - 四个平台都已就绪时不再打扰；
- *  - 点过「去连接 / 稍后再说」（localStorage 标记）后不再出现；
- *  - 后端 firstRun 明确为 true 时，即使本地有旧标记也重新提示（换环境/换账号后引导仍然有用）。
+ *  - 本地已点过「去连接 / 稍后再说」→ 永不再出现（P1-6：本地点过必须优先于后端 firstRun；
+ *    想重新看到可到「设置 → 关于 → 重新显示首次使用引导」）。
  */
 export function shouldShowOnboardingBanner(opts: {
   demoMode: boolean;
@@ -72,7 +76,7 @@ export function shouldShowOnboardingBanner(opts: {
 }): boolean {
   if (opts.demoMode) return false;
   if (opts.total !== undefined && opts.total > 0 && (opts.ready ?? 0) >= opts.total) return false;
-  if (opts.onboarded && opts.firstRun !== true) return false;
+  if (opts.onboarded) return false;
   return true;
 }
 
@@ -165,4 +169,13 @@ export function displayMailAddress(account: Pick<MailAccountView, 'address' | 'm
   // 后端可能已经返 · 或 * 的脱敏地址：再打一次码会把 · 也吃掉，直接展示
   if (/[*·]/.test(account.address)) return account.address;
   return maskMailAddress(account.address);
+}
+/** 设置里「重新显示首次使用引导」：清掉横幅与 3 步引导两个本地标记 */
+export function resetOnboardingTips(storage: OnboardingFlagStorage | null = defaultOnboardingStorage()): void {
+  try {
+    storage?.removeItem?.(ONBOARDED_KEY);
+    storage?.removeItem?.(FIRST_RUN_DISMISS_KEY);
+  } catch {
+    // 存储不可写时忽略：下次打开仍会看到引导
+  }
 }

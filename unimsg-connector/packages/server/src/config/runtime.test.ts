@@ -247,10 +247,24 @@ test('mode：测试环境默认 mock（单测绝不外呼），unless 显式 for
 // 能力画像：前端/doctor 使用的 missing / warnings
 // ---------------------------------------------------------------------------
 
-test('capability：飞书只配 AppID/Secret → 发✓收✗，警告缺 Verification Token', () => {
+test('capability：飞书只配 AppID/Secret（默认长连接）→ 收发均✓，不要求 Verification Token（P2-6）', () => {
   const rt = runtimeOf({
     FEISHU_APP_ID: 'a',
     FEISHU_APP_SECRET: 'b',
+  });
+  const f = rt[Platform.FEISHU];
+  assert.equal(f.mode, 'real');
+  assert.equal(f.canSend, true);
+  assert.equal(f.canReceive, true, '默认 FEISHU_STREAM=true 时只配 App ID/Secret 即可收');
+  assert.ok(!f.missing.includes('FEISHU_VERIFY_TOKEN'), '长连接不要求 Verify Token');
+  assert.ok(f.warnings.some((w) => w.includes('已开启飞书长连接')));
+});
+
+test('capability：飞书显式 HTTP 回调（FEISHU_STREAM=false）且缺 Verify Token → 发✓收✗并进 missing', () => {
+  const rt = runtimeOf({
+    FEISHU_APP_ID: 'a',
+    FEISHU_APP_SECRET: 'b',
+    FEISHU_STREAM: 'false',
   });
   const f = rt[Platform.FEISHU];
   assert.equal(f.mode, 'real');
@@ -477,4 +491,14 @@ test('FEISHU_IDENTITY 优先；只有旧 FEISHU_SEND_AS 时继承并给废弃提
   assert.equal(parseFeishuIdentityPolicy({ FEISHU_IDENTITY: 'user', FEISHU_SEND_AS: 'bot' }, warnings), 'user');
   assert.equal(parseFeishuIdentityPolicy({ FEISHU_SEND_AS: 'bot' }, warnings), 'bot');
   assert.ok(warnings.some((w) => w.includes('已废弃') && w.includes('FEISHU_SEND_AS')));
+});
+
+test('飞书长连接默认开启（P2-6）：未显式 FEISHU_STREAM 时只缺 App ID/Secret，不把 Verify Token 算缺失', () => {
+  const defaults = runtimeOf({}, {});
+  assert.ok(!defaults[Platform.FEISHU].missing.includes('FEISHU_VERIFY_TOKEN'), '默认长连接不应要求 Verify Token');
+  assert.deepEqual(defaults[Platform.FEISHU].missing, ['FEISHU_APP_ID', 'FEISHU_APP_SECRET']);
+  const http = runtimeOf({ FEISHU_STREAM: 'false' }, {});
+  assert.ok(http[Platform.FEISHU].missing.includes('FEISHU_VERIFY_TOKEN'), '显式 HTTP 回调模式才要求 Verify Token');
+  const explicitOn = runtimeOf({ FEISHU_STREAM: 'true' }, {});
+  assert.ok(!explicitOn[Platform.FEISHU].missing.includes('FEISHU_VERIFY_TOKEN'));
 });

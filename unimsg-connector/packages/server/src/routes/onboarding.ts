@@ -6,12 +6,13 @@
  *  - 邮箱账号取本地/环境配置并脱敏；
  *  - 响应绝不包含 token / 授权码 / 密钥。
  */
+import { basename } from 'node:path';
 import { Router, type Request, type Response } from 'express';
 import { Platform } from '@unimsg/shared';
 import { config, envFileSnapshot } from '../config';
 import { modeOf } from '../config';
 import { dingtalkPersonalClient } from '../connectors/dingtalkPersonal';
-import { resolveIdentity } from '../services/identity';
+import { identityChannelsReal, resolveIdentity } from '../services/identity';
 import { buildOnboarding } from '../services/onboarding';
 import { currentMailAccounts } from '../services/mailAccounts';
 
@@ -39,20 +40,33 @@ export function collectOnboardingDeps() {
   const feishuView = resolveIdentity(Platform.FEISHU);
   const dingtalkView = resolveIdentity(Platform.DINGTALK);
   return {
-    envFile: envFileSnapshot(),
+    envFile: (() => {
+      const snapshot = envFileSnapshot();
+      return snapshot ? { path: '.env', mtime: snapshot.mtime } : null;
+    })(),
     startedAt: new Date(Date.now() - process.uptime() * 1000).toISOString(),
     mail: {
       accounts: mail.masked,
-      filePath: mail.filePath,
+      // P3：认证接口只给 basename，不暴露本机绝对路径
+      filePath: basename(mail.filePath),
       issues: mail.issues,
       mode: modeOf(Platform.MAIL),
+      policy: config.runtime[Platform.MAIL].policy,
+      pollSeconds: Math.max(5, Math.round(config.mail.pollMs / 1000)),
     },
-    dingtalk: { view: dingtalkView, runtime: config.runtime[Platform.DINGTALK], dws },
+    dingtalk: {
+      view: dingtalkView,
+      runtime: config.runtime[Platform.DINGTALK],
+      dws,
+      // personal-only 时 identityChannelsReal=true（白号最顺路径：仅本人身份）
+      identityChannelsReal: identityChannelsReal(Platform.DINGTALK),
+    },
     feishu: {
       view: feishuView,
       runtime: config.runtime[Platform.FEISHU],
       scopes: config.feishuAuth.scopes,
       redirectUri: defaultFeishuRedirectUri(),
+      identityChannelsReal: identityChannelsReal(Platform.FEISHU),
     },
     wecom: { runtime: config.runtime[Platform.WECOM] },
     port: config.port,

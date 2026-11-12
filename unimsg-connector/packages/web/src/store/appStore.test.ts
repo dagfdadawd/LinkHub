@@ -101,6 +101,18 @@ describe('AppStore', () => {
       mailAccountTest: async () => ({ ok: false, message: 'unused' }),
       mailAccountCreate: async () => Promise.resolve(),
       mailAccountDelete: async () => Promise.resolve(),
+      mailAccountVerify: async () => ({ ok: false, message: 'unused' }),
+      getAppConfig: async () => ({
+        identity: {},
+        platforms: {
+          feishu: { fields: {}, missing: [] },
+          dingtalk: { fields: {}, missing: [] },
+          wecom: { fields: {}, missing: [] },
+        },
+        llm: {},
+        restartRequired: false,
+      }),
+      updateAppConfig: async () => ({ saved: true, restartRequired: false, changedKeys: [] }),
     };
     const realStore = new AppStore(httpLikeApi, realtime);
     await realStore.init();

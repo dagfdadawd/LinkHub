@@ -448,3 +448,19 @@ test('钉钉登录：browser 模式返回 127.0.0.1 回调 OAuth URL 与 600s �
     await call(base, 'POST', '/api/dingtalk/personal/logout');
   });
 });
+
+test('health（公开）：envFile.path 只给 basename（P2-10），settingsFile 只给文件名/存在性/mtime，不含内容', async () => {
+  await withApp(async (base) => {
+    const res = await call(base, 'GET', '/api/health');
+    assert.equal(res.status, 200);
+    const data = res.json;
+    if (data.envFile) {
+      assert.equal(data.envFile.path, '.env', '公开接口不得泄露 .env 绝对路径');
+      assert.ok(data.envFile.mtime);
+    }
+    assert.ok(data.settingsFile);
+    assert.equal(data.settingsFile.path, 'linkhub-config.json');
+    assert.equal(typeof data.settingsFile.present, 'boolean');
+    assert.deepEqual(Object.keys(data.settingsFile).sort(), ['mtime', 'path', 'present'], 'settingsFile 只含文件名/存在性/mtime；不含内容');
+  });
+});
