@@ -1,13 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Alert, App as AntApp, Button, Tag, Tooltip } from 'antd';
+import { Alert, App as AntApp, Button, Dropdown, Tooltip } from 'antd';
+import type { MenuProps } from 'antd';
 import {
   ArrowLeftOutlined,
   CheckOutlined,
   CopyOutlined,
   HistoryOutlined,
+  MailOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
+  MessageOutlined,
+  MoreOutlined,
   PaperClipOutlined,
   ReloadOutlined,
   SendOutlined,
@@ -18,7 +22,13 @@ import { formatBytes } from '../../utils/attachments';
 import { formatSendError } from '../../utils/sendError';
 import { store } from '../../store';
 import { useAppState } from '../../hooks/useAppState';
-import { TYPE_LABEL, PLATFORM_META, deliveryLabel, conversationLabel, formatDateTime, formatRelative, shortTrace } from '../../utils/format';
+import {
+  TYPE_LABEL,
+  conversationLabel,
+  deliveryLabel,
+  formatDateTime,
+  shortTrace,
+} from '../../utils/format';
 import { AvatarBadge } from '../../components/AvatarBadge';
 import { IdentityTag } from '../../components/IdentityTag';
 import { PlatformTag } from '../../components/PlatformTag';
@@ -27,6 +37,18 @@ import { AiSuggestion } from './AiSuggestion';
 import { ReplyComposer } from './ReplyComposer';
 import { StatusFlow } from './StatusFlow';
 import { usePreferences } from '../settings/preferences';
+
+/** 把焦点交给回复框（工作台的主操作是「回复」，不该让人再找一次输入框） */
+function focusComposer() {
+  const focus = (): boolean => {
+    const el = document.querySelector<HTMLTextAreaElement>('.composer textarea');
+    if (!el) return false;
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+    return true;
+  };
+  if (!focus()) window.setTimeout(focus, 80);
+}
 
 export function DetailPanel({
   message,
@@ -128,6 +150,15 @@ export function DetailPanel({
     }
   }
 
+  async function handleMarkUnread() {
+    try {
+      await store.markRead(message.traceId, false);
+      toast.success('已标为未读');
+    } catch {
+      toast.error('操作失败，请重试');
+    }
+  }
+
   async function copyTrace() {
     try {
       await navigator.clipboard.writeText(message.traceId);
@@ -137,9 +168,35 @@ export function DetailPanel({
     }
   }
 
+  const moreItems: MenuProps['items'] = [
+    {
+      key: 'trace',
+      icon: <CopyOutlined />,
+      label: '复制 traceId',
+      onClick: () => void copyTrace(),
+    },
+    {
+      key: 'replay',
+      icon: <HistoryOutlined />,
+      label: '全链路回放',
+      onClick: () => navigate(`/trace/${message.traceId}`),
+    },
+    ...(message.type === 'todo'
+      ? [
+          {
+            key: 'done',
+            icon: <CheckOutlined />,
+            label: message.done ? '已完成' : '标记完成',
+            disabled: !canMarkDone,
+            onClick: () => void handleDone(),
+          },
+        ]
+      : []),
+  ];
+
   return (
-    <div className="detail" data-testid="detail-panel">
-      <header className="detail__head">
+    <div className="detail detail--workbench" data-testid="detail-panel">
+      <header className="detail__bar">
         {onToggleList && (
           <Tooltip title={listCollapsed ? '展开消息列表' : '收起消息列表'}>
             <Button
@@ -156,42 +213,23 @@ export function DetailPanel({
           type="text"
           icon={<ArrowLeftOutlined />}
           onClick={() => navigate('/inbox')}
-          aria-label="返回列表"
-        />
-        <AvatarBadge name={message.sender.name} platform={message.platform} size={42} />
-        <div className="detail__title">
-          <div className="detail__name">
-            {message.sender.name}
-            <PlatformTag platform={message.platform} small />
-          </div>
-          <div className="detail__meta" title={formatDateTime(message.createdAt)}>
-            {formatRelative(message.createdAt)} · {TYPE_LABEL[message.type]} · trace {shortTrace(message.traceId)}
-          </div>
-        </div>
-        <div className="detail__head-actions">
-          <StatusBadge status={message.status} />
-          {message.type === 'todo' && (
-            <Button
-              size="small"
-              icon={<CheckOutlined />}
-              disabled={!canMarkDone}
-              onClick={handleDone}
-            >
-              {message.done ? '已完成' : '标记完成'}
-            </Button>
-          )}
-          <Tooltip title="复制 traceId">
-            <Button size="small" type="text" icon={<CopyOutlined />} onClick={copyTrace} />
-          </Tooltip>
-          <Button
-            size="small"
-            type="text"
-            icon={<HistoryOutlined />}
-            onClick={() => navigate(`/trace/${message.traceId}`)}
-          >
-            回放
+        >
+          返回
+        </Button>
+
+        <span className="detail__bar-spacer" />
+
+        <Tooltip title="标记为未读，会回到左侧未读分组">
+          <Button size="small" type="text" icon={<MailOutlined />} onClick={handleMarkUnread}>
+            标为未读
           </Button>
-        </div>
+        </Tooltip>
+        <Button size="small" type="text" icon={<MessageOutlined />} onClick={focusComposer}>
+          回复
+        </Button>
+        <Dropdown menu={{ items: moreItems }} trigger={['click']} placement="bottomRight">
+          <Button size="small" type="text" icon={<MoreOutlined />} aria-label="更多操作" />
+        </Dropdown>
       </header>
 
       <div className="detail__scroll">
@@ -249,43 +287,81 @@ export function DetailPanel({
           />
         )}
 
-        <section className="detail__section">
-          <div className="section-label">消息内容</div>
-          <div className="message-body">{message.body}</div>
-          {message.attachments && message.attachments.length > 0 && (
-            <div className="message-attachments" aria-label="附件">
-              {message.attachments.map((a, i) => (
-                <Tag key={`${a.name}-${i}`} icon={<PaperClipOutlined />}>
-                  {a.name} · {formatBytes(a.size)}
-                </Tag>
-              ))}
+        {/* 发送人：一行读完「谁 · 哪个渠道 · 什么时候 · 当前状态」 */}
+        <section className="detail__sender" aria-label="发送人信息">
+          <AvatarBadge name={message.sender.name} platform={message.platform} size={44} />
+          <div className="detail__sender-main">
+            <div className="detail__sender-name">
+              <span className="detail__sender-name-text" title={message.sender.name}>
+                {message.sender.name}
+              </span>
+              <PlatformTag platform={message.platform} small />
             </div>
+            <div className="detail__sender-meta" title={formatDateTime(message.createdAt)}>
+              {formatDateTime(message.createdAt)} · {TYPE_LABEL[message.type]} ·{' '}
+              {conversationLabel(message)}
+              {message.conversation?.type === 'group' && (
+                <span className="detail__conv-hint">回复会发回该群</span>
+              )}
+            </div>
+          </div>
+          <div className="detail__sender-tags">
+            <StatusBadge status={message.status} small />
+            {message.needsReview && <span className="chip chip--warn">需人工确认</span>}
+            {message.done && <span className="chip chip--done">已完成</span>}
+          </div>
+        </section>
+
+        {/* 原始消息：白底大字排版，是这一页的主要阅读区 */}
+        <article className="detail__message" aria-label="原始消息内容">
+          <div className="message-body">{message.body}</div>
+
+          {message.attachments && message.attachments.length > 0 && (
+            <ul className="file-list" aria-label="附件">
+              {message.attachments.map((a, i) => (
+                <li className="file-list__item" key={`${a.name}-${i}`}>
+                  <span className="file-list__icon" aria-hidden="true">
+                    <PaperClipOutlined />
+                  </span>
+                  <span className="file-list__main">
+                    <span className="file-list__name">{a.name}</span>
+                    <span className="file-list__meta">
+                      {a.mimeType || '未知类型'} · {formatBytes(a.size)}
+                    </span>
+                  </span>
+                  <Tooltip title="附件内容只用于投递，不落库，因此这里只展示元信息">
+                    <span className="file-list__hint">仅元信息</span>
+                  </Tooltip>
+                </li>
+              ))}
+            </ul>
           )}
+
           {message.reply && (
             <div className="message-reply">
               <span className="message-reply__label">
-                <SendOutlined /> {message.status === MsgStatus.FAILED ? '待重试的回复' : '已回写内容'}
+                <SendOutlined />{' '}
+                {message.status === MsgStatus.FAILED ? '待重试的回复' : '已回写内容'}
               </span>
               <span className="message-reply__text">{message.reply}</span>
             </div>
           )}
-        </section>
+        </article>
 
         {prefs.showAiDraft && (
           <AiSuggestion
             message={message}
-            onUseDraft={(draft) => setText(draft)}
-            onRegenerate={() => toast.info('草稿由关键词规则生成，可手动编辑')}
+            onUseDraft={(draft) => {
+              setText(draft);
+              focusComposer();
+            }}
+            onRegenerate={() => toast.info('当前草稿由关键词规则生成，可直接编辑或重新撰写')}
           />
         )}
 
-        <section className="detail__section">
-          <div className="section-label">状态流转</div>
-          <StatusFlow status={message.status} />
-        </section>
-
-        <section className="detail__section">
-          <div className="section-label">消息信息</div>
+        {/* 原来的「消息信息」大面板降级成可展开的详情，不占阅读空间 */}
+        <details className="detail__more">
+          <summary>更多信息（会话 / 外部 ID / traceId / 投递方式）</summary>
           <dl className="meta-grid">
             <div>
               <dt>发送人</dt>
@@ -294,21 +370,10 @@ export function DetailPanel({
               </dd>
             </div>
             <div>
-              <dt>平台</dt>
-              <dd>{PLATFORM_META[message.platform].name}</dd>
-            </div>
-            <div>
               <dt>会话</dt>
               <dd title={message.conversation ? `会话 ID：${message.conversation.id}` : undefined}>
                 {conversationLabel(message)}
-                {message.conversation?.type === 'group' && (
-                  <span className="detail__conv-hint">回复会发回该群</span>
-                )}
               </dd>
-            </div>
-            <div>
-              <dt>类型</dt>
-              <dd>{TYPE_LABEL[message.type]}</dd>
             </div>
             <div>
               <dt>外部 ID</dt>
@@ -338,22 +403,21 @@ export function DetailPanel({
                 )}
               </dd>
             </div>
-            <div className="meta-grid__wide">
+            <div>
               <dt>投递方式</dt>
-              <dd title={delivery.kind === 'none' ? undefined : delivery.text}>
-                {delivery.kind === 'none' ? (
-                  '—'
-                ) : (
-                  <Tag color={delivery.kind === 'mock' ? 'warning' : 'success'}>{delivery.text}</Tag>
-                )}
-              </dd>
+              <dd>{delivery.kind === 'none' ? '—' : delivery.text}</dd>
             </div>
             <div className="meta-grid__wide">
               <dt>traceId</dt>
-              <dd className="mono">{message.traceId}</dd>
+              <dd className="mono">
+                {message.traceId}（{shortTrace(message.traceId)}）
+              </dd>
             </div>
           </dl>
-        </section>
+          <div className="detail__more-flow">
+            <StatusFlow status={message.status} />
+          </div>
+        </details>
       </div>
 
       <footer className="detail__footer">

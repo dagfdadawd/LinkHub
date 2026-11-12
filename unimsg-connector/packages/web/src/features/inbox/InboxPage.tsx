@@ -209,9 +209,6 @@ export function InboxPage() {
         }
       />
     )
-  ) : traceId ? (
-    /* 详情打开后：列表收窄成「时间轴 + 平台色点」的紧凑流 */
-    <div className="list-stream">{visible.map((m) => renderCard(m, 'compact'))}</div>
   ) : (
     <>
       <MessageGroup
