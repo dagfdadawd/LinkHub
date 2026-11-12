@@ -103,6 +103,9 @@ export function ComposeModal({
   }, [platform, open]);
 
   const cap = caps.find((c) => c.platform === platform);
+  const accountMode = accounts.find((a) => a.platform === platform)?.mode;
+  /** 演示模式：Mock 通道发送按钮可直接发（后端会用演示会话 mock:demo 生成模拟消息） */
+  const mockChannel = cap?.mode === 'mock' || accountMode === 'mock' || effectiveSend === 'mock';
   const canSend = !sending
     && (text.trim().length > 0 || files.length > 0)
     && (files.length === 0 || cap?.file !== false);
@@ -135,15 +138,25 @@ export function ComposeModal({
         ...(attachments.length > 0 ? { attachments } : {}),
       };
       const taskId = await store.compose(req);
-      // 「已提交」不是「已发出」：异步发送结果会经 WS 回流，文案别写成成功口吻
-      toast.success('已提交，正在发送…（可在「全链路回放」查看状态回流）');
+      // 「已提交」不是「已发出」：异步发送结果会经 WS 回流；演示模式必须显式写「模拟」
+      toast.success(
+        mockChannel
+          ? '已模拟发送（不会真的发到平台）…可在「全链路回放」查看状态回流'
+          : '已提交，正在发送…（可在「全链路回放」查看状态回流）',
+      );
       setText('');
       setFiles([]);
       onSent?.(taskId);
       onClose();
     } catch (e) {
-      // 后端建议「改用 identity=user」在本人身份未连接时做不到：按能力替换成去连接的指引（NEW-P2-3）
-      toast.error(formatSendError(e instanceof Error ? e.message : '发送失败', identity));
+      const rawMessage = e instanceof Error ? e.message : '发送失败';
+      // 真实模式缺目标会话：给可执行的下一步，而不是只报 conversationId
+      if (!mockChannel && /conversationId|目标会话|缺少会话/.test(rawMessage)) {
+        toast.error('真实发送需要目标会话：请从收件箱打开一条该平台消息点「回复」，或填写会话 ID 后重试。');
+      } else {
+        // 后端建议「改用 identity=user」在本人身份未连接时做不到：按能力替换成去连接的指引（NEW-P2-3）
+        toast.error(formatSendError(rawMessage, identity));
+      }
     } finally {
       setSending(false);
     }
@@ -209,7 +222,7 @@ export function ComposeModal({
               <>
                 <IdentityTag role="mock" action="send" />
                 <div className="compose-field__hint">
-                  当前平台通道为 Mock 模拟，不会真的发到平台，因此不能选择本人 / 机器人身份。
+                  当前平台是演示模式：只会生成本地模拟发送记录，不会真的发到平台，因此不能选择本人 / 机器人身份。
                 </div>
               </>
             ) : (
@@ -243,7 +256,7 @@ export function ComposeModal({
             />
             {mailAccounts.length === 0 && (
               <div className="compose-field__hint">
-                暂无可用邮箱账号，请先在 .env 配置 MAIL_&lt;KEY&gt;_ADDRESS / MAIL_&lt;KEY&gt;_AUTH_CODE
+                暂无可用邮箱账号：请先到「连接账号」页添加邮箱账号（需要邮箱授权码）。
               </div>
             )}
           </div>
@@ -257,6 +270,11 @@ export function ComposeModal({
             placeholder={CONVERSATION_HINT[platform]}
             aria-label="目标会话"
           />
+          <div className="compose-field__hint">
+            {mockChannel
+              ? '演示模式：留空即可，会生成一条本地模拟发送记录（不会真的发到平台）。'
+              : '真实发送需要目标会话：留空会复用该平台最近一条消息的会话；没有最近会话时，请从收件箱对应消息点「回复」。'}
+          </div>
         </div>
 
         <div>
@@ -311,7 +329,7 @@ export function ComposeModal({
           <Alert
             type={cap.mode === 'mock' ? 'info' : 'success'}
             showIcon
-            message={`当前 ${PLATFORM_META[platform].name} 通道：${cap.mode === 'mock' ? '本地模拟（不会真的调用平台）' : '真实平台接口'}`}
+            message={`当前 ${PLATFORM_META[platform].name} 通道：${cap.mode === 'mock' ? '演示模式（模拟发送，不会真的调用平台）' : '真实平台接口'}`}
             description={cap.note ?? '文本与文件都按统一消息格式转换后发送，状态会回流到全链路回放'}
           />
         )}

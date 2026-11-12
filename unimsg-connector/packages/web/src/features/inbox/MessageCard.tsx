@@ -2,7 +2,7 @@ import type { MouseEvent } from 'react';
 import { CheckOutlined, HistoryOutlined, MessageOutlined, RightOutlined } from '@ant-design/icons';
 import { MsgStatus } from '../../types';
 import type { UnifiedMessage } from '../../types';
-import { clamp, formatRelative, PLATFORM_META } from '../../utils/format';
+import { clamp, formatRelative, isSelfComposedMock, PLATFORM_META } from '../../utils/format';
 import { AvatarBadge } from '../../components/AvatarBadge';
 import { IdentityTag } from '../../components/IdentityTag';
 import { PlatformGlyph } from '../../components/PlatformGlyph';
@@ -47,9 +47,11 @@ export function MessageCard({
     event.preventDefault();
     fn?.(message.traceId);
   };
-  // 已读/未读是独立维度，用行态类表达；未读圆点只在列表模式出现在最左列
+  // 已读/未读是独立维度，用行态类表达；未读圆点只在列表模式出现在最左列。
+  // Mock 下「自己新建发送」的模拟消息不是收到的来信：不算未读，并标「我发出的（模拟）」。
   const isRow = variant === 'row';
-  const unread = !message.readAt;
+  const selfMock = isSelfComposedMock(message);
+  const unread = !message.readAt && !selfMock;
   const classes = [
     'msg-card',
     variant === 'card' ? 'msg-card--card' : '',
@@ -119,7 +121,10 @@ export function MessageCard({
           <IntentTag intent={message.intent} />
           {/* 身份如实标注：真实接收写「本人账号接收 / 机器人接收」；回写看 delivery.identity / Mock */}
           {message.receivedAs && <IdentityTag role={message.receivedAs} action="receive" />}
-          {message.delivery?.mode === 'mock' && <IdentityTag role="mock" action="send" />}
+          {message.delivery?.mode === 'mock' && (
+            <IdentityTag role="mock" action={selfMock ? 'receive' : 'send'} />
+          )}
+          {selfMock && <span className="chip chip--warn">我发出的（模拟）</span>}
           {message.delivery?.mode === 'real' && message.delivery.identity && (
             <IdentityTag role={message.delivery.identity} action="send" />
           )}

@@ -41,3 +41,13 @@ describe('checkEnvRestart（.env 改了但没重启）', () => {
     ).toBe(false);
   });
 });
+describe('checkEnvRestart 只对 .env（二轮审计 P1-1）', () => {
+  it('settingsFile（本地配置）更新不再触发重启提示，以 app-config.restartRequired 为准', () => {
+    const input = {
+      startedAt,
+      envFile: { path, mtime: '2026-11-11T23:00:00.000Z' },
+      settingsFile: { path: 'linkhub-config.json', mtime: '2026-11-12T01:10:00.000Z' },
+    } as unknown as Parameters<typeof checkEnvRestart>[0];
+    expect(checkEnvRestart(input).needed).toBe(false);
+  });
+});

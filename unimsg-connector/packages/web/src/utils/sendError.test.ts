@@ -24,15 +24,21 @@ describe('formatSendError（按身份能力分支的失败提示）', () => {
     expect(text).toContain('请补齐凭据后重试');
     expect(text).toContain(USER_IDENTITY_UNLINKED_HINT);
     expect(text).toContain('连接本人账号');
+    // 客户视图不出现内部环境变量名（P2-2）
+    expect(text).not.toContain('FEISHU_APP_ID');
+    expect(text).toContain('飞书 App ID');
   });
 
-  it('本人身份已连接：保留后端原建议（此时建议可执行）', () => {
-    expect(formatSendError(backendText, identity(true))).toBe(backendText);
+  it('本人身份已连接：保留后端建议逻辑，但内部键名换成客户语言', () => {
+    const text = formatSendError(backendText, identity(true));
+    expect(text).not.toContain('FEISHU_APP_ID');
+    expect(text).toContain('飞书 App ID');
+    expect(text).toContain('本人身份发送');
   });
 
-  it('没有身份视图（企微 / 邮箱 / 旧后端）：不擅自改写', () => {
-    expect(formatSendError(backendText, undefined)).toBe(backendText);
-    expect(formatSendError(backendText, null)).toBe(backendText);
+  it('没有身份视图（企微 / 邮箱 / 旧后端）：不擅自改写逻辑，只做术语替换', () => {
+    expect(formatSendError(backendText, undefined)).not.toContain('FEISHU_APP_ID');
+    expect(formatSendError(backendText, null)).toContain('飞书 App ID');
   });
 
   it('错误里没有 identity=user 建议：原样返回', () => {

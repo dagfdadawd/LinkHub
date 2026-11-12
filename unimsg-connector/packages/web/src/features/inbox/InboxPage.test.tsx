@@ -5,7 +5,7 @@
  * 以「状态驱动」的方式覆盖：真实后端空收件箱 → 显示 QuickStart；Mock 模式 / 有消息 / 加载失败 → 不显示。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ACCOUNTS } from '../../services/mock/fixtures';
 import { MsgStatus, Platform } from '../../types';
@@ -22,6 +22,7 @@ const hoisted = vi.hoisted(() => {
     connection: 'connected' as 'connected' | 'reconnecting' | 'offline',
     demoMode: false,
     initialized: true,
+    onboarding: null as null | { firstRun?: boolean; overall?: { ready: number; total: number } },
   };
   return { state };
 });
@@ -38,12 +39,11 @@ vi.mock('../../store', () => ({
     dismissError: vi.fn(),
     reply: vi.fn(),
     markDone: vi.fn(),
-    markRead: vi.fn(),
-    markAllRead: vi.fn(async () => 0),
     getTrace: vi.fn(),
     refreshHealth: vi.fn(),
     simulateIncoming: vi.fn(),
     armFailure: vi.fn(),
+    refreshOnboarding: vi.fn(async () => null),
   },
 }));
 
@@ -72,6 +72,7 @@ function mockState(patch: Partial<typeof hoisted.state> = {}) {
     connection: 'connected',
     demoMode: false,
     initialized: true,
+    onboarding: null,
     ...patch,
   };
 }
@@ -96,29 +97,28 @@ beforeEach(() => {
 });
 
 describe('InboxPage 首启空态接线', () => {
-  it('真实后端 + 空收件箱：挂载「3 步上手」引导 + 一键注入入口，文案不再说「没有匹配的消息」', () => {
+  it('真实后端 + 空收件箱：首屏只给客户引导（去连接账号 / 先体验演示），不再堆叠三重引导', () => {
     mockState({ demoMode: false, accounts: ACCOUNTS, health: { received: 0 } });
     renderInboxPage();
 
-    // P1-3：首启引导必须真的渲染到页面上（之前组件只有单测引用）
+    // P1-3 / P0-1：首启引导必须真的渲染到页面上，且不再把开发者命令铺在首屏
     expect(screen.getByTestId('first-run-guide')).toBeInTheDocument();
     expect(screen.getByText('后端已连上，但还没有消息')).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /去连接账号/ }).length).toBeGreaterThan(0);
+    expect(
+      screen.getAllByRole('button', { name: /先体验演示（注入示例消息）/ }).length,
+    ).toBeGreaterThan(0);
 
-    const quickstart = screen.getByTestId('quickstart');
-    expect(quickstart).toBeInTheDocument();
-    // 三个可注入的平台各一颗按钮（邮箱是 IMAP 轮询，没有 webhook，不出现）；
-    // 按钮文案直说「注入示例」，不再与顶部筛选标签撞脸（P2-7）
-    expect(within(quickstart).getByRole('button', { name: '注入飞书示例' })).toBeInTheDocument();
-    expect(within(quickstart).getByRole('button', { name: '注入钉钉示例' })).toBeInTheDocument();
-    expect(within(quickstart).getByRole('button', { name: '注入企业微信示例' })).toBeInTheDocument();
-    expect(within(quickstart).queryByRole('button', { name: '注入邮箱示例' })).toBeNull();
-    expect(within(quickstart).getByText(/点下面的平台按钮，注入一条示例消息试试/)).toBeInTheDocument();
-    // 键位提示是唯一的文字说明（可操作信息，不是解释文案）
-    expect(within(quickstart).getByText('切换')).toBeInTheDocument();
-    // 首启空态：不能再用「没有匹配的消息 / 清空筛选」误导用户
+    // 首启引导还在时，空态不重复堆注入入口（P2-9）；只显示「还没有收到消息」+ 引导
+    expect(screen.queryByTestId('quickstart')).not.toBeInTheDocument();
     expect(screen.getByText('还没有收到消息')).toBeInTheDocument();
     expect(screen.queryByText('没有匹配的消息')).not.toBeInTheDocument();
     expect(screen.queryByText('清空筛选')).not.toBeInTheDocument();
+
+    // 点「知道了」后引导收起，空态恢复一键注入入口
+    fireEvent.click(screen.getByRole('button', { name: '知道了' }));
+    expect(screen.queryByTestId('first-run-guide')).not.toBeInTheDocument();
+    expect(screen.getByTestId('quickstart')).toBeInTheDocument();
   });
 
   it('前端 Mock 演示模式：空收件箱不渲染注入入口（无平台可假装）', () => {
@@ -160,5 +160,47 @@ describe('InboxPage 首启空态接线', () => {
 
     expect(await screen.findByTestId('detail-panel')).toBeInTheDocument();
     expect(within(screen.getByTestId('detail-panel')).getByText('周五前交周报。')).toBeInTheDocument();
+  });
+});
+
+
+describe('首启入口（连接账号横幅）', () => {
+  it('首次打开：收件箱顶部提示去「连接账号」，点击后写入本地标记不再打扰', () => {
+    mockState({ accounts: ACCOUNTS });
+    renderInboxPage();
+
+    const banner = screen.getByTestId('onboarding-banner');
+    expect(banner).toBeInTheDocument();
+    expect(screen.getByText(/首次使用：先连接你自己的账号/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '去连接账号' }));
+    expect(window.localStorage.getItem('linkhub.onboarded')).toBe('1');
+    expect(screen.queryByTestId('onboarding-banner')).toBeNull();
+  });
+
+  it('点过「稍后再说」后不再打扰', () => {
+    window.localStorage.setItem('linkhub.onboarded', '1');
+    mockState({ accounts: ACCOUNTS });
+    renderInboxPage();
+    expect(screen.queryByTestId('onboarding-banner')).toBeNull();
+  });
+
+  it('点过「稍后再说」或「去连接账号」后，即使后端 firstRun=true 也不再打扰（P1-6）', () => {
+    window.localStorage.setItem('linkhub.onboarded', '1');
+    mockState({
+      accounts: ACCOUNTS,
+      onboarding: { firstRun: true, overall: { ready: 1, total: 4 } },
+    });
+    renderInboxPage();
+    expect(screen.queryByTestId('onboarding-banner')).toBeNull();
+  });
+
+  it('全部平台已就绪 / 纯前端演示模式：不出现横幅', () => {
+    mockState({
+      accounts: ACCOUNTS,
+      onboarding: { firstRun: false, overall: { ready: 4, total: 4 } },
+    });
+    renderInboxPage();
+    expect(screen.queryByTestId('onboarding-banner')).toBeNull();
   });
 });

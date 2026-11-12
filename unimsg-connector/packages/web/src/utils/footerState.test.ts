@@ -11,26 +11,26 @@ describe('footerState 页脚状态映射', () => {
     });
   });
 
-  it('真实后端已连接：显示「已接入 LinkHub Server」', () => {
+  it('真实后端已连接：显示「服务就绪 / 本地后端已连接」，不误称账号已连接', () => {
     expect(footerState(false, 'connected', null)).toEqual({
-      badge: '真实后端',
-      text: '已接入 LinkHub Server',
+      badge: '服务已连接',
+      text: '本地后端已连接（不代表平台账号已连接）',
       tone: 'ok',
     });
   });
 
   it('真实后端重连中：如实显示「后端连接中…」，不再伪装成已接入', () => {
     expect(footerState(false, 'reconnecting', null)).toEqual({
-      badge: '真实后端',
-      text: '后端连接中…',
+      badge: '本地后端',
+      text: '正在重连本地后端…',
       tone: 'pending',
     });
   });
 
   it('真实后端已离线：提示检查后端是否启动', () => {
     expect(footerState(false, 'offline', null)).toEqual({
-      badge: '真实后端',
-      text: '后端未连接（检查后端是否启动）',
+      badge: '本地后端',
+      text: '本地后端未连接（检查后端是否启动）',
       tone: 'error',
     });
   });
@@ -50,9 +50,11 @@ describe('footerState 页脚状态映射', () => {
 
   it('可见短文案与断线状态对称（不再只有一颗绿点）', () => {
     expect(footerShortLabel(footerState(true, 'offline', null))).toBe('演示');
-    expect(footerShortLabel(footerState(false, 'connected', null))).toBe('已连接');
+    expect(footerShortLabel(footerState(false, 'connected', null))).toBe('服务已连接');
     expect(footerShortLabel(footerState(false, 'reconnecting', null))).toBe('重连中');
     expect(footerShortLabel(footerState(false, 'offline', null))).toBe('未连接');
     expect(footerShortLabel(footerState(false, 'connected', '请求超时'))).toBe('异常');
   });
 });
+
+

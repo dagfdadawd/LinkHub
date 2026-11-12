@@ -11,10 +11,12 @@
  *  - `dws auth status --readonly --format json`
  *      → `{"success":true,"authenticated":false,"message":"未登录", "version_check":{...}}`
  *  - `dws profile list --format json` → `{"success":true,"profiles":[]}`
- *  - `dws event +listen-im --kind <at-me|sender|group|all-direct|all-group> --events message -f ndjson`
- *      默认输出 transport envelope（type/event_type/data/headers）；加 `--flatten` 后业务字段在 payload：
- *      message_id / conversation_id / content / create_time / event_time / sender /
- *      sender_open_dingtalk_id / type(event_key) / event_id / timestamp
+ *  - `dws event +listen-im --kind <at-me|sender|group|all-direct|all-group> --events message -f ndjson -y`
+ *      默认输出 **transport envelope**：`{type:"event", event_type:"user_im_message_receive_o2o_all",
+ *      event_id, data:<JSON 字符串>, headers, ...}`——注意 **data 是字符串**，需要再 JSON.parse。
+ *      `--flatten` 只属于 event consume/schema，`+listen-im` 不支持（真实 dws 会 exit 3 unknown flag）。
+ *      data 内业务字段：message_id / conversation_id / content / create_time / event_time / sender /
+ *      sender_open_dingtalk_id / event_id；event_type 在 envelope 根或 data.type。
  *  - `dws chat message send --conversation-id <id> --content <text> --idempotency-key <key> -f json`
  *      成功 `{"ok":true,"outcome":"success","data":{...}}`
  *      失败 `{"ok":false,"outcome":"failure","error":{"type","subtype","exit_code","message","hint"}}`
@@ -31,10 +33,12 @@
  *  - 纯解析器全部导出（parseAuthStatusJson / parseEventLine / mapPersonalEventToMessage /
  *    buildSendArgs / mapSendResultJson ...），单测可注入假 runner，不启子进程；
  *  - 状态查询带 30s 缓存 + 单飞，避免 /api/accounts 首屏被 dws 网络检查拖慢（实测 auth status 1–3s）；
- *  - 登录：后台 spawn，接口立即返回操作指引（device flow 解析 user_code/URL；失败回退终端命令），
- *    前端轮询 /status 判断登录完成；绝不阻塞 HTTP。
+ *  - 登录：后台 spawn，接口立即返回操作指引，前端轮询 /status 判断登录完成；绝不阻塞 HTTP。
+ *    默认 auto = **优先浏览器 loopback**（本机推荐，dws 自起 127.0.0.1 回调并打开浏览器，
+ *    从 stderr 解析 OAuth URL 下发）；启动失败才回退设备码（远程/无浏览器，900s 有效期倒计时）。
  */
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -56,8 +60,39 @@ export const DWS_EXIT_TIMEOUT = 124;
 
 /** auth status 缓存时长：实测一次 1–3s（含网络检查 + 版本检查），缓存后首屏无感 */
 export const DEFAULT_STATUS_CACHE_MS = 30_000;
-/** 登录命令启动后等多久去抓 user_code / URL（拿不到就回退纯终端指引） */
+/** 设备码模式：等多久去抓设备码/URL（拿不到就回退纯终端指引） */
 export const LOGIN_HINT_WAIT_MS = 2_500;
+/**
+ * 浏览器 loopback 模式：dws 先起 127.0.0.1 本地回调服务、再把 OAuth URL 打到 stderr，
+ * 比设备码多一步启动，等待窗口放宽到 6s（拿不到 URL 也不算失败：子进程仍存活，可轮询 status 恢复）。
+ */
+export const BROWSER_LOGIN_HINT_WAIT_MS = 6_000;
+/**
+ * 设备码有效期（秒）：dws 声称 15 分钟（900s）。实际可能更短/失效更快，
+ * 所以界面用它做倒计时，过期后必须重新获取而不是继续输入旧码。
+ * 能从 dws 输出解析到 expires 时以解析值为准。
+ */
+export const DEFAULT_DEVICE_EXPIRES_SEC = 900;
+/**
+ * 浏览器 loopback 模式的操作窗口（秒）：dws 侧没有显式过期时间，
+ * 这里给用户 10 分钟完成扫码/登录并做倒计时；窗口过了由用户点「重新登录」。
+ */
+export const DEFAULT_BROWSER_EXPIRES_SEC = 600;
+
+/** 登录方式：auto = 优先浏览器 loopback（本机推荐），失败回退设备码 */
+export type LoginMode = 'auto' | 'browser' | 'device';
+/** 本次实际使用的登录通道 */
+export type LoginChannel = 'browser' | 'device';
+
+/** 从 dws 输出里解析出的登录提示 */
+export interface DwsLoginHint {
+  /** 授权链接：browser = 钉钉 OAuth（127.0.0.1 回调）；device = 设备码验证页 */
+  url?: string;
+  /** device flow 的 user code */
+  code?: string;
+  /** 有效期（秒） */
+  expiresInSec?: number;
+}
 
 export interface DwsRunResult {
   code: number;
@@ -122,15 +157,47 @@ export interface DwsProfile {
 }
 
 export interface DwsLoginStart {
+  /** 登录子进程是否在运行（false = 启动失败，instructions 说明原因/手动命令） */
   started: boolean;
-  mode: 'browser' | 'device';
+  /** 本次实际使用的登录通道（auto 解析后） */
+  mode: LoginChannel;
+  /** 用户请求的方式（auto/browser/device），便于前端/日志诊断 */
+  requestedMode?: LoginMode;
   /** 等价终端命令（用户可复制到本机终端执行） */
   command: string;
   /** 中文操作指引（含 URL / 设备码时一并写明） */
   instructions: string;
+  /** 授权链接：browser=钉钉 OAuth 页（127.0.0.1 回调）；device=设备码验证页 */
   url?: string;
   /** device flow 的 user code */
   code?: string;
+  /** 有效期（秒）：device 默认 900，browser 默认 600（界面倒计时用） */
+  expiresInSec?: number;
+  /** 过期时间（ISO）：= 发起时间 + expiresInSec */
+  expiresAt?: string;
+  /** 本次登录尝试的唯一 ID：前端据此判断「还是同一次登录流程」 */
+  loginId?: string;
+}
+
+/** 客户端内部的一次登录会话（不含任何 token） */
+interface LoginSession {
+  loginId: string;
+  requestedMode: LoginMode;
+  mode: LoginChannel;
+  startedAt: number;
+  command: string;
+  instructions: string;
+  url?: string;
+  code?: string;
+  expiresInSec?: number;
+  expiresAtMs?: number;
+  output: { out: string; err: string };
+  child?: any;
+  finished: boolean;
+  exitCode?: number | null;
+  expiryTimer?: NodeJS.Timeout;
+  /** 解析到 hint 时提前结束等待窗口 */
+  hintResolve?: () => void;
 }
 
 export interface DwsSendTarget {
@@ -437,27 +504,47 @@ export function parseProfileListJson(stdout: string): DwsProfile[] {
 
 /**
  * 解析 `dws contact user get-self -f json`（本人身份信息）。
- * 用于过滤「自己发出的消息」，避免个人事件里把自己发的消息再当入站（自环噪音）。
- * 字段名在 dws 版本间可能变化，这里按多个候选容错。
+ *
+ * 真实 v1.0.68 输出（实测）：
+ *   {"result":[{"isAdmin":true,"orgEmployeeModel":{"corpId":"...","orgUserName":"陈",
+ *     "userId":"0415...","depts":[...]}}]}
+ * **注意：真实 CLI 不返回 openDingTalkId**（只有 orgEmployeeModel/userId/userName）。
+ * 因此「过滤自己发出的消息」最多 best-effort：拿不到 openDingTalkId 时不过滤，绝不阻断接收。
+ * 字段名在 dws 版本间可能变化，这里按多个候选容错（含旧版 data.openDingTalkId 格式）。
  */
 export function parseSelfProfileJson(stdout: string): { openDingtalkId?: string; displayName?: string; userId?: string } {
   const json = tryParseJson(stdout.trim());
   if (!json || typeof json !== 'object') return {};
-  const candidates: Record<string, unknown>[] = [];
   const root = json as Record<string, unknown>;
-  if (root.data && typeof root.data === 'object') candidates.push(root.data as Record<string, unknown>);
-  candidates.push(root);
-  for (const obj of candidates) {
-    const openDingtalkId = pickString(obj, 'openDingTalkId', 'openDingtalkId', 'open_dingtalk_id', 'openId');
-    if (openDingtalkId) {
-      return {
-        openDingtalkId,
-        ...(pickString(obj, 'displayName', 'name', 'nickName') ? { displayName: pickString(obj, 'displayName', 'name', 'nickName')! } : {}),
-        ...(pickString(obj, 'userId', 'user_id', 'staffId') ? { userId: pickString(obj, 'userId', 'user_id', 'staffId')! } : {}),
-      };
+  const candidates: Record<string, unknown>[] = [];
+  // 真实格式：{result:[{orgEmployeeModel:{...}}]}；旧版/模拟：{data:{openDingTalkId,...}}
+  const result = root.result;
+  if (Array.isArray(result)) {
+    for (const item of result) {
+      if (item && typeof item === 'object' && !Array.isArray(item)) {
+        const obj = item as Record<string, unknown>;
+        if (obj.orgEmployeeModel && typeof obj.orgEmployeeModel === 'object') {
+          candidates.push(obj.orgEmployeeModel as Record<string, unknown>);
+        }
+        candidates.push(obj);
+      }
     }
   }
-  return {};
+  if (root.data && typeof root.data === 'object') candidates.push(root.data as Record<string, unknown>);
+  candidates.push(root);
+  let openDingtalkId: string | undefined;
+  let displayName: string | undefined;
+  let userId: string | undefined;
+  for (const obj of candidates) {
+    openDingtalkId ??= pickString(obj, 'openDingTalkId', 'openDingtalkId', 'open_dingtalk_id', 'openId');
+    displayName ??= pickString(obj, 'displayName', 'orgUserName', 'userName', 'name', 'nickName');
+    userId ??= pickString(obj, 'userId', 'user_id', 'staffId');
+  }
+  return {
+    ...(openDingtalkId ? { openDingtalkId } : {}),
+    ...(displayName ? { displayName } : {}),
+    ...(userId ? { userId } : {}),
+  };
 }
 
 /** 一个个人事件（已归一化的业务字段） */
@@ -476,28 +563,45 @@ export interface DingtalkPersonalEvent {
   raw: Record<string, unknown>;
 }
 
-/** 从 transport envelope / --flatten payload 里取出业务字段所在对象 */
+/** 把 envelope 的 data（可能是 JSON 字符串）解析成对象；解析失败返回 undefined */
+function resolvePayloadObject(value: unknown): Record<string, unknown> | undefined {
+  if (value === null || value === undefined) return undefined;
+  if (typeof value === 'string') {
+    const text = value.trim();
+    if (!text) return undefined;
+    const parsed = tryParseJson(text);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : undefined;
+  }
+  if (typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
+  return undefined;
+}
+
+/**
+ * 从一行事件里取出业务字段所在对象。兼容两种真实格式：
+ *  1) transport envelope（默认，实测）：{type:"event", event_type, data:"<JSON 字符串>", headers}
+ *     → 先 JSON.parse(data) 再取业务字段；
+ *  2) --flatten / 旧版 fake 格式：业务字段直接在 payload / data 对象里。
+ */
 export function extractEventPayload(line: unknown): Record<string, unknown> | undefined {
   if (!line || typeof line !== 'object' || Array.isArray(line)) return undefined;
   const root = line as Record<string, unknown>;
-  const candidates = [
-    root.payload,
-    root.data,
-    (root.data as Record<string, unknown> | undefined)?.payload,
-    (root.body as Record<string, unknown> | undefined),
-    root,
-  ];
-  for (const c of candidates) {
-    if (c && typeof c === 'object' && !Array.isArray(c)) {
-      const obj = c as Record<string, unknown>;
-      if (pickString(obj, 'message_id', 'messageId', 'msgId', 'openMessageId') !== undefined) return obj;
-    }
+  const candidates: Record<string, unknown>[] = [];
+  const push = (value: unknown): void => {
+    const obj = resolvePayloadObject(value);
+    if (obj && !candidates.includes(obj)) candidates.push(obj);
+  };
+  push(root.payload);                 // --flatten / 旧版 fake-dws 格式
+  push(root.data);                    // 真实 envelope：data 是 JSON 字符串
+  push((root.data as Record<string, unknown> | undefined)?.payload); // 对象型 data 里再套 payload
+  push(root.body);
+  push(root);                         // 最后兜底看根字段
+  for (const obj of candidates) {
+    if (pickString(obj, 'message_id', 'messageId', 'msgId', 'openMessageId') !== undefined) return obj;
   }
-  // 没有 message_id 的事件（审批/待办/撤回等）：返回最可能的对象，交由映射层判定为「非消息事件」
-  for (const c of candidates) {
-    if (c && typeof c === 'object' && !Array.isArray(c)) return c as Record<string, unknown>;
-  }
-  return undefined;
+  // 没有 message_id 的事件（审批/待办/撤回等）：返回 data 解出的对象；解不出则返回根
+  return candidates.find((obj) => obj !== root) ?? root;
 }
 
 function pickString(obj: Record<string, unknown>, ...keys: string[]): string | undefined {
@@ -522,6 +626,59 @@ function pickNumber(obj: Record<string, unknown>, ...keys: string[]): number | u
 }
 
 /**
+ * 取时间字段：优先毫秒数字/数字字符串（event_time），
+ * 其次 create_time 的字符串时间（如 "2026-11-12 14:05:00" / ISO），最后 envelope 的接收时间。
+ */
+function pickTimeMs(
+  payload: Record<string, unknown>,
+  root: Record<string, unknown>,
+): number | undefined {
+  const direct = pickNumber(payload, 'event_time', 'timestamp', 'createTime');
+  if (direct !== undefined) return direct;
+  for (const key of ['create_time', 'createTime', 'msg_time', 'send_time']) {
+    const v = payload[key];
+    if (typeof v === 'number' && Number.isFinite(v) && v > 0) return Math.floor(v);
+    if (typeof v === 'string' && v.trim()) {
+      const text = v.trim();
+      const n = Number(text);
+      if (Number.isFinite(n) && n > 0) return Math.floor(text.length <= 10 ? n * 1000 : n);
+      const parsed = Date.parse(text) || Date.parse(text.replace(' ', 'T'));
+      if (Number.isFinite(parsed) && parsed > 0) return Math.floor(parsed);
+    }
+  }
+  const envelope = pickNumber(root, 'received_at_unix_ms', 'event_born_time');
+  if (envelope !== undefined) return envelope;
+  const born = root.event_born_time;
+  if (typeof born === 'string') {
+    const parsed = Date.parse(born);
+    if (Number.isFinite(parsed) && parsed > 0) return Math.floor(parsed);
+  }
+  return undefined;
+}
+
+/** content 在真实事件里是字符串；容错对象/数组（JSON.stringify），避免整条事件被丢弃 */
+function pickContent(payload: Record<string, unknown>): string {
+  const text = pickString(payload, 'content', 'text', 'body');
+  if (text !== undefined) return text;
+  const raw = payload.content ?? payload.text ?? payload.body;
+  if (raw && typeof raw === 'object') {
+    try { return JSON.stringify(raw); } catch { return ''; }
+  }
+  return '';
+}
+
+/** sender 可能是字符串，也可能是对象（{nick/name/sender}） */
+function pickSenderName(payload: Record<string, unknown>): string | undefined {
+  const direct = pickString(payload, 'sender', 'sender_nick', 'senderNick');
+  if (direct !== undefined) return direct;
+  const sender = payload.sender;
+  if (sender && typeof sender === 'object' && !Array.isArray(sender)) {
+    return pickString(sender as Record<string, unknown>, 'nick', 'name', 'sender', 'nickName');
+  }
+  return undefined;
+}
+
+/**
  * 解析一行 NDJSON → 归一化事件。
  * 容错要求（契约 §3.3）：多行 JSON / 非 JSON 日志行一律返回 null，由调用方计数，绝不崩溃。
  */
@@ -530,14 +687,22 @@ export function parseEventLine(line: string): DingtalkPersonalEvent | null {
   if (!text || !text.startsWith('{')) return null;
   const json = tryParseJson(text);
   if (!json) return null;
+  const root = json as Record<string, unknown>;
   const payload = extractEventPayload(json);
   if (!payload) return null;
 
+  const headers = (root.headers && typeof root.headers === 'object' && !Array.isArray(root.headers))
+    ? root.headers as Record<string, unknown>
+    : undefined;
   const messageId = pickString(payload, 'message_id', 'messageId', 'msgId', 'openMessageId');
-  const eventType = pickString(payload, 'event_type', 'eventType', 'type')
-    ?? pickString(json as Record<string, unknown>, 'event_type', 'type');
+  // event_type：envelope 根最可靠（type 根字段固定是 "event"，不能拿来当事件类型）
+  const eventType = pickString(payload, 'event_type', 'eventType')
+    ?? (typeof payload.type === 'string' && payload.type !== 'event' ? payload.type : undefined)
+    ?? pickString(root, 'event_type', 'eventType')
+    ?? (typeof root.type === 'string' && root.type !== 'event' ? root.type : undefined)
+    ?? (headers ? pickString(headers, 'event_type', 'eventType', 'event_type_key') : undefined);
   const eventId = pickString(payload, 'event_id', 'eventId')
-    ?? pickString(json as Record<string, unknown>, 'event_id', 'eventId');
+    ?? pickString(root, 'event_id', 'eventId');
   if (!messageId) {
     // 非消息事件（审批/待办/撤回/已读回执…）：带出类型即可，映射层会忽略
     return {
@@ -548,9 +713,9 @@ export function parseEventLine(line: string): DingtalkPersonalEvent | null {
       raw: payload,
     };
   }
-  const content = pickString(payload, 'content', 'text', 'body') ?? '';
-  const createTimeMs = pickNumber(payload, 'event_time', 'timestamp', 'create_time', 'createTime');
-  const senderName = pickString(payload, 'sender', 'sender_nick', 'senderNick');
+  const content = pickContent(payload);
+  const createTimeMs = pickTimeMs(payload, root);
+  const senderName = pickSenderName(payload);
   const senderOpenDingtalkId = pickString(payload, 'sender_open_dingtalk_id', 'senderOpenDingtalkId');
   const conversationId = pickString(payload, 'conversation_id', 'conversationId', 'openConversationId');
 
@@ -862,7 +1027,10 @@ export interface DingtalkPersonalClientOptions {
   /** 单测注入时钟 */
   now?: () => number;
   statusCacheMs?: number;
-  /** 登录命令启动后等多久去抓设备码/URL（默认 2.5s；单测可设小值） */
+  /**
+   * 单测/特殊环境：覆盖「等待登录 hint」的窗口时长（毫秒）。
+   * 不传时按链路默认：device 2.5s、browser 6s。
+   */
   loginHintWaitMs?: number;
 }
 
@@ -875,15 +1043,18 @@ export class DingtalkPersonalClient {
   private readonly spawnImpl?: (file: string, args: string[], options: Record<string, unknown>) => any;
   private readonly now: () => number;
   private readonly statusCacheMs: number;
-  private readonly loginHintWaitMs: number;
+  /** 覆盖等待登录 hint 的窗口（未设置时按 device/browser 默认值） */
+  private readonly loginHintWaitMsOverride?: number;
 
   private versionCache?: { version?: string; error?: string; at: number };
   private statusCache?: DwsAuthStatus;
   private statusInflight?: Promise<DwsAuthStatus>;
-  private loginChild?: ReturnType<typeof spawn>;
+  /** 当前登录会话（同一时刻最多一个 login child） */
+  private loginSession?: LoginSession;
   /** 本人 openDingTalkId 缓存（用于过滤自己发出的消息；取不到就不过滤） */
   private selfIdCache?: { id?: string; at: number };
-  private loginState?: { startedAt: number; mode: 'browser' | 'device'; hint?: { url?: string; code?: string } };
+  /** 登录会话结束回调（exit / 过期 / 失败），供接收通道协调器感知运行期登录完成 */
+  private loginFinishedHandler?: (info: { mode: LoginChannel; loginId: string; exitCode?: number | null }) => void;
 
   constructor(opts: DingtalkPersonalClientOptions = {}) {
     this.bin = opts.bin ?? 'dws';
@@ -894,7 +1065,7 @@ export class DingtalkPersonalClient {
     this.spawnImpl = opts.spawnImpl;
     this.now = opts.now ?? Date.now;
     this.statusCacheMs = opts.statusCacheMs ?? DEFAULT_STATUS_CACHE_MS;
-    this.loginHintWaitMs = opts.loginHintWaitMs ?? LOGIN_HINT_WAIT_MS;
+    this.loginHintWaitMsOverride = opts.loginHintWaitMs;
   }
 
   /** 可执行文件 + 前置参数（日志里只显示文件名，不显示敏感参数） */
@@ -980,9 +1151,326 @@ export class DingtalkPersonalClient {
     }));
   }
 
-  /** 是否会话正在进行（登录子进程还活着） */
+  /** 是否会话正在进行（登录子进程还活着且未过期） */
   loginInProgress(): boolean {
-    return Boolean(this.loginChild && this.loginChild.exitCode === null && !this.loginChild.killed);
+    const session = this.rawLoginSession();
+    return Boolean(session && this.sessionAlive(session));
+  }
+
+  /**
+   * 供 /status 恢复弹窗状态（绝不含 token）；无会话或已过期返回 undefined。
+   * 前端打开弹窗时先读它，避免「重新生成设备码」把用户正在用的码作废。
+   */
+  currentLogin(): {
+    loginId: string;
+    mode: LoginChannel;
+    requestedMode: LoginMode;
+    url?: string;
+    code?: string;
+    expiresInSec?: number;
+    expiresAt?: string;
+    instructions: string;
+    command: string;
+    inProgress: boolean;
+  } | undefined {
+    const session = this.rawLoginSession();
+    if (!session) return undefined;
+    return {
+      loginId: session.loginId,
+      mode: session.mode,
+      requestedMode: session.requestedMode,
+      ...(session.url ? { url: session.url } : {}),
+      ...(session.code ? { code: session.code } : {}),
+      ...(session.expiresInSec ? { expiresInSec: session.expiresInSec } : {}),
+      ...(session.expiresAtMs ? { expiresAt: new Date(session.expiresAtMs).toISOString() } : {}),
+      instructions: session.instructions,
+      command: session.command,
+      inProgress: this.sessionAlive(session),
+    };
+  }
+
+  /** 注册登录会话结束回调（成功退出/过期/失败都会触发）——接收通道协调器据此感知运行期登录完成 */
+  setLoginFinishedHandler(handler: (info: { mode: LoginChannel; loginId: string; exitCode?: number | null }) => void): void {
+    this.loginFinishedHandler = handler;
+  }
+
+  /** 当前有效会话（过期则顺手清理，避免旧设备码继续展示） */
+  private rawLoginSession(): LoginSession | undefined {
+    const session = this.loginSession;
+    if (!session || session.finished) return undefined;
+    if (session.expiresAtMs !== undefined && this.now() >= session.expiresAtMs) {
+      this.finishLoginSession(session, '登录有效期已过');
+      return undefined;
+    }
+    return session;
+  }
+
+  private sessionAlive(session: LoginSession): boolean {
+    if (session.finished || !session.child) return false;
+    if (session.exitCode !== undefined && session.exitCode !== null) return false;
+    if (session.child.killed) return false;
+    return true;
+  }
+
+  /** 结束并清理一个登录会话：清定时器、SIGTERM 子进程、清状态缓存、通知协调器 */
+  private finishLoginSession(session: LoginSession, reason: string): void {
+    if (session.finished) return;
+    session.finished = true;
+    session.hintResolve?.();
+    if (session.expiryTimer) {
+      clearTimeout(session.expiryTimer);
+      session.expiryTimer = undefined;
+    }
+    const child = session.child;
+    if (child && child.exitCode === null && !child.killed) {
+      try { child.kill('SIGTERM'); } catch { /* 已退出 */ }
+    }
+    if (this.loginSession === session) this.loginSession = undefined;
+    // 登录进程结束后登录态一定变了：清缓存，下一次 /status 会重新探测
+    this.invalidateStatus();
+    console.log(`[dingtalk-login] 登录会话已清理（${reason}）`);
+    try {
+      this.loginFinishedHandler?.({ mode: session.mode, loginId: session.loginId, exitCode: session.exitCode });
+    } catch { /* 回调异常不影响主流程 */ }
+  }
+
+  private killLoginSession(reason: string): void {
+    if (this.loginSession) this.finishLoginSession(this.loginSession, reason);
+  }
+
+  /**
+   * 启动登录（后台 spawn，接口立即返回操作指引，绝不阻塞 HTTP）。
+   *
+   *  - auto（默认）：**优先浏览器 loopback**——`dws auth login -f json -y`（不加 --no-browser，
+   *    dws 会起 127.0.0.1 本地回调并自动打开浏览器，OAuth URL 同时打到 stderr 供 /status 下发）；
+   *    启动失败则自动回退设备码（instructions 里如实说明）；
+   *  - browser：只走浏览器 loopback；
+   *  - device：只走设备码（远程/无浏览器；默认 900s 有效期倒计时）。
+   *
+   * 生命周期：同一时刻只保留一个 login child；重复调用且模式一致 → 返回现有指引；
+   * 模式不同或 force=true → 杀掉旧会话再起新的。
+   */
+  async startLogin(mode: LoginMode = 'auto', opts: { force?: boolean } = {}): Promise<DwsLoginStart> {
+    const version = await this.version();
+    if (version.error && !version.version) {
+      throw new DingtalkPersonalError(version.error, 'not-installed');
+    }
+
+    const existing = this.rawLoginSession();
+    if (existing && !opts.force) {
+      const sameMode = mode === 'auto' || existing.mode === mode;
+      if (sameMode && this.sessionAlive(existing)) return this.toStartResult(existing);
+    }
+    this.killLoginSession(opts.force ? '用户强制重新发起登录' : '切换登录方式');
+    this.invalidateStatus();
+
+    if (mode === 'device') return this.spawnLoginSession('device', 'device');
+
+    const browser = await this.spawnLoginSession('browser', mode);
+    if (mode === 'browser' || browser.started || this.loginInProgress()) return browser;
+
+    // auto：浏览器 loopback 未能启动 → 回退设备码（指引里如实说明，不假装浏览器可用）
+    const fallback = await this.spawnLoginSession('device', 'auto');
+    return {
+      ...fallback,
+      requestedMode: 'auto',
+      instructions: `浏览器登录未能启动（${browser.instructions}）已自动改用设备码登录。${fallback.instructions}`,
+    };
+  }
+
+  private loginArgs(mode: LoginChannel): string[] {
+    // browser：不传 --no-browser，让 dws 自动打开本机浏览器；URL 同时打到 stderr 供 /status 下发
+    return mode === 'device'
+      ? ['auth', 'login', '--device', '--no-browser', '-f', 'json', '-y']
+      : ['auth', 'login', '-f', 'json', '-y'];
+  }
+
+  /** 终端等价命令（含 profile） */
+  private loginCommandFor(mode: LoginChannel): string {
+    const device = mode === 'device' ? ' --device' : '';
+    const profile = this.profile ? ` --profile ${this.profile}` : '';
+    return `${this.commandLabel()} auth login${device}${profile}`;
+  }
+
+  private async spawnLoginSession(mode: LoginChannel, requestedMode: LoginMode): Promise<DwsLoginStart> {
+    const startedAt = this.now();
+    const session: LoginSession = {
+      loginId: randomUUID(),
+      requestedMode,
+      mode,
+      startedAt,
+      command: this.loginCommandFor(mode),
+      instructions: '',
+      output: { out: '', err: '' },
+      finished: false,
+    };
+    this.loginSession = session;
+
+    const { file, prefixArgs } = this.command();
+    const fullArgs = this.withGlobal([...prefixArgs, ...this.loginArgs(mode)]);
+    const spawnImpl = this.spawnImpl ?? spawn;
+    let child: any;
+    try {
+      child = spawnImpl(file, fullArgs, {
+        cwd: MONOREPO_ROOT,
+        env: process.env,
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch (e) {
+      session.finished = true;
+      this.loginSession = undefined;
+      throw new DingtalkPersonalError(
+        `启动 dws 登录失败（${this.commandLabel()}）：${(e as Error).message}。可在本机终端手动执行 ${this.loginCommand()}。`,
+        'unknown',
+      );
+    }
+    session.child = child;
+
+    // 窗口等待器：解析到 hint / 子进程退出 / 超时，三者任一先到
+    let notifyWindow: (() => void) | undefined;
+    const windowDone = new Promise<void>((resolve) => { notifyWindow = resolve; });
+    session.hintResolve = () => notifyWindow?.();
+
+    const consume = (which: 'out' | 'err', chunk: unknown): void => {
+      if (session.finished) return;
+      const text = String(chunk);
+      session.output[which] = (session.output[which] + text).slice(-12000);
+      const hint = extractLoginHint(session.output.out, session.output.err);
+      if (hint) {
+        if (hint.url && !session.url) session.url = hint.url;
+        if (hint.code && !session.code) session.code = hint.code;
+        if (hint.expiresInSec && !session.expiresInSec) session.expiresInSec = hint.expiresInSec;
+        session.hintResolve?.();
+      }
+    };
+    child.stdout?.on('data', (chunk: unknown) => consume('out', chunk));
+    child.stderr?.on('data', (chunk: unknown) => consume('err', chunk));
+    child.once?.('exit', (code: number | null) => {
+      session.exitCode = typeof code === 'number' ? code : -1;
+      session.hintResolve?.();
+      if (!session.finished) {
+        // 运行期退出（用户完成授权 / 失败 / 被外部杀）：清理会话 + 通知协调器自动启动接收通道
+        const reason = session.exitCode === 0 ? '登录进程已退出（通常表示授权完成）' : `登录进程退出（code=${session.exitCode}）`;
+        this.finishLoginSession(session, reason);
+      }
+    });
+    child.once?.('error', (err: Error) => {
+      session.exitCode = 1;
+      session.hintResolve?.();
+      if (!session.finished) this.finishLoginSession(session, `登录进程错误：${err?.message ?? 'unknown'}`);
+    });
+
+    const waitMs = this.loginHintWaitMsOverride
+      ?? (mode === 'browser' ? BROWSER_LOGIN_HINT_WAIT_MS : LOGIN_HINT_WAIT_MS);
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, waitMs);
+      timer.unref?.();
+      void windowDone.then(() => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+
+    const alive = this.sessionAlive(session);
+    const exited = session.exitCode;
+
+    // 启动失败：整理中文指引并清理会话（auto 会据此回退 device）
+    if (!alive && exited !== undefined && exited !== 0) {
+      const failure = this.loginFailureResult(session);
+      this.finishLoginSession(session, `登录启动失败（code=${exited}）`);
+      return failure;
+    }
+
+    // 有效期：能解析到 expires 用解析值；device 默认 900s、browser 默认 600s（界面倒计时用）
+    session.expiresInSec = session.expiresInSec ?? (mode === 'device' ? DEFAULT_DEVICE_EXPIRES_SEC : DEFAULT_BROWSER_EXPIRES_SEC);
+    session.expiresAtMs = startedAt + session.expiresInSec * 1000;
+    session.instructions = this.buildLoginInstructions(session);
+    this.armLoginExpiry(session);
+
+    const result = this.toStartResult(session);
+    if (!alive && exited === 0) {
+      // 秒完成（例如已授权/测试桩）：清理会话，提示前端刷新状态
+      this.finishLoginSession(session, '登录进程已正常退出');
+      return {
+        ...result,
+        started: true,
+        instructions: `登录进程已结束（通常表示授权完成）：请点「我已登录，刷新状态」确认。${result.instructions}`,
+      };
+    }
+    return result;
+  }
+
+  /** 过期定时清理（unref 不阻塞进程退出）；实际过期也由 rawLoginSession 懒判定兜底 */
+  private armLoginExpiry(session: LoginSession): void {
+    if (session.expiresAtMs === undefined) return;
+    const delay = Math.max(0, session.expiresAtMs - this.now());
+    session.expiryTimer = setTimeout(() => {
+      if (this.loginSession === session) this.finishLoginSession(session, '登录有效期已过');
+    }, delay);
+    session.expiryTimer.unref?.();
+  }
+
+  private buildLoginInstructions(session: LoginSession): string {
+    const minutes = Math.max(1, Math.round((session.expiresInSec ?? 0) / 60));
+    if (session.mode === 'device') {
+      const target = session.code
+        ? `授权码：${session.code}${session.url ? `；授权地址：${session.url}` : ''}。`
+        : (session.url ? `授权地址：${session.url}。` : '');
+      return `已启动钉钉设备码登录：${target}请打开授权地址输入设备码并确认（有效期约 ${minutes} 分钟，过期请点「重新获取授权码」）。`
+        + '完成后回到本页点「我已登录，刷新状态」。'
+        + (session.code || session.url ? '' : ` 若看不到授权码，请在本机终端执行 ${this.loginCommandFor('device')}。`);
+    }
+    return '已尝试打开浏览器（若未弹出请点下方授权链接）。请在运行 LinkHub 的这台机器上用钉钉扫码/账号登录并确认授权，'
+      + `完成后回到本页点「我已登录，刷新状态」（约 ${minutes} 分钟内有效）。`
+      + '注意：浏览器授权地址是 127.0.0.1 本机回调，必须在这台机器上打开；服务器/SSH/容器请改用设备码登录。';
+  }
+
+  private loginFailureResult(session: LoginSession): DwsLoginStart {
+    const text = `${session.output.out}\n${session.output.err}`;
+    const hints = {
+      ...(session.url ? { url: session.url } : {}),
+      ...(session.code ? { code: session.code } : {}),
+      loginId: session.loginId,
+      requestedMode: session.requestedMode,
+    };
+    if (/unknown flag|unknown shorthand|flag provided but not defined|invalid argument/i.test(text)) {
+      return {
+        started: false,
+        mode: 'browser',
+        command: this.loginCommand(),
+        instructions: `当前 dws 版本不支持${session.mode === 'device' ? '设备码' : '该'}登录方式，请在本机终端执行 ${this.loginCommand()} 完成浏览器授权；`
+          + '完成后回到本页点「我已登录，刷新状态」。',
+        ...hints,
+      };
+    }
+    const info = classifyDwsFailure(
+      { code: session.exitCode ?? 1, stdout: session.output.out, stderr: session.output.err },
+      `${this.commandLabel()} auth login`,
+    );
+    return {
+      started: false,
+      mode: session.mode,
+      command: session.command,
+      instructions: `登录未能自动启动（${info.kind === 'not-logged-in' ? '需要你本人授权' : info.kind === 'permission' ? '企业侧未开启 CLI 访问' : 'dws 返回错误'}）：`
+        + `${info.message} 也可在本机终端手动执行 ${this.loginCommand()}。`,
+      ...hints,
+    };
+  }
+
+  private toStartResult(session: LoginSession): DwsLoginStart {
+    return {
+      started: this.sessionAlive(session),
+      mode: session.mode,
+      requestedMode: session.requestedMode,
+      command: session.command,
+      instructions: session.instructions,
+      loginId: session.loginId,
+      ...(session.url ? { url: session.url } : {}),
+      ...(session.code ? { code: session.code } : {}),
+      ...(session.expiresInSec ? { expiresInSec: session.expiresInSec } : {}),
+      ...(session.expiresAtMs ? { expiresAt: new Date(session.expiresAtMs).toISOString() } : {}),
+    };
   }
 
   private async probeAuthStatus(): Promise<DwsAuthStatus> {
@@ -1048,127 +1536,9 @@ export class DingtalkPersonalClient {
     return parseProfileListJson(r.stdout);
   }
 
-  /**
-   * 启动登录：后台 spawn，立即返回操作指引（绝不阻塞 HTTP）。
-   * 优先 device flow（无头/容器可用：显示 user_code + 短 URL），
-   * 若 dws 明确不支持该参数则回退浏览器 loopback 模式（给出终端命令指引）。
-   */
-  async startLogin(): Promise<DwsLoginStart> {
-    const version = await this.version();
-    if (version.error && !version.version) {
-      throw new DingtalkPersonalError(version.error, 'not-installed');
-    }
-    if (this.loginInProgress()) {
-      const hint = this.loginState?.hint;
-      return {
-        started: true,
-        mode: this.loginState?.mode ?? 'device',
-        command: `${this.commandLabel()} auth login --device`,
-        instructions: '登录流程已在进行中：请完成浏览器里的授权（或输入设备码），完成后回到本页点「我已登录，刷新状态」。',
-        ...(hint?.url ? { url: hint.url } : {}),
-        ...(hint?.code ? { code: hint.code } : {}),
-      };
-    }
-    this.invalidateStatus();
-    return this.spawnLogin('device');
-  }
-
-  /** 后台 spawn 登录子进程，并在 LOGIN_HINT_WAIT_MS 内尽力抓设备码/URL */
-  private async spawnLogin(mode: 'browser' | 'device'): Promise<DwsLoginStart> {
-    const args = mode === 'device'
-      ? ['auth', 'login', '--device', '--no-browser', '-f', 'json', '-y']
-      : ['auth', 'login', '--no-browser', '-f', 'json', '-y'];
-    const command = mode === 'device'
-      ? `${this.commandLabel()} auth login --device`
-      : this.loginCommand();
-    const { file, prefixArgs } = this.command();
-    const fullArgs = this.withGlobal([...prefixArgs, ...args]);
-
-    const spawnImpl = this.spawnImpl ?? spawn;
-    let child;
-    try {
-      child = spawnImpl(file, fullArgs, {
-        cwd: MONOREPO_ROOT,
-        env: process.env,
-        windowsHide: true,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-    } catch (e) {
-      throw new DingtalkPersonalError(
-        `启动 dws 登录失败（${this.commandLabel()}）：${(e as Error).message}。可在本机终端手动执行 ${this.loginCommand()}。`,
-        'unknown',
-      );
-    }
-    this.loginChild = child;
-    this.loginState = { startedAt: this.now(), mode };
-
-    let out = '';
-    let err = '';
-    const grab = (chunk: Buffer): void => {
-      const text = chunk.toString('utf8');
-      out = (out + text).slice(-8000);
-      const hint = extractLoginHint(out, err);
-      if (hint && this.loginState) this.loginState.hint = hint;
-    };
-    child.stdout?.on('data', grab);
-    child.stderr?.on('data', (chunk: Buffer) => {
-      err = (err + chunk.toString('utf8')).slice(-8000);
-      const hint = extractLoginHint(out, err);
-      if (hint && this.loginState) this.loginState.hint = hint;
-    });
-
-    const exit = await waitForExitOrHint(child, this.loginHintWaitMs);
-    const hint = this.loginState?.hint ?? extractLoginHint(out, err);
-
-    // device 模式快速失败（例如 CLI 版本不支持 --device）：回退给「终端命令」指引，前端仍可轮询
-    if (exit.earlyExitCode !== undefined && exit.earlyExitCode !== 0 && mode === 'device') {
-      this.loginState = undefined;
-      const text = `${out}\n${err}`;
-      if (/unknown flag|unknown shorthand|flag provided but not defined|invalid argument/i.test(text)) {
-        return {
-          started: false,
-          mode: 'browser',
-          command: this.loginCommand(),
-          instructions: `当前 dws 版本不支持设备码登录，请在你本机终端执行 ${this.loginCommand()} 完成浏览器授权；`
-            + '完成后回到本页点「我已登录，刷新状态」。',
-        };
-      }
-      const info = classifyDwsFailure({ code: exit.earlyExitCode, stdout: out, stderr: err }, `${this.commandLabel()} auth login`);
-      return {
-        started: false,
-        mode,
-        command: this.loginCommand(),
-        instructions: `登录未能自动启动（${info.kind === 'not-logged-in' ? '需要你本人授权' : info.kind === 'permission' ? '企业侧未开启 CLI 访问' : 'dws 返回错误'}）：`
-          + `${info.message} 也可在本机终端手动执行 ${this.loginCommand()}。`,
-        ...(hint?.url ? { url: hint.url } : {}),
-        ...(hint?.code ? { code: hint.code } : {}),
-      };
-    }
-
-    const instructions = mode === 'device'
-      ? '已启动钉钉设备码登录：请打开钉钉/浏览器访问下方授权地址，输入设备码并确认授权；'
-        + '完成后回到本页点「我已登录，刷新状态」（页面会自动刷新）。'
-        + (hint?.code || hint?.url ? '' : `如果你看不到设备码，请在你本机终端执行 ${this.loginCommand()}。`)
-      : `已启动钉钉浏览器授权：请在弹出的浏览器页面确认授权；完成后回到本页点「我已登录，刷新状态」。`
-        + `若未自动弹出浏览器，请在你本机终端执行 ${this.loginCommand()}（或 ssh 环境改用 --device）。`;
-
-    return {
-      started: true,
-      mode,
-      command: mode === 'device' ? `${this.commandLabel()} auth login --device` : this.loginCommand(),
-      instructions,
-      ...(hint?.url ? { url: hint.url } : {}),
-      ...(hint?.code ? { code: hint.code } : {}),
-    };
-  }
-
   /** 注销：dws auth logout；随后清缓存，账号页立刻显示未连接 */
   async logout(): Promise<void> {
-    if (this.loginInProgress()) {
-      try { this.loginChild?.kill(); } catch { /* 已退出 */ }
-      this.loginChild = undefined;
-      this.loginState = undefined;
-    }
+    this.killLoginSession('用户注销，取消进行中的登录');
     const r = await this.runStatic(['auth', 'logout'], this.authTimeoutMs);
     this.invalidateStatus();
     if (r.code !== 0 && r.spawnError !== 'ENOENT' && !r.timedOut) {
@@ -1267,44 +1637,72 @@ export class DingtalkPersonalClient {
 
   /** 停掉登录子进程（服务关闭时调用，避免残留） */
   dispose(): void {
-    if (this.loginChild) {
-      try { this.loginChild.kill(); } catch { /* 已退出 */ }
-      this.loginChild = undefined;
-      this.loginState = undefined;
-    }
+    this.killLoginSession('服务关闭');
   }
 }
 
-/** 从登录子进程输出里尽力提取设备码/授权 URL（dws 各版本输出格式不完全一致） */
-export function extractLoginHint(stdout: string, stderr = ''): { url?: string; code?: string } | undefined {
-  const text = `${stdout}\n${stderr}`;
-  const urlMatch = text.match(/https?:\/\/[^\s"'<>]+/);
-  const codeMatch = text.match(/"?user[_\s-]?code"?\s*[:=：]\s*"?([A-Z0-9][A-Z0-9\-]{3,})"?/i)
-    ?? text.match(/(?:设备码|验证码|code)[^\w]{0,8}([A-Z0-9]{4,8}(?:-[A-Z0-9]{4,8})?)/);
-  const code = codeMatch ? codeMatch[1] : undefined;
-  const url = urlMatch ? urlMatch[0].replace(/[.,;)]+$/, '') : undefined;
-  if (!url && !code) return undefined;
-  return { ...(url ? { url } : {}), ...(code ? { code } : {}) };
+/**
+ * 选择「用户该打开哪个授权链接」：
+ *  1) loopback OAuth（浏览器登录：URL 里含 /oauth2/auth 或 redirect_uri=127.0.0.1）；
+ *  2) 设备码验证页（含 device/verify 且带 user_code/code 参数）；
+ *  3) 兜底取第一个 http(s) 链接。
+ * 同时从 URL query（user_code=）或文本里提取设备码。
+ */
+export function pickLoginUrl(text: string): { url?: string; code?: string } {
+  const matches = (text.match(/https?:\/\/[^\s"'<>]+/g) ?? [])
+    .map((u) => u.replace(/[.,;)\]}>"']+$/g, ''))
+    .filter(Boolean);
+  const isLoopbackOAuth = (u: string): boolean => /\/oauth2\/auth\b/i.test(u) || /redirect_uri=[^&]*127\.0\.0\.1/i.test(u);
+  const isDeviceVerify = (u: string): boolean => /(device|verify)/i.test(u) && /[?&](user_code|code)=/i.test(u);
+  const chosen = matches.find(isLoopbackOAuth) ?? matches.find(isDeviceVerify) ?? matches[0];
+  let code: string | undefined;
+  if (chosen) {
+    const fromUrl = chosen.match(/[?&]user_code=([^&#\s]+)/i);
+    if (fromUrl) {
+      try { code = decodeURIComponent(fromUrl[1]!); } catch { code = fromUrl[1]; }
+    }
+  }
+  return { ...(chosen ? { url: chosen } : {}), ...(code ? { code } : {}) };
 }
 
-/** 等待子进程退出或到达等待窗口；返回 earlyExitCode（未退出则 undefined） */
-async function waitForExitOrHint(
-  child: ReturnType<typeof spawn>,
-  waitMs: number,
-): Promise<{ earlyExitCode?: number }> {
-  return new Promise((resolve) => {
-    let done = false;
-    const finish = (earlyExitCode?: number): void => {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      resolve({ ...(earlyExitCode !== undefined ? { earlyExitCode } : {}) });
-    };
-    const timer = setTimeout(() => finish(), waitMs);
-    timer.unref?.();
-    child.once('exit', (code) => finish(typeof code === 'number' ? code : -1));
-    child.once('error', () => finish(1));
-  });
+/**
+ * 解析登录有效期（秒）。dws 设备流常见文案：「授权码将在 900 秒后过期」；
+ * 也兼容「N 分钟后过期」与 JSON 里的 expires_in / expiresIn。
+ */
+export function parseLoginExpirySec(text: string): number | undefined {
+  const patterns: [RegExp, number][] = [
+    [/授权码将在\s*(\d+)\s*秒后过期/, 1],
+    [/授权码(?:将)?在?\s*(\d+)\s*秒(?:后)?(?:过期|失效)/, 1],
+    [/(\d+)\s*秒后(?:过期|失效)/, 1],
+    [/授权码将在\s*(\d+)\s*分钟后过期/, 60],
+    [/(\d+)\s*分钟后(?:过期|失效)/, 60],
+    [/"?expires?_in"?\s*[:=]\s*(\d+)/i, 1],
+    [/"?expires?In"?\s*[:=]\s*(\d+)/i, 1],
+  ];
+  for (const [re, mult] of patterns) {
+    const m = text.match(re);
+    if (m) {
+      const n = Number(m[1]);
+      if (Number.isFinite(n) && n > 0) return Math.floor(n * mult);
+    }
+  }
+  return undefined;
+}
+
+/** 从登录子进程输出里尽力提取设备码/授权 URL/有效期（dws 各版本输出格式不完全一致） */
+export function extractLoginHint(stdout: string, stderr = ''): DwsLoginHint | undefined {
+  const text = `${stdout}\n${stderr}`;
+  const { url, code: urlCode } = pickLoginUrl(text);
+  const code = urlCode
+    ?? (text.match(/"?user[ _-]?code"?\s*[:=：]\s*"?([A-Za-z0-9][A-Za-z0-9-]{3,})"?/i)?.[1])
+    ?? (text.match(/(?:设备码|验证码|授权码|code)[^\w]{0,8}([A-Z0-9]{4,8}(?:-[A-Z0-9]{4,8})?)/)?.[1]);
+  const expiresInSec = parseLoginExpirySec(text);
+  if (!url && !code && !expiresInSec) return undefined;
+  return {
+    ...(url ? { url } : {}),
+    ...(code ? { code } : {}),
+    ...(expiresInSec ? { expiresInSec } : {}),
+  };
 }
 
 // ---------------------------------------------------------------------------

@@ -7,6 +7,7 @@
 import { Platform, type DeliveryMode, type PlatformIdentityView } from '@unimsg/shared';
 import { config } from '../config';
 import { mailAccountSummary } from '../config/runtime';
+import { peekMailAccounts } from './mailAccounts';
 import { resolveIdentity } from './identity';
 
 export interface MailAccountView {
@@ -82,11 +83,14 @@ export function listAccounts(): AccountView[] {
       view.identity = resolveIdentity(platform);
     }
     if (platform === Platform.MAIL) {
+      const mailStore = peekMailAccounts();
       view.accounts = config.mail.accounts.map((a) => ({
         ...mailAccountSummary(a),
         // 地址脱敏下发：账号页用 key/label 区分，避免截图/日志泄露完整邮箱
         address: maskAddress(a.address),
         mode: r.mode,
+        // 账号来源：.env 还是本地导入文件（个人版「连接账号」页导入的显示 file）
+        source: mailStore?.sourceOf(a.key) ?? 'env',
       }));
       view.issues = config.mail.issues.map((i) => ({ level: i.level, message: i.message }));
     }

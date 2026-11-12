@@ -183,11 +183,43 @@ export interface FetchUserChatsResult {
   chats: FeishuChat[];
   pages: number;
   truncated: boolean;
+  /** 本次是否带上了 types=p2p,group（false = 平台拒绝该参数后降级为「纯群列表」） */
+  p2pIncluded?: boolean;
+}
+
+/**
+ * 列会话时的 `types` 参数：**只有 user_access_token 能列出单聊（p2p）**，
+ * 不传它时 `/im/v1/chats` 只返回群聊（官方文档也明确「不包含单聊」）。
+ *
+ * 风险与兜底：该参数官方公开文档未收录（飞书官方 CLI 的 `+chat-list` 同样依赖它），
+ * 属于「实测可用但可能随平台调整」的能力 —— 因此这里做进程内探测：平台一旦报参数错误，
+ * 就永久退回不带 types 的群列表（单聊枚举降级，但绝不把整条接收链路打挂）。
+ */
+export const FEISHU_CHAT_LIST_TYPES = 'p2p,group';
+/** 平台「参数错误」类错误码（im/v1/chats 文档：232001 invalid request parameter） */
+const FEISHU_INVALID_PARAM_CODES = [232001];
+
+let chatTypesSupported = true;
+
+/** 单测用：重置 types 参数探测状态 */
+export function resetFeishuChatTypesProbe(): void {
+  chatTypesSupported = true;
+}
+
+/** 当前是否仍会携带 types（doctor / 日志展示用） */
+export function feishuChatTypesEnabled(): boolean {
+  return chatTypesSupported;
+}
+
+function isChatTypesRejected(e: unknown): boolean {
+  if (!(e instanceof FeishuUserReceiveError)) return false;
+  if (e.code !== undefined && FEISHU_INVALID_PARAM_CODES.includes(e.code)) return true;
+  return /invalid request parameter|invalid param|232001/i.test(e.message);
 }
 
 /**
  * 列出用户本人所在会话（分页）。契约：page_size=100，最多 maxChats 个。
- * 用户身份下 user_id_type 必须是 open_id。
+ * 用户身份下 user_id_type 必须是 open_id；默认带 `types=p2p,group` 以包含单聊。
  */
 export async function fetchUserChats(
   token: string,
@@ -198,18 +230,36 @@ export async function fetchUserChats(
   const chats: FeishuChat[] = [];
   let pageToken = '';
   let pages = 0;
-  // 会话数上限保护：分页最多 20 页（2000 个会话），避免异常数据导致死循环
-  for (let i = 0; i < 20; i += 1) {
+
+  const requestPage = async (): Promise<{ items?: any[]; has_more?: boolean; page_token?: string }> => {
     const query = new URLSearchParams({
       user_id_type: 'open_id',
       page_size: String(pageSize),
     });
+    if (chatTypesSupported) query.set('types', FEISHU_CHAT_LIST_TYPES);
     if (pageToken) query.set('page_token', pageToken);
-    const data = await feishuUserGet<{ items?: any[]; has_more?: boolean; page_token?: string }>(
+    return feishuUserGet<{ items?: any[]; has_more?: boolean; page_token?: string }>(
       `/open-apis/im/v1/chats?${query.toString()}`,
       token,
       opts,
     );
+  };
+
+  // 会话数上限保护：分页最多 20 页（2000 个会话），避免异常数据导致死循环
+  for (let i = 0; i < 20; i += 1) {
+    let data: { items?: any[]; has_more?: boolean; page_token?: string };
+    try {
+      data = await requestPage();
+    } catch (e) {
+      // types 是未公开参数：第一页首次请求被平台判为参数错误时，立刻降级重试一次（不带 types）
+      if (chatTypesSupported && i === 0 && !pageToken && isChatTypesRejected(e)) {
+        console.warn('[feishu-user] 飞书接口不再接受 types 参数，已降级为「纯群列表」（单聊将收不到）');
+        chatTypesSupported = false;
+        data = await requestPage();
+      } else {
+        throw e;
+      }
+    }
     pages += 1;
     for (const item of data?.items ?? []) {
       const chatId = typeof item?.chat_id === 'string' ? item.chat_id : '';
@@ -221,13 +271,13 @@ export async function fetchUserChats(
         ...(typeof item?.chat_type === 'string' ? { chatType: item.chat_type } : {}),
       });
       if (chats.length >= maxChats) {
-        return { chats, pages, truncated: true };
+        return { chats, pages, truncated: true, p2pIncluded: chatTypesSupported };
       }
     }
     if (!data?.has_more || !data.page_token) break;
     pageToken = data.page_token;
   }
-  return { chats, pages, truncated: false };
+  return { chats, pages, truncated: false, p2pIncluded: chatTypesSupported };
 }
 
 /** 取当前用户信息（open_id + 展示名）；用于过滤自己发的消息、账号页显示名 */

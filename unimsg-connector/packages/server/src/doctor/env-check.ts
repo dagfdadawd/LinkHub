@@ -79,6 +79,8 @@ export const KNOWN_ENV_KEYS: readonly string[] = [
   'DINGTALK_USER_EVENT_KINDS',
   'DWS_BIN',
   'DWS_PROFILE',
+  // 内置/自定义工具目录（pnpm run fetch:dws 可指定下载目标）
+  'LINKHUB_TOOLS_DIR',
   'DWS_AUTH_TIMEOUT_MS',
   'DWS_SEND_TIMEOUT_MS',
   // 企业微信

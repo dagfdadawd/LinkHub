@@ -420,8 +420,8 @@ function mockIdentity(platform: Platform): PlatformIdentityView {
     },
     botAvailable: false,
     botHint: `演示模式未接入真实${platformName}机器人`,
-    receiveHint: 'Mock 模拟：演示消息由前端内存生成，不会真的从平台接收',
-    sendHint: 'Mock 模拟：演示发送不会调用真实平台接口',
+    receiveHint: '演示模式：消息由前端内存生成，不会真的从平台接收',
+    sendHint: '演示模式：发送不会调用真实平台接口',
   };
 }
 
@@ -470,7 +470,7 @@ export const ACCOUNTS: AccountInfo[] = [
       '只能收不能发：缺少 WECOM_SECRET / WECOM_AGENT_ID（发信凭据）',
       '企业微信要求发信出口 IP 在企业可信 IP 内，否则报 60020（用 pnpm run doctor 查看出口 IP）',
     ],
-    reason: '收消息凭据齐全，缺少发信凭据，发送回退 Mock 模拟',
+    reason: '收消息凭据齐全，缺少发信凭据，发送回退演示模式',
   },
   {
     platform: Platform.MAIL,

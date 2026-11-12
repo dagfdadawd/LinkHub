@@ -14,7 +14,7 @@ import { OcrService } from './ocr';
 import { RateLimiter } from './rateLimiter';
 import { MessageService } from './message';
 import { feishuSample } from '../connectors/samples';
-import { config, type MailAccount } from '../config';
+import { config, forceMode, type MailAccount } from '../config';
 
 function makeSvc() {
   const repo = new InMemoryRepository();
@@ -160,12 +160,19 @@ test('compose：邮箱可指定发件账号，未指定回退首个账号，未�
   }
 });
 
-test('compose：既无显式会话也无历史会话时显式报错，不伪造目标', async () => {
+test('compose：Mock 无会话时用 mock:demo 演示发送（不要求会话 ID）；真实模式无会话时显式报错、不伪造目标', async () => {
   const { svc } = makeSvc();
-  await assert.rejects(
-    () => svc.compose({ platform: Platform.WECOM, text: 'hi' }),
-    /缺少目标会话/,
-  );
+  const ack = await svc.compose({ platform: Platform.WECOM, text: 'hi' });
+  assert.equal(ack.message.conversation?.id, 'mock:demo', 'Mock 演示发送使用固定演示会话');
+  forceMode(Platform.WECOM, 'real');
+  try {
+    await assert.rejects(
+      () => makeSvc().svc.compose({ platform: Platform.WECOM, text: 'hi' }),
+      /缺少目标会话|请在收件箱打开一条消息点「回复」/,
+    );
+  } finally {
+    forceMode(Platform.WECOM, 'mock');
+  }
 });
 
 test('reply：带附件回写沿用同一状态机，附件元数据可见', async () => {
@@ -182,4 +189,27 @@ test('reply：带附件回写沿用同一状态机，附件元数据可见', asy
   assert.deepEqual(m.attachments, [{ name: 'report.pdf', mimeType: 'application/pdf', size: a.size }]);
   assert.equal(JSON.stringify(m).includes(a.contentBase64), false);
   assert.ok(repo.getLoopLog(message.traceId).some((e) => /带 1 个附件/.test(e.detail ?? '')));
+});
+
+test('compose：Mock 模式未传 conversationId 允许模拟发送（mock:demo）；真实模式仍 400 且文案可操作', async () => {
+  const { svc, repo } = makeSvc();
+  const ack = await svc.compose({ platform: Platform.FEISHU, text: 'Mock 主动发送：不需要会话 ID' });
+  assert.equal(ack.message.conversation?.id, 'mock:demo', 'Mock 模式自动使用演示会话');
+  assert.equal(ack.message.conversation?.type, 'p2p');
+  await wait();
+  const m = repo.get(ack.taskId)!;
+  assert.equal(m.status, MsgStatus.SYNCED);
+  assert.equal(m.delivery?.mode, 'mock', '界面必须如实标模拟发送');
+
+  // 真实模式用全新实例（避免复用上面 Mock 消息的会话回退）
+  forceMode(Platform.FEISHU, 'real');
+  const fresh = makeSvc();
+  try {
+    await assert.rejects(
+      () => fresh.svc.compose({ platform: Platform.FEISHU, text: '真实模式无会话' }),
+      /请在收件箱打开一条消息点「回复」，或填写会话 ID/
+    );
+  } finally {
+    forceMode(Platform.FEISHU, 'mock');
+  }
 });

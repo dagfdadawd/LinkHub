@@ -15,6 +15,7 @@ import { Platform } from '@unimsg/shared';
 import {
   DingtalkPersonalStream,
   buildListenArgs,
+  killChildTree,
   classifyStreamExit,
   parseStreamLine,
   restartDelay,
@@ -86,11 +87,14 @@ test('restartDelay：1s→2s→4s…上限 60s', () => {
   assert.equal(restartDelay(2 ** 20), 60000);
 });
 
-test('buildListenArgs：--kind / --events message / --flatten / ndjson', () => {
+test('buildListenArgs：不含 --flatten（真实 +listen-im 不支持，task-13 P0）', () => {
   const args = buildListenArgs('all-direct');
   assert.deepEqual(args, [
-    'event', '+listen-im', '--kind', 'all-direct', '--events', 'message', '--flatten', '-f', 'ndjson', '-y',
+    'event', '+listen-im', '--kind', 'all-direct', '--events', 'message', '-f', 'ndjson', '-y',
   ]);
+  assert.ok(!args.includes('--flatten'), '绝不能传 --flatten（真实 dws exit 3 会重启循环）');
+  assert.ok(args.includes('--events') && args.includes('message'));
+  assert.ok(args.includes('-y'), '自动确认订阅，避免交互式阻塞');
 });
 
 test('parseStreamLine / classifyStreamExit：NDJSON 容错与未登录中文提示', () => {
@@ -171,7 +175,80 @@ test('监管：子进程退出后按退避重启，日志说明第 N 次重启�
   assert.equal(children[1]!.killed, true, 'stop 必须终止子进程');
 });
 
-test('端到端冒烟：真实 fake-dws 个人事件 → 入库 receivedAs=user（SIGTERM 优雅退出）', async () => {
+test('监管：拉起真实事件子进程的 spawn 参数不含 --flatten（task-13 回归）', async () => {
+  const dir = tempDir();
+  process.env.FAKE_DWS_STATE_FILE = join(dir, 'state.json');
+  config.identity.dingtalk.bin = `node ${FAKE_DWS}`;
+  config.identity.dingtalk.eventKinds = ['all-direct'];
+  config.runtime[Platform.DINGTALK].mode = 'real';
+  config.runtime[Platform.DINGTALK].policy = 'real';
+  config.runtime[Platform.DINGTALK].canSend = true;
+  resetDingtalkPersonalClientCache();
+  resetIdentityCaches();
+  await dingtalkPersonalClient().authStatus({ force: true });
+
+  const captured: string[][] = [];
+  class FakeChild2 extends EventEmitter implements SpawnedProcessLike {
+    pid = 1;
+    stdout = new EventEmitter() as unknown as NodeJS.ReadableStream;
+    stderr = new EventEmitter() as unknown as NodeJS.ReadableStream;
+    exitCode: number | null = null;
+    kill(): boolean {
+      this.exitCode = 0;
+      this.emit('exit', 0, null);
+      return true;
+    }
+  }
+  const { svc } = makeSvc();
+  const stream = new DingtalkPersonalStream(svc, {
+    spawnImpl: (_file, args) => {
+      captured.push(args);
+      return new FakeChild2();
+    },
+    log: () => {},
+    warn: () => {},
+  });
+  stream.start();
+  assert.equal(captured.length, 1);
+  const args = captured[0]!;
+  assert.ok(args.includes('+listen-im'));
+  assert.ok(args.includes('--kind') && args.includes('all-direct'));
+  assert.ok(!args.includes('--flatten'), `spawn 参数不得含 --flatten，实际：${args.join(' ')}`);
+  await stream.stop(50);
+});
+
+test('killChildTree：优先关 stdin 让真实 dws 优雅退订，无 stdin 时才 SIGTERM', async () => {
+  const events: string[] = [];
+  const child: any = Object.assign(new EventEmitter(), {
+    pid: 987,
+    exitCode: null as number | null,
+    kill: () => { events.push('kill'); return true; },
+    stdin: {
+      writableEnded: false,
+      end() {
+        events.push('stdin-end');
+        setTimeout(() => {
+          child.exitCode = 0;
+          child.emit('exit', 0, null);
+        }, 5);
+      },
+    },
+  });
+  await killChildTree(child, 200);
+  assert.deepEqual(events, ['stdin-end'], '有 stdin 时应关 stdin（Windows 下 SIGTERM 无法优雅退订）');
+
+  const child2: any = Object.assign(new EventEmitter(), { pid: 988, exitCode: null as number | null });
+  child2.kill = () => {
+    events.push('kill2');
+    child2.exitCode = 0;
+    child2.emit('exit', 0, null);
+    return true;
+  };
+  await killChildTree(child2, 200);
+  assert.ok(events.includes('kill2'), '没有 stdin 时退回 SIGTERM');
+});
+
+test('端到端冒烟：真实 fake-dws 个人事件 → 入库 receivedAs=user（关 stdin 优雅退出）', async () => {
   const dir = tempDir();
   process.env.FAKE_DWS_STATE_FILE = join(dir, 'state.json');
   process.env.FAKE_DWS_EVENT_INTERVAL_MS = '100';

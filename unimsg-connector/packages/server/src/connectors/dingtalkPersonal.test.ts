@@ -18,12 +18,17 @@ import {
   buildReplyArgs,
   buildSendArgs,
   classifyDwsFailure,
+  BROWSER_LOGIN_HINT_WAIT_MS,
+  DEFAULT_BROWSER_EXPIRES_SEC,
+  DEFAULT_DEVICE_EXPIRES_SEC,
   extractLoginHint,
   mapPersonalEventToMessage,
   mapSendResultJson,
   parseAuthStatusJson,
   parseDwsBin,
   parseEventLine,
+  parseLoginExpirySec,
+  pickLoginUrl,
   parseSelfProfileJson,
   parseProfileListJson,
   parseVersion,
@@ -167,6 +172,80 @@ test('parseEventLine：--flatten 的 payload / 普通 envelope / 垃圾行容错
   const approval = parseEventLine(JSON.stringify({ type: 'user_oa_approval_task_created', payload: { event_id: 'e1' } }));
   assert.ok(approval);
   assert.equal(approval!.messageId, '');
+});
+
+test('parseEventLine：真实 transport envelope（data 是 JSON 字符串）→ o2o/at-me、ms 时间', () => {
+  const business = {
+    type: 'user_im_message_receive_o2o_all',
+    event_id: 'evt-1',
+    message_id: 'om_real_1',
+    conversation_id: 'cid_real_1',
+    content: '你好，周报周五前发我',
+    create_time: '1731000000000',
+    event_time: 1_731_000_000_123,
+    sender: '李四',
+    sender_open_dingtalk_id: 'od_sender_1',
+  };
+  const envelope = {
+    type: 'event',
+    event_type: 'user_im_message_receive_o2o_all',
+    event_id: 'envelope-1',
+    data: JSON.stringify(business),
+    headers: { messageId: 'h1', topic: 'personal_stream', event_type: 'user_im_message_receive_o2o_all' },
+    event_born_time: 1_731_000_000_200,
+    received_at_unix_ms: 1_731_000_000_300,
+    seq: '1',
+    subscribe_id: 'sub-1',
+  };
+  const o2o = parseEventLine(JSON.stringify(envelope));
+  assert.ok(o2o, 'data 字符串必须被 JSON.parse 后解析出消息');
+  assert.equal(o2o!.messageId, 'om_real_1');
+  assert.equal(o2o!.conversationId, 'cid_real_1');
+  assert.equal(o2o!.content, '你好，周报周五前发我');
+  assert.equal(o2o!.eventType, 'user_im_message_receive_o2o_all');
+  assert.equal(o2o!.senderName, '李四');
+  assert.equal(o2o!.senderOpenDingtalkId, 'od_sender_1');
+  assert.equal(o2o!.createTimeMs, 1_731_000_000_123, 'event_time(ms) 优先');
+
+  // at-me：群消息
+  const atMe = parseEventLine(JSON.stringify({
+    ...envelope,
+    event_type: 'user_im_message_receive_at',
+    data: JSON.stringify({ ...business, type: 'user_im_message_receive_at', conversation_id: 'cid_group_1' }),
+  }));
+  assert.equal(atMe!.eventType, 'user_im_message_receive_at');
+  assert.equal(atMe!.conversationId, 'cid_group_1');
+  assert.ok(mapPersonalEventToMessage(atMe!)?.conversation?.type === 'group');
+
+  // create_time 是字符串时间（非纯数字）时用 Date 解析
+  const iso = parseEventLine(JSON.stringify({
+    type: 'event',
+    event_type: 'user_im_message_receive_o2o_all',
+    data: JSON.stringify({ message_id: 'om_iso', content: 'hi', create_time: '2024-11-08T02:13:20.000Z' }),
+  }));
+  assert.equal(iso!.createTimeMs, Date.parse('2024-11-08T02:13:20.000Z'));
+
+  // data 是对象（旧格式/兼容）也能处理
+  const objData = parseEventLine(JSON.stringify({
+    type: 'event',
+    event_type: 'user_im_message_receive_o2o_all',
+    data: { message_id: 'om_obj', content: '对象型 data' },
+  }));
+  assert.equal(objData!.messageId, 'om_obj');
+
+  // data 是坏 JSON 字符串 → 不崩溃：按「非消息事件」带出类型，映射层忽略（绝不 throw）
+  const broken = parseEventLine(JSON.stringify({ type: 'event', event_type: 'x', data: '{bad json' }));
+  assert.ok(broken);
+  assert.equal(broken!.messageId, '');
+  assert.equal(broken!.eventType, 'x');
+  // 非消息事件：envelope 根 event_type 仍能带出，messageId 为空
+  const nonMsg = parseEventLine(JSON.stringify({
+    type: 'event',
+    event_type: 'user_oa_approval_task_created',
+    data: JSON.stringify({ event_id: 'e9' }),
+  }));
+  assert.equal(nonMsg!.messageId, '');
+  assert.equal(nonMsg!.eventType, 'user_oa_approval_task_created');
 });
 
 test('mapPersonalEventToMessage：文本 / 文件 / 群单聊 / 自己发的一律过滤', () => {
@@ -391,43 +470,239 @@ test('client：DWS_BIN 带参数时 loginCommand 保留脚本参数（不再退�
   assert.equal(withProfile.loginCommand(), 'dws auth login --profile corp:user');
 });
 
-test('client.startLogin：device 模式解析设备码/URL，后台子进程不阻塞', async () => {
+/** 造一个「可控假登录子进程」：可写 stdout/stderr、可主动 emit exit */
+function makeFakeLoginChild(pid: number) {
   const stdout = new EventEmitter();
   const stderr = new EventEmitter();
-  const child = Object.assign(new EventEmitter(), {
-    pid: 4242,
+  const child: any = Object.assign(new EventEmitter(), {
+    pid,
     stdout,
     stderr,
-    kill: () => true,
-    exitCode: null,
+    exitCode: null as number | null,
+    killed: false,
+    kill(this: any) {
+      this.killed = true;
+      return true;
+    },
   });
+  return child as {
+    pid: number;
+    stdout: EventEmitter;
+    stderr: EventEmitter;
+    exitCode: number | null;
+    killed: boolean;
+    kill(): boolean;
+    once: (event: string, fn: (...args: any[]) => void) => void;
+    emit: (event: string, ...args: any[]) => void;
+  };
+}
+
+/** startLogin 会先跑 dws version 做能力探测：注入 runner，单测不依赖本机 dws */
+function loginRunner(args: string[]): DwsRunResult {
+  return {
+    code: 0,
+    stdout: args[0] === 'version' ? 'Version: v1.0.68-beta.1\nBuild: test\n' : '{}',
+    stderr: '',
+  };
+}
+
+const BROWSER_URL = 'https://login.dingtalk.com/oauth2/auth?caller=dws&client_id=x&response_type=code'
+  + '&redirect_uri=http%3A%2F%2F127.0.0.1%3A60520%2Fcallback&state=st';
+
+test('extractLoginHint/parseLoginExpirySec：识别 loopback OAuth URL、设备验证页、有效期', () => {
+  const browser = extractLoginHint('', `请在浏览器中完成登录：${BROWSER_URL}\n`);
+  assert.equal(browser?.url, BROWSER_URL);
+  assert.equal(pickLoginUrl(BROWSER_URL).url, BROWSER_URL);
+
+  const device = extractLoginHint(
+    '设备授权地址：https://login.dingtalk.com/oauth2/device/verify?user_code=ABCD-1234\n授权码将在 900 秒后过期\n',
+  );
+  assert.ok(device?.url?.includes('device/verify'));
+  assert.equal(device?.code, 'ABCD-1234');
+  assert.equal(device?.expiresInSec, 900);
+
+  assert.equal(parseLoginExpirySec('授权码将在 15 分钟后过期'), 900);
+  assert.equal(parseLoginExpirySec('expires_in: 600'), 600);
+  assert.equal(parseLoginExpirySec('没有有效期信息'), undefined);
+  // 兼容旧格式（设备码 + 自定义 URL）
+  const legacy = extractLoginHint('请访问 https://fake-login.example/device 并输入设备码 FAKE-1234');
+  assert.equal(legacy?.url, 'https://fake-login.example/device');
+  assert.equal(legacy?.code, 'FAKE-1234');
+});
+
+test('client.startLogin("device")：解析设备码/URL/有效期，后台子进程不阻塞', async () => {
+  const child = makeFakeLoginChild(4242);
   let spawnedArgs: string[] = [];
   const client = new DingtalkPersonalClient({
     bin: 'dws',
-    loginHintWaitMs: 30,
-    // startLogin 会先跑 `dws version` 做能力探测：这里必须注入 runner，
-    // 否则测试依赖「本机装了 dws 且 dws.exe 在 PATH」，在 CI / 干净 checkout 上必挂。
-    runner: async (args) => ({
-      code: 0,
-      stdout: args[0] === 'version' ? 'Version: v1.0.68-beta.1\nBuild: test\n' : '{}',
-      stderr: '',
-    }),
+    loginHintWaitMs: 40,
+    runner: async (args) => loginRunner(args),
     spawnImpl: (_file, args) => {
       spawnedArgs = args;
       setTimeout(() => {
-        stdout.emit('data', Buffer.from('请访问 https://fake-login.example/device 并输入设备码 FAKE-9999\n'));
+        child.stderr.emit('data', Buffer.from(
+          '设备授权地址：https://login.dingtalk.com/oauth2/device/verify?user_code=FAKE-9999\n授权码将在 900 秒后过期\n',
+        ));
       }, 5);
-      return child as any;
+      return child;
+    },
+  });
+  const started = await client.startLogin('device');
+  assert.equal(started.started, true);
+  assert.equal(started.mode, 'device');
+  assert.equal(started.requestedMode, 'device');
+  assert.ok(spawnedArgs.includes('--device'));
+  assert.ok(spawnedArgs.includes('--no-browser'));
+  assert.ok(started.url?.includes('user_code=FAKE-9999'));
+  assert.equal(started.code, 'FAKE-9999');
+  assert.equal(started.expiresInSec, DEFAULT_DEVICE_EXPIRES_SEC);
+  assert.ok(started.expiresAt);
+  assert.ok(started.loginId);
+  assert.match(started.instructions, /设备码|授权码/);
+  assert.equal(client.loginInProgress(), true);
+  client.dispose();
+  assert.equal(client.loginInProgress(), false);
+});
+
+test('client.startLogin("auto")：默认优先浏览器 loopback（不加 --no-browser），600s 窗口', async () => {
+  const child = makeFakeLoginChild(5001);
+  const spawned: string[][] = [];
+  const client = new DingtalkPersonalClient({
+    bin: 'dws',
+    loginHintWaitMs: 40,
+    runner: async (args) => loginRunner(args),
+    spawnImpl: (_file, args) => {
+      spawned.push(args);
+      setTimeout(() => child.stderr.emit('data', Buffer.from(`请在浏览器完成登录：${BROWSER_URL}\n`)), 5);
+      return child;
     },
   });
   const started = await client.startLogin();
-  assert.equal(started.started, true);
-  assert.equal(started.mode, 'device');
-  assert.ok(spawnedArgs.includes('--device'));
-  assert.ok(spawnedArgs.includes('--no-browser'));
-  assert.equal(started.url, 'https://fake-login.example/device');
-  assert.equal(started.code, 'FAKE-9999');
-  assert.match(started.instructions, /授权|设备码/);
+  assert.equal(started.mode, 'browser', 'auto 默认应走浏览器 loopback');
+  assert.equal(started.requestedMode, 'auto');
+  assert.equal(spawned.length, 1);
+  assert.ok(!spawned[0]!.includes('--device'));
+  assert.ok(!spawned[0]!.includes('--no-browser'), 'browser 模式不加 --no-browser（让 dws 自动开浏览器）');
+  assert.equal(started.url, BROWSER_URL);
+  assert.equal(started.expiresInSec, DEFAULT_BROWSER_EXPIRES_SEC);
+  assert.match(started.instructions, /浏览器|127\.0\.0\.1/);
+  assert.ok((started.expiresInSec ?? 0) > 0);
+  assert.equal(BROWSER_LOGIN_HINT_WAIT_MS >= 5_000, true);
+  client.dispose();
+});
+
+test('client.startLogin("auto")：浏览器方式启动失败 → 自动回退设备码，并在指引里说明', async () => {
+  const browserChild = makeFakeLoginChild(6001);
+  const deviceChild = makeFakeLoginChild(6002);
+  const spawned: string[][] = [];
+  const client = new DingtalkPersonalClient({
+    bin: 'dws',
+    loginHintWaitMs: 40,
+    runner: async (args) => loginRunner(args),
+    spawnImpl: (_file, args) => {
+      spawned.push(args);
+      if (spawned.length === 1) {
+        setTimeout(() => {
+          browserChild.stderr.emit('data', Buffer.from('unknown flag: --no-browser\n'));
+          browserChild.exitCode = 1;
+          browserChild.emit('exit', 1, null);
+        }, 5);
+        return browserChild;
+      }
+      setTimeout(() => {
+        deviceChild.stderr.emit('data', Buffer.from(
+          '设备授权地址：https://login.dingtalk.com/oauth2/device/verify?user_code=ABCD-9876\n授权码将在 900 秒后过期\n',
+        ));
+      }, 5);
+      return deviceChild;
+    },
+  });
+  const started = await client.startLogin('auto');
+  assert.equal(started.mode, 'device', '浏览器启动失败应回退 device');
+  assert.equal(started.requestedMode, 'auto');
+  assert.equal(spawned.length, 2);
+  assert.ok(spawned[1]!.includes('--device'));
+  assert.match(started.instructions, /自动改用设备码/);
+  assert.equal(started.code, 'ABCD-9876');
+  client.dispose();
+});
+
+test('client.startLogin：同模式重复调用复用会话（只有 1 个 child）；force/换模式会杀掉旧 child', async () => {
+  const children = [makeFakeLoginChild(7001), makeFakeLoginChild(7002)];
+  const spawned: string[][] = [];
+  const client = new DingtalkPersonalClient({
+    bin: 'dws',
+    loginHintWaitMs: 30,
+    runner: async (args) => loginRunner(args),
+    spawnImpl: (_file, args) => {
+      spawned.push(args);
+      const child = children[spawned.length - 1]!;
+      setTimeout(() => child.stderr.emit('data', Buffer.from(
+        '设备授权地址：https://login.dingtalk.com/oauth2/device/verify?user_code=FAKE-1111\n授权码将在 900 秒后过期\n',
+      )), 5);
+      return child;
+    },
+  });
+  const first = await client.startLogin('device');
+  assert.equal(spawned.length, 1);
+  const again = await client.startLogin('device');
+  assert.equal(spawned.length, 1, '同模式重复调用不得产生第二个 child');
+  assert.equal(again.loginId, first.loginId);
+
+  const forced = await client.startLogin('device', { force: true });
+  assert.equal(spawned.length, 2, 'force 应重新起 child');
+  assert.notEqual(forced.loginId, first.loginId);
+  assert.equal(children[0]!.killed, true, '旧 child 必须被终止');
+  client.dispose();
+});
+
+test('client.startLogin：child 退出后清理会话（旧设备码不再展示），并通知结束回调', async () => {
+  const child = makeFakeLoginChild(8001);
+  const finished: { mode: string; exitCode?: number | null }[] = [];
+  const client = new DingtalkPersonalClient({
+    bin: 'dws',
+    loginHintWaitMs: 30,
+    runner: async (args) => loginRunner(args),
+    spawnImpl: () => {
+      setTimeout(() => child.stderr.emit('data', Buffer.from(
+        '设备授权地址：https://login.dingtalk.com/oauth2/device/verify?user_code=FAKE-2222\n授权码将在 900 秒后过期\n',
+      )), 5);
+      return child;
+    },
+  });
+  client.setLoginFinishedHandler((info) => finished.push({ mode: info.mode, exitCode: info.exitCode }));
+  await client.startLogin('device');
+  assert.ok(client.currentLogin(), '进行中应能读到会话');
+  child.exitCode = 0;
+  child.emit('exit', 0, null);
+  assert.equal(client.loginInProgress(), false);
+  assert.equal(client.currentLogin(), undefined, 'child 退出后不得继续展示旧设备码');
+  assert.equal(finished.length, 1, '结束回调必须触发（接收通道协调器依赖它）');
+  assert.equal(finished[0]!.mode, 'device');
+  client.dispose();
+});
+
+test('client.startLogin：有效期过后自动清理会话（懒判定，避免旧码一直展示）', async () => {
+  let now = 1_700_000_000_000;
+  const child = makeFakeLoginChild(9001);
+  const client = new DingtalkPersonalClient({
+    bin: 'dws',
+    loginHintWaitMs: 30,
+    now: () => now,
+    runner: async (args) => loginRunner(args),
+    spawnImpl: () => {
+      setTimeout(() => child.stderr.emit('data', Buffer.from(
+        '设备授权地址：https://login.dingtalk.com/oauth2/device/verify?user_code=FAKE-3333\n授权码将在 1 秒后过期\n',
+      )), 5);
+      return child;
+    },
+  });
+  const started = await client.startLogin('device');
+  assert.equal(started.expiresInSec, 1);
+  now += 2_000;
+  assert.equal(client.currentLogin(), undefined, '过期后会话必须清理');
+  assert.equal(client.loginInProgress(), false);
+  assert.equal(child.killed, true, '过期后应终止登录子进程');
   client.dispose();
 });
 
@@ -487,20 +762,46 @@ test('fake-dws 冒烟：未登录/失败模式映射成中文错误', async () =
   }
 });
 
-test('parseSelfProfileJson / client.getSelfOpenDingtalkId：用于过滤自己发出的消息', async () => {
+test('parseSelfProfileJson / client.getSelfOpenDingtalkId：真实 get-self 不返回 openDingTalkId（best-effort 不自环过滤）', async () => {
+  // 真实 v1.0.68 输出：{result:[{isAdmin, orgEmployeeModel:{corpId,orgUserName,userId,depts}}]}，无 openDingTalkId
+  const real = parseSelfProfileJson(JSON.stringify({
+    result: [{ isAdmin: true, orgEmployeeModel: { corpId: 'c1', orgUserName: '陈', userId: 'u1', depts: [] } }],
+  }));
+  assert.equal(real.openDingtalkId, undefined);
+  assert.equal(real.displayName, '陈');
+  assert.equal(real.userId, 'u1');
+
+  // 旧版/模拟格式的 openDingTalkId 仍兼容（未来 dws 返回时自动启用自环过滤）
   assert.equal(parseSelfProfileJson('{"ok":true,"data":{"openDingTalkId":"od_self","displayName":"我"}}').openDingtalkId, 'od_self');
   assert.equal(parseSelfProfileJson('{"open_dingtalk_id":"od_2"}').openDingtalkId, 'od_2');
   assert.equal(parseSelfProfileJson('not-json').openDingtalkId, undefined);
 
   setFakeEnv();
   const client = new DingtalkPersonalClient({ bin: `node ${FAKE_DWS}` });
-  const id = await client.getSelfOpenDingtalkId();
-  assert.equal(id, 'fake-open-dingtalk-id-001');
-  assert.equal(client.peekSelfOpenDingtalkId(), 'fake-open-dingtalk-id-001');
+  assert.equal(await client.getSelfOpenDingtalkId(), undefined, 'fake 与真实一致：不返回 openDingTalkId');
+  assert.equal(client.peekSelfOpenDingtalkId(), undefined);
   client.invalidateStatus();
   assert.equal(client.peekSelfOpenDingtalkId(), undefined);
 });
 
+
+test('fake-dws 与真实 CLI 一致：event +listen-im 拒绝 --flatten（exit 3 unknown flag）', async () => {
+  setFakeEnv();
+  const result = await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve) => {
+    const child = spawn(process.execPath, [
+      FAKE_DWS, 'event', '+listen-im', '--kind', 'all-direct', '--events', 'message', '--flatten', '-f', 'ndjson', '-y',
+    ], { cwd: process.cwd(), env: process.env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (d) => { stdout += String(d); });
+    child.stderr.on('data', (d) => { stderr += String(d); });
+    child.on('close', (code) => resolve({ code, stdout, stderr }));
+  });
+  assert.equal(result.code, 3, '应像真实 dws 一样 exit 3');
+  assert.match(result.stderr, /unknown flag: --flatten/);
+  assert.match(result.stderr, /"reason":\s*"unknown_flag"|unknown_flag/);
+  assert.ok(!result.stdout.startsWith('{'), '不得输出事件，应直接拒绝');
+});
 
 test('NEW-P2-2 fake-dws 默认只推 5 条示例事件后停止推流（进程保持存活）', async () => {
   setFakeEnv({ FAKE_DWS_EVENT_INTERVAL_MS: '40' });
@@ -510,7 +811,7 @@ test('NEW-P2-2 fake-dws 默认只推 5 条示例事件后停止推流（进程�
       cwd: process.cwd(),
       env: process.env,
       windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe'],
     });
     const lines: string[] = [];
     let stderr = '';
@@ -551,7 +852,7 @@ test('NEW-P2-2 默认模式推完 5 条后进程必须保持存活（无 pending
     cwd: process.cwd(),
     env: process.env,
     windowsHide: true,
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: ['pipe', 'pipe', 'pipe'],
   });
   let buf = '';
   const lines: string[] = [];

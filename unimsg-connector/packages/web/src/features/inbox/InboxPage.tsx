@@ -8,12 +8,23 @@ import { store } from '../../store';
 import { filterMessages } from '../../store/appStore';
 import { MsgStatus, Platform } from '../../types';
 import type { UnifiedMessage } from '../../types';
-import { PLATFORM_META, STATUS_META, TYPE_LABEL } from '../../utils/format';
+import { PLATFORM_META, STATUS_META, TYPE_LABEL, isSelfComposedMock } from '../../utils/format';
 import { navigateWithMorph } from '../../utils/morph';
 import { injectSample, type InjectPlatform } from '../../services/demoSamples';
 import { EmptyState } from '../../components/EmptyState';
-import { FirstRunGuide, isEmptyFirstRun } from '../../components/FirstRunGuide';
+import {
+  FirstRunGuide,
+  isEmptyFirstRun,
+  readFirstRunDismissed,
+  shouldShowFirstRun,
+} from '../../components/FirstRunGuide';
+import { OnboardingBanner } from '../../components/OnboardingBanner';
 import { QuickStart } from '../../components/QuickStart';
+import {
+  isOnboarded,
+  markOnboarded,
+  shouldShowOnboardingBanner,
+} from '../../utils/onboarding';
 import { MessageCard } from './MessageCard';
 import { DetailPanel } from './DetailPanel';
 import { ChannelTabs, CHANNEL_DEFS, type ChannelOption } from './ChannelTabs';
@@ -48,6 +59,49 @@ export function InboxPage() {
   const [listCollapsed, setListCollapsed] = useState(false);
   const toast = AntApp.useApp().message;
   const injectSeq = useRef(0);
+  /** 首启横幅：本地标记 + 后端 firstRun 任一触发；点过「去连接 / 稍后」后不再打扰 */
+  const [onboarded, setOnboarded] = useState(() => isOnboarded());
+  /** 首启 3 步引导是否已「知道了」（据此决定空态是否显示注入示例，避免双重引导） */
+  const [firstRunDismissed, setFirstRunDismissed] = useState(() => readFirstRunDismissed());
+
+  useEffect(() => {
+    // 纯前端演示模式不需要拉授权中心（Mock 会如实返回演示状态，但横幅不显示）
+    if (!state.demoMode) void store.refreshOnboarding();
+  }, [state.demoMode]);
+
+  const onboarding = state.onboarding;
+  const showOnboarding = shouldShowOnboardingBanner({
+    demoMode: state.demoMode,
+    onboarded,
+    firstRun: onboarding?.firstRun,
+    ready: onboarding?.overall.ready,
+    total: onboarding?.overall.total,
+  });
+  /** 从 onboarding steps 统一计算口径：管理员项 / 可自助项分开，不再硬编码平台数 */
+  const needsAdminCount = onboarding?.steps?.filter(
+    (step) => step.state === 'needs_admin' || step.state === 'needs_install',
+  ).length ?? 0;
+  const needsAuthCount = onboarding?.steps?.filter(
+    (step) => step.state === 'needs_user_auth',
+  ).length ?? 0;
+
+  const dismissOnboarding = (): void => {
+    markOnboarded();
+    setOnboarded(true);
+  };
+
+  const openConnect = (): void => {
+    markOnboarded();
+    setOnboarded(true);
+    navigate('/connect');
+  };
+
+  /** 横幅「先体验演示」：注入一条示例消息后收起横幅，不再重复打扰 */
+  const demoFromOnboarding = (): void => {
+    markOnboarded();
+    setOnboarded(true);
+    void handleInject();
+  };
 
   const visible = useMemo(() => filterMessages(state.messages, state.filters), [state.messages, state.filters]);
   const selected = traceId ? state.messages.find((m) => m.traceId === traceId) : undefined;
@@ -68,7 +122,10 @@ export function InboxPage() {
   }, [state.messages, state.filters]);
 
   // 分组按当前筛选结果切分：渠道、搜索、分页改动后计数自然对齐
-  const unreadList = useMemo(() => visible.filter((m) => !m.readAt), [visible]);
+  const unreadList = useMemo(
+    () => visible.filter((m) => !m.readAt && !isSelfComposedMock(m)),
+    [visible],
+  );
   const readList = useMemo(() => visible.filter((m) => m.readAt), [visible]);
 
   /**
@@ -88,14 +145,16 @@ export function InboxPage() {
   /** 空态一键注入：真实后端走 webhook（真实入站链路），Mock 模式走本地模拟 */
   const handleInject = async (platform?: InjectPlatform) => {
     try {
-      if (state.demoMode || !platform) {
+      if (state.demoMode) {
         await store.simulateIncoming();
         return;
       }
+      // 真实后端：未指定平台时默认注入一条飞书示例（与首启 CTA 对应）
+      const target = platform ?? Platform.FEISHU;
       const base = import.meta.env.VITE_API_BASE ?? '';
-      await injectSample(platform, injectSeq.current++, base);
+      await injectSample(target, injectSeq.current++, base);
       await store.refresh();
-      toast.success(`已注入一条${PLATFORM_META[platform].name}消息`);
+      toast.success(`已注入一条${PLATFORM_META[target].name}消息`);
     } catch (e) {
       toast.error(`注入失败：${e instanceof Error ? e.message : '未知错误'}`);
     }
@@ -159,6 +218,13 @@ export function InboxPage() {
     messageCount: state.messages.length,
     received: state.health?.received ?? 0,
   });
+  // 首启 3 步引导是否正在展示（决定空态是否再叠加注入入口，避免三重引导）
+  const firstRunVisible = shouldShowFirstRun({
+    demoMode: state.demoMode,
+    messageCount: state.messages.length,
+    received: state.health?.received ?? 0,
+    dismissed: firstRunDismissed,
+  });
 
   const renderCard = (message: UnifiedMessage, variant: 'row' | 'compact') => (
     <MessageCard
@@ -191,7 +257,14 @@ export function InboxPage() {
         description="按上方错误提示排查后端（是否启动、端口与 token 是否一致）后刷新页面重试。"
       />
     ) : isEmptyInbox ? (
-      <QuickStart demoMode={state.demoMode} onInject={handleInject} />
+      firstRunVisible ? (
+        <EmptyState
+          title="还没有收到消息"
+          description="从上方「连接账号」开始连接，或点「先体验演示」注入一条示例消息。"
+        />
+      ) : (
+        <QuickStart demoMode={state.demoMode} onInject={handleInject} />
+      )
     ) : (
       <EmptyState
         title="没有匹配的消息"
@@ -209,6 +282,9 @@ export function InboxPage() {
         }
       />
     )
+  ) : traceId ? (
+    /* 详情打开后：列表收窄成「时间轴 + 平台色点」的紧凑流 */
+    <div className="list-stream">{visible.map((m) => renderCard(m, 'compact'))}</div>
   ) : (
     <>
       <MessageGroup
@@ -247,6 +323,16 @@ export function InboxPage() {
 
   return (
     <div className="inbox-page">
+      {/* 个人版首启：先去「连接账号」把邮箱/钉钉/飞书/企微连上（点过即不再打扰） */}
+      {showOnboarding && (
+        <OnboardingBanner
+          onOpen={openConnect}
+          onDemo={demoFromOnboarding}
+          onDismiss={dismissOnboarding}
+          adminCount={needsAdminCount}
+          selfServiceCount={needsAuthCount}
+        />
+      )}
       {/* 首启 3 步引导：真实后端 + 无消息时显示（组件内部含「知道了」记忆与严格显示条件） */}
       <FirstRunGuide
         demoMode={state.demoMode}
@@ -257,7 +343,11 @@ export function InboxPage() {
         apiBase={import.meta.env.VITE_API_BASE}
         loading={state.loading}
         error={state.error}
-        onOpenAccounts={() => navigate('/accounts')}
+        needsAdminCount={needsAdminCount}
+        needsAuthCount={needsAuthCount}
+        onOpenConnect={() => navigate('/connect')}
+        onDemo={() => void handleInject()}
+        onDismiss={() => setFirstRunDismissed(true)}
       />
       <div
         className={`inbox${traceId ? ' inbox--detail' : ' inbox--list'}${

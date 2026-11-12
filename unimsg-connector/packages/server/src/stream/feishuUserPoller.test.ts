@@ -173,8 +173,63 @@ test('pollFeishuUserOnce：增量入库 + 水位推进 + 自己消息/重复/空
   assert.equal(result.added, 2);
   assert.equal(result.duplicates, 1);
   assert.equal(result.skipped, 2);
-  assert.equal(state.chats.oc_a, 1_000_400, '水位推进到实际处理到的最后一条');
+  // 水位推进到本批「处理过的最后一条」：被跳过的自环消息（1_000_500）也算已处理，
+  // 否则它作为最新一条会让每轮都把它重新拉回来（见下面 alreadySeen 用例）。
+  assert.equal(state.chats.oc_a, 1_000_500, '水位推进到本批处理过的最后一条（含按规则跳过的）');
   assert.equal(ingested[0]!.receivedAs, 'user');
+});
+
+test('pollFeishuUserOnce：水位内的消息算「已见过」直接跳过，不重复 ingest（避免每轮 trace/落盘抖动）', async () => {
+  const state = emptyState();
+  state.chats.oc_a = 1_000_400;
+  const ingested: UnifiedMessage[] = [];
+  const result = await pollFeishuUserOnce({
+    state,
+    getToken: async () => 'u-token',
+    ingest: async (msg) => {
+      ingested.push(msg);
+      return { duplicate: false };
+    },
+    fetchChats: (async () => ({ chats: [chatA], pages: 1, truncated: false })) as any,
+    // 飞书 start_time 按秒下取整：水位同一秒的消息会被重新拉回来
+    fetchMessages: (async () => ({
+      messages: [
+        rawMsg('om_old', 1_000_100),
+        rawMsg('om_boundary', 1_000_400),
+        rawMsg('om_new', 1_000_900),
+      ],
+      pages: 1,
+    })) as any,
+    getSelfInfo: async () => ({ openId: 'ou_self' }),
+    now: () => 2_000_000,
+    chatLimit: 10,
+    backfillHours: 0,
+  });
+  assert.equal(result.alreadySeen, 2, '水位内/水位边界的两条都不再 ingest');
+  assert.equal(result.added, 1);
+  assert.equal(ingested.length, 1);
+  assert.equal(ingested[0]!.externalId, 'om_new');
+  assert.equal(state.chats.oc_a, 1_000_900);
+
+  // 第二轮：同一批消息全部变成「已见过」，一条都不入库
+  const ingested2: UnifiedMessage[] = [];
+  const second = await pollFeishuUserOnce({
+    state,
+    getToken: async () => 'u-token',
+    ingest: async (msg) => { ingested2.push(msg); return { duplicate: false }; },
+    fetchChats: (async () => ({ chats: [chatA], pages: 1, truncated: false })) as any,
+    fetchMessages: (async () => ({
+      messages: [rawMsg('om_boundary', 1_000_400), rawMsg('om_new', 1_000_900)],
+      pages: 1,
+    })) as any,
+    getSelfInfo: async () => ({ openId: 'ou_self' }),
+    now: () => 2_000_000,
+    chatLimit: 10,
+    backfillHours: 0,
+  });
+  assert.equal(second.alreadySeen, 2);
+  assert.equal(second.added, 0);
+  assert.equal(ingested2.length, 0, '不重复 ingest → 不写 redelivered trace、不触发全量落盘');
 });
 
 test('pollFeishuUserOnce：权限错误 → 抛错并把中文修复提示写进身份 hint', async () => {

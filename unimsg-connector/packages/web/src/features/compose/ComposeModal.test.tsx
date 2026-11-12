@@ -200,7 +200,7 @@ describe('ComposeModal 发送身份（本人 / 机器人）', () => {
 
     expect(await screen.findByText('模拟发送')).toBeInTheDocument();
     expect(screen.queryByRole('radio')).toBeNull();
-    expect(screen.getByText(/当前平台通道为 Mock 模拟/)).toBeInTheDocument();
+    expect(screen.getByText(/当前平台是演示模式/)).toBeInTheDocument();
 
     await fillAndSend();
     await waitFor(() => expect(compose).toHaveBeenCalledTimes(1));
@@ -243,7 +243,9 @@ describe('ComposeModal 发送身份（本人 / 机器人）', () => {
     await screen.findByRole('radio', { name: '机器人' });
     await fillAndSend();
 
-    expect(await screen.findByText(/改用 identity=user/)).toBeInTheDocument();
+    expect(await screen.findByText(/本人身份发送/)).toBeInTheDocument();
     expect(screen.queryByText(/本人身份未连接，连接后可用本人身份发送/)).toBeNull();
   });
 });
+
+
