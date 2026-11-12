@@ -108,7 +108,11 @@ test('start 返回飞书授权 URL（scope/redirect_uri/state 齐全）', async 
     assert.equal(`${url.origin}${url.pathname}`, 'https://accounts.example/open-apis/authen/v1/authorize');
     assert.equal(url.searchParams.get('client_id'), 'cli_test');
     assert.equal(url.searchParams.get('redirect_uri'), 'http://localhost:3001/api/feishu/oauth/callback');
-    assert.equal(url.searchParams.get('scope'), 'im:message im:message.send_as_user im:resource offline_access');
+    // scope 由 config.identity 动态生成（本人接收开启时含用户身份读消息权限，避免授权后仍 99991672）
+    const scopeParam = url.searchParams.get('scope') ?? '';
+    assert.equal(scopeParam, config.feishuAuth.scopes.join(' '));
+    assert.ok(scopeParam.includes('im:message.p2p_msg:get_as_user'), '必须申请单聊读消息权限');
+    assert.ok(scopeParam.includes('im:message.group_msg:get_as_user'), '必须申请群聊读消息权限');
     assert.ok(url.searchParams.get('state'), '必须带一次性 state');
   });
 });

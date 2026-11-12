@@ -35,6 +35,16 @@ services:
       DATA_DIR: /app/data
       WEB_DIST: /app/packages/web/dist
       MAX_UPLOAD_MB: "32"
+      # 钉钉本人身份（dws）：镜像默认不装 dws。纯离线演示可改用内置桩：
+      #   DWS_BIN: node /app/scripts/fake-dws.mjs
+      # 真实使用需自建镜像安装 dws 并把 ~/.dws 挂载进容器（详见 docs/deploy.md）。
+      # DWS_BIN: dws
+      # DWS_PROFILE: ""
+      # DINGTALK_IDENTITY: auto
+      # DINGTALK_USER_RECEIVE: auto
+      # DINGTALK_USER_EVENT_KINDS: all-direct,at-me
+      # FEISHU_IDENTITY: auto
+      # FEISHU_USER_RECEIVE: auto
     ports:
       - "${HOST_PORT:-3001}:3001"
     volumes:

@@ -56,6 +56,13 @@ export const KNOWN_ENV_KEYS: readonly string[] = [
   'FEISHU_SEND_AS',
   'FEISHU_REDIRECT_URI',
   'FEISHU_USER_TOKEN_FILE',
+  // 飞书本人身份（接收 + 发送）
+  'FEISHU_IDENTITY',
+  'FEISHU_USER_RECEIVE',
+  'FEISHU_USER_RECEIVE_SECONDS',
+  'FEISHU_USER_CHAT_LIMIT',
+  'FEISHU_USER_BACKFILL_HOURS',
+  'FEISHU_USER_STATE_FILE',
   // 钉钉（含旧版兼容名）
   'DINGTALK_CLIENT_ID',
   'DINGTALK_CLIENT_SECRET',
@@ -66,6 +73,14 @@ export const KNOWN_ENV_KEYS: readonly string[] = [
   'DINGTALK_BASE_URL',
   'DINGTALK_APP_KEY',
   'DINGTALK_APP_SECRET',
+  // 钉钉本人身份（dws CLI）
+  'DINGTALK_IDENTITY',
+  'DINGTALK_USER_RECEIVE',
+  'DINGTALK_USER_EVENT_KINDS',
+  'DWS_BIN',
+  'DWS_PROFILE',
+  'DWS_AUTH_TIMEOUT_MS',
+  'DWS_SEND_TIMEOUT_MS',
   // 企业微信
   'WECOM_CORP_ID',
   'WECOM_AGENT_ID',
@@ -98,6 +113,8 @@ const CHECK_PREFIXES = [
   'HOST_',
   'VITE_',
   'LINKHUB_',
+  // 钉钉本人身份 CLI（DWS_BIN / DWS_PROFILE / DWS_*_TIMEOUT_MS）
+  'DWS_',
 ];
 
 export interface SuspiciousEnvVar {
@@ -165,8 +182,8 @@ export function findSuspiciousEnvVars(env: NodeJS.ProcessEnv): SuspiciousEnvVar[
       name,
       ...(suggestion ? { suggestion } : {}),
       reason: suggestion
-        ? '未在文档中定义，疑似拼写错误——它不会被读取，对应平台会静默回退 Mock'
-        : '未在文档中定义，可能拼错或已废弃；确认后删除或改用文档中的变量名',
+        ? '未在文档中定义，疑似拼写错误——它不会被读取；是否回退 Mock 取决于同平台其他变量是否齐全'
+        : '未在文档中定义，可能拼错或已废弃；它不会被读取（是否回退 Mock 取决于同平台其他变量），确认后删除或改用文档中的变量名',
     });
   }
   return found.sort((a, b) => a.name.localeCompare(b.name));

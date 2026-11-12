@@ -69,6 +69,8 @@ describe('FirstRunGuide 显示条件', () => {
     expect(screen.getByText('pnpm run doctor')).toBeInTheDocument();
     expect(screen.getByText('pnpm --filter @unimsg/server start')).toBeInTheDocument();
     expect(screen.getByText('pnpm --filter @unimsg/web dev')).toBeInTheDocument();
+    // 新能力入口：连接本人账号（推荐，免拉机器人进群）
+    expect(screen.getByText(/连接本人账号（推荐，免拉机器人进群）/)).toBeInTheDocument();
     // 命令可一键复制：4 条命令各带一个复制按钮（aria-label 取自 tooltips[0]）
     expect(screen.getAllByRole('button', { name: '复制命令' })).toHaveLength(4);
   });

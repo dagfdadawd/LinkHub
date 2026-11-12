@@ -3,7 +3,7 @@
  * 让前端在没有后端的情况下也能完整演示「接收 → 展示 → 处理 → 回写 → 回流」；
  * 账号状态额外包含邮箱多账号样本（与后端 /api/accounts 同构）。
  */
-import type { DeliveryInfo } from '@unimsg/shared';
+import type { DeliveryInfo, PlatformIdentityView } from '@unimsg/shared';
 import { MsgStatus, Platform } from '../../types';
 import type { MsgType, TraceEntry, UnifiedMessage } from '../../types';
 import type { AccountInfo } from '../api';
@@ -322,6 +322,10 @@ export function createSeedData(): SeedData {
       createdAt,
       updatedAt,
       delivery,
+      // 失败消息带上可读原因（与真实后端 failureReason 同语义），详情页可直接展示
+      ...(seed.status === MsgStatus.FAILED && seed.failReason
+        ? { failureReason: seed.failReason }
+        : {}),
     };
     return message;
   });
@@ -394,6 +398,34 @@ export const INCOMING_TEMPLATES: Array<Pick<Seed, 'platform' | 'senderId' | 'sen
 ];
 
 /**
+ * 纯前端演示模式的身份视图：如实显示「模拟」，不假装已连接本人账号。
+ * 真实身份状态由后端 /api/accounts 下发（services/identity.ts），前端只渲染。
+ */
+function mockIdentity(platform: Platform): PlatformIdentityView {
+  const cli = platform === Platform.DINGTALK;
+  const platformName = cli ? '钉钉' : '飞书';
+  return {
+    policy: 'auto',
+    effectiveSend: 'mock',
+    effectiveReceive: 'mock',
+    user: {
+      state: 'unavailable',
+      linked: false,
+      hint: `当前是纯前端演示（Mock）：不会连接真实${platformName}账号。启动真实后端并配置${platformName}凭据后，可在这里连接本人账号。`,
+      canLink: false,
+      linkMethod: cli ? 'cli' : 'oauth',
+      ...(cli
+        ? { loginCommand: 'dws auth login' }
+        : {}),
+    },
+    botAvailable: false,
+    botHint: `演示模式未接入真实${platformName}机器人`,
+    receiveHint: 'Mock 模拟：演示消息由前端内存生成，不会真的从平台接收',
+    sendHint: 'Mock 模拟：演示发送不会调用真实平台接口',
+  };
+}
+
+/**
  * 账号状态样本：与后端 /api/accounts 同构（四类数据源）。
  * mode 是「本次实际通道」：飞书/邮箱凭据齐全走真实，钉钉因 MOCK 开关走模拟，
  * 企微缺发信凭据回退模拟——前端据此打绿 / 橙 Tag，Mock 绝不显示成真实成功；
@@ -410,6 +442,7 @@ export const ACCOUNTS: AccountInfo[] = [
     canSend: true,
     missing: [],
     reason: '凭据齐全，auto → 真实接口',
+    identity: mockIdentity(Platform.FEISHU),
   },
   {
     platform: Platform.DINGTALK,
@@ -421,6 +454,7 @@ export const ACCOUNTS: AccountInfo[] = [
     canSend: true,
     missing: [],
     reason: '凭据齐全，但 MOCK=true → 本地模拟发送',
+    identity: mockIdentity(Platform.DINGTALK),
   },
   {
     platform: Platform.WECOM,

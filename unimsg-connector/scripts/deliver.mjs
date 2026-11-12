@@ -67,6 +67,9 @@ const banned = tracked.filter((f) => {
     base.endsWith('.log') ||
     base.endsWith('.log.err') ||
     base === '.mail-watermarks.json' ||
+    // 运行期授权/水位产物：带上就等于把用户身份令牌或聊天进度发给评审
+    base === '.feishu-user-token.json' ||
+    base === '.feishu-user-receive.json' ||
     f.includes('node_modules/') ||
     f.endsWith('.zip')
   );
@@ -86,7 +89,7 @@ if (!existsSync(outZip) || statSync(outZip).size === 0) {
 }
 
 console.log(`[deliver] ✔ 打包完成（${(statSync(outZip).size / 1024).toFixed(0)} KB，仅含 git 已跟踪文件）`);
-console.log('[deliver] 包内已排除：.env / .env.bak* / 日志 / .mail-watermarks.json / node_modules。');
+console.log('[deliver] 包内已排除：.env / .env.bak* / 日志 / .mail-watermarks.json / .feishu-user-token.json / .feishu-user-receive.json / node_modules。');
 console.log('[deliver] 交付前请再走一遍 docs/delivery-checklist.md：');
 console.log('  1) pnpm typecheck && pnpm test && pnpm test:web && pnpm e2e');
 console.log('  2) pnpm run doctor（凭据 / 网络 / 出口 IP）');

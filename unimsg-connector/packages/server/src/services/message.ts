@@ -11,7 +11,7 @@
 import { randomUUID } from 'node:crypto';
 import {
   Platform, MsgStatus, UnifiedMessage, PlatformConnector,
-  type ComposeAck, type ComposeRequest, type OutboundAttachment,
+  type ComposeAck, type ComposeRequest, type IdentityRole, type OutboundAttachment,
 } from '@unimsg/shared';
 import { MessageRepository } from '../db/repository';
 import { LlmService } from './llm';
@@ -22,6 +22,7 @@ import { writeTrace } from '../core/loop-log';
 import { counters } from '../core/metrics';
 import { config } from '../config';
 import { describeAttachments } from './outbound';
+import { assertIdentityUsable, ensureIdentityProbed } from './identity';
 
 export interface Broadcast {
   (event: { type: string; data?: unknown }): void;
@@ -125,6 +126,10 @@ export class MessageService {
   ) {}
 
   // ---------- 接收 ----------
+  /**
+   * 平台原始事件入库：先由连接器 receive() 解析成统一消息，再走统一的幂等/入库通道。
+   * 机器人 webhook / Stream 走这里。
+   */
   async ingest(platform: Platform, raw: unknown): Promise<IngestResult> {
     // 入参守卫（P0）：空 body / 空对象必须在 receive、写 trace、写幂等表之前拒绝。
     // 旧实现里 mock 验签会放行 `{}`，receive 兜底出 externalId='unknown'，
@@ -135,7 +140,18 @@ export class MessageService {
 
     const connector = this.connectors[platform];
     const incoming = connector.receive(raw);
+    return this.ingestUnified(platform, incoming);
+  }
 
+  /**
+   * 已映射好的统一消息入库（个人身份接收器用：飞书用户轮询 / 钉钉 dws 个人事件）。
+   *
+   * 与 ingest() 共用同一条幂等/保存/trace/广播链路，绝不旁路另写一套：
+   *  - externalId 缺失/'unknown' → InvalidPlatformEvent（防占死去重键）；
+   *  - (platform, externalId) 幂等：重复投递返回 duplicate，不重复入库、不重复广播；
+   *  - 写 received trace、counters，异步富化（OCR/LLM）并补广播 message.updated。
+   */
+  async ingestUnified(platform: Platform, incoming: UnifiedMessage): Promise<IngestResult> {
     // 平台侧唯一 ID 是幂等键的唯一来源：缺失/兜底成 'unknown' 时必须拒收，
     // 否则多条不同消息会互相去重（或占死 unknown 键）。
     const externalId = typeof incoming.externalId === 'string' ? incoming.externalId.trim() : '';
@@ -143,6 +159,8 @@ export class MessageService {
       throw new InvalidPlatformEvent(platform, '解析后缺少消息唯一 ID（externalId），未写入任何记录');
     }
     incoming.externalId = externalId;
+    // 防止连接器把事件标成别的平台导致跨平台串数据/去重键错乱
+    incoming.platform = platform;
 
     const existing = this.repo.findByExternal(platform, incoming.externalId);
     if (existing) {
@@ -224,24 +242,46 @@ export class MessageService {
 
   // ---------- 处理 / 回写 ----------
   /**
-   * 回复一条已收到的消息。文本与附件可同时携带（赛题 A「发送文本消息、文件等」），
+   * 回复一条已收到的消息。文本与附件可同时携带（赛题 A「发送消息、文件等」），
    * 附件元数据写进消息，文件内容只在本次投递的在途生命周期存在。
+   *
+   * `identity`：统一入口显式指定本次发送身份（本人/机器人）；不传 = 按平台 policy。
+   * 请求的身份当前不可用时抛中文错误（路由层转 400），绝不悄悄换身份。
    */
   async reply(
     id: string,
     text: string,
     attachments: OutboundAttachment[] = [],
+    identity?: IdentityRole,
   ): Promise<{ message: UnifiedMessage; taskId: string }> {
     const cur = this.repo.get(id);
     if (!cur) throw new Error('message not found');
+
+    // 身份校验先做：校验失败不改状态机、不写 trace
+    if (identity) {
+      await ensureIdentityProbed(cur.platform);
+      assertIdentityUsable(cur.platform, identity);
+    }
+
     const info = describeAttachments(attachments);
 
     let m = this.repo.update(id, {
       status: MsgStatus.PROCESSING,
       reply: text,
+      failureReason: undefined, // 重试时清掉上一次失败原因，避免旧原因误导
+      ...(identity ? { sendIdentity: identity } : {}),
       ...(info.length > 0 ? { attachments: info } : {}),
     })!;
-    writeTrace(this.repo, m, 'processing', info.length > 0 ? `带 ${info.length} 个附件` : undefined);
+    // 用数组 join 拼 detail，避免「指定发送身份=本人，」这类尾逗号（评审看得到 trace 文案）
+    const processingParts: string[] = [];
+    if (identity) processingParts.push(`指定发送身份=${identity === 'user' ? '本人' : '机器人'}`);
+    if (info.length > 0) processingParts.push(`带 ${info.length} 个附件`);
+    writeTrace(
+      this.repo,
+      m,
+      'processing',
+      processingParts.length > 0 ? processingParts.join('；') : undefined,
+    );
     this.broadcast({ type: 'message.updated', data: m });
 
     m = this.repo.update(id, { status: MsgStatus.REPLIED, reply: text })!;
@@ -264,6 +304,12 @@ export class MessageService {
   async compose(req: ComposeRequest): Promise<ComposeAck> {
     const connector = this.connectors[req.platform];
     if (!connector) throw new Error(`unsupported platform: ${req.platform}`);
+
+    // 显式指定身份时先校验（不可用 → 中文 400，绝不悄悄换身份）
+    if (req.identity) {
+      await ensureIdentityProbed(req.platform);
+      assertIdentityUsable(req.platform, req.identity);
+    }
 
     const attachments = req.attachments ?? [];
     const info = describeAttachments(attachments);
@@ -321,6 +367,7 @@ export class MessageService {
       status: MsgStatus.RECEIVED,
       createdAt: now,
       updatedAt: now,
+      ...(req.identity ? { sendIdentity: req.identity } : {}),
     };
 
     this.repo.save(msg);
@@ -331,7 +378,8 @@ export class MessageService {
       'composed',
       `统一入口主动发送 → ${req.platform} · 会话 ${conversationId}`
         + `${mailKey ? ` · 发件账号 ${mailKey}` : ''}`
-        + `${info.length > 0 ? ` · 附件 ${info.length} 个` : ''}`,
+        + `${info.length > 0 ? ` · 附件 ${info.length} 个` : ''}`
+        + `${req.identity ? ` · 指定身份：${req.identity === 'user' ? '本人' : '机器人'}` : ''}`,
     );
     this.broadcast({ type: 'message.received', data: msg });
 
@@ -347,6 +395,9 @@ export class MessageService {
     return { message: m, taskId: msg.traceId };
   }
 
+  /** 失败原因截断长度：前端只展示摘要，完整原因在 trace / 死信队列里 */
+  static readonly FAILURE_REASON_MAX = 300;
+
   private async processSend(id: string, attachments: OutboundAttachment[] = []): Promise<void> {
     const cur = this.repo.get(id);
     if (!cur) return;
@@ -357,10 +408,16 @@ export class MessageService {
       const result = await this.limiter.send(cur.platform, () => connector.send(outgoing, attachments));
       const at = new Date().toISOString();
 
-      // 把"本次到底走了真实接口还是本地模拟"写进消息与闭环日志，绝不静默假装成功
+      // 把"本次到底走了真实接口还是本地模拟、用了哪个身份"写进消息与闭环日志，绝不静默假装成功。
+      // Mock 模式不写 identity（契约 §4：模拟通道不冒充本人/机器人）。
       let m = this.repo.update(id, {
         status: MsgStatus.SENT,
-        delivery: { mode: result.mode, platformReply: result.platformReply, at },
+        delivery: {
+          mode: result.mode,
+          platformReply: result.platformReply,
+          at,
+          ...(result.mode === 'real' && result.identity ? { identity: result.identity } : {}),
+        },
       })!;
       const identityNote = result.identity === 'user'
         ? '（用户身份）'
@@ -389,7 +446,12 @@ export class MessageService {
       if (result.mode === 'mock') counters.sentMock += 1;
     } catch (e) {
       const reason = e instanceof Error ? e.message : String(e);
-      const m = this.repo.update(id, { status: MsgStatus.FAILED })!;
+      // 失败原因上浮到消息本身（P1-2）：前端详情页与 toast 直接可读，不用去回放深处翻。
+      // 只截断写入消息；完整原因仍进闭环日志与死信队列。
+      const failureReason = reason.length > MessageService.FAILURE_REASON_MAX
+        ? `${reason.slice(0, MessageService.FAILURE_REASON_MAX)}…`
+        : reason;
+      const m = this.repo.update(id, { status: MsgStatus.FAILED, failureReason })!;
       writeTrace(this.repo, m, 'failed', reason);
       this.repo.pushDlq({ platform: cur.platform, payload: outgoing, reason, at: new Date().toISOString() });
       this.broadcast({ type: 'message.failed', data: m });

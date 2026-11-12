@@ -94,24 +94,29 @@ beforeEach(() => {
 });
 
 describe('InboxPage 首启空态接线', () => {
-  it('真实后端 + 空收件箱：空态渲染一键注入入口，文案不再说「没有匹配的消息」', () => {
+  it('真实后端 + 空收件箱：挂载「3 步上手」引导 + 一键注入入口，文案不再说「没有匹配的消息」', () => {
     mockState({ demoMode: false, accounts: ACCOUNTS, health: { received: 0 } });
     renderInboxPage();
 
+    // P1-3：首启引导必须真的渲染到页面上（之前组件只有单测引用）
+    expect(screen.getByTestId('first-run-guide')).toBeInTheDocument();
+    expect(screen.getByText('后端已连上，但还没有消息')).toBeInTheDocument();
+
     const quickstart = screen.getByTestId('quickstart');
     expect(quickstart).toBeInTheDocument();
-    // 三个可注入的平台各一颗按钮（邮箱是 IMAP 轮询，没有 webhook，不出现）
-    expect(within(quickstart).getByRole('button', { name: '飞书' })).toBeInTheDocument();
-    expect(within(quickstart).getByRole('button', { name: '钉钉' })).toBeInTheDocument();
-    expect(within(quickstart).getByRole('button', { name: '企业微信' })).toBeInTheDocument();
-    expect(within(quickstart).queryByRole('button', { name: '邮箱' })).toBeNull();
+    // 三个可注入的平台各一颗按钮（邮箱是 IMAP 轮询，没有 webhook，不出现）；
+    // 按钮文案直说「注入示例」，不再与顶部筛选标签撞脸（P2-7）
+    expect(within(quickstart).getByRole('button', { name: '注入飞书示例' })).toBeInTheDocument();
+    expect(within(quickstart).getByRole('button', { name: '注入钉钉示例' })).toBeInTheDocument();
+    expect(within(quickstart).getByRole('button', { name: '注入企业微信示例' })).toBeInTheDocument();
+    expect(within(quickstart).queryByRole('button', { name: '注入邮箱示例' })).toBeNull();
+    expect(within(quickstart).getByText(/点下面的平台按钮，注入一条示例消息试试/)).toBeInTheDocument();
     // 键位提示是唯一的文字说明（可操作信息，不是解释文案）
     expect(within(quickstart).getByText('切换')).toBeInTheDocument();
     // 首启空态：不能再用「没有匹配的消息 / 清空筛选」误导用户
     expect(screen.getByText('还没有收到消息')).toBeInTheDocument();
     expect(screen.queryByText('没有匹配的消息')).not.toBeInTheDocument();
-    // 文档型引导块已从首屏移除
-    expect(screen.queryByTestId('first-run-guide')).not.toBeInTheDocument();
+    expect(screen.queryByText('清空筛选')).not.toBeInTheDocument();
   });
 
   it('前端 Mock 演示模式：空收件箱不渲染注入入口（无平台可假装）', () => {

@@ -220,6 +220,10 @@ export function FirstRunGuide({
                 在 unimsg-connector/ 下自检各平台模式 / 凭据 / 连通性；按 docs/swap-accounts.md 填好 .env
                 后重启后端。
               </div>
+              <div className="first-run-guide__step-desc">
+                连接本人账号（推荐，免拉机器人进群）：到「平台账号」页点「连接本人账号」——
+                飞书走官方授权，钉钉用本机 dws 登录；连上后收发都以你本人身份进行，机器人身份保留兜底。
+              </div>
             </div>
           </li>
 
@@ -242,7 +246,8 @@ export function FirstRunGuide({
                 )}
               </div>
               <div className="first-run-guide__step-desc">
-                账号页展示真实接口 / Mock 模拟、缺失变量与告警，方便一眼定位接入问题。
+                账号页展示真实接口 / Mock 模拟、缺失变量与告警，以及每个平台「谁在收、谁在发」的身份标注，
+                方便一眼定位接入问题。
               </div>
             </div>
           </li>

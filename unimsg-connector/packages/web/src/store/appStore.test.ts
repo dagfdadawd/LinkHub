@@ -78,6 +78,13 @@ describe('AppStore', () => {
       compose: async () => Promise.reject(new Error('unused')),
       capabilities: async () => [],
       feishuOAuthStart: async () => ({ url: '' }),
+      dingtalkPersonalLogin: async () => Promise.reject(new Error('unused')),
+      dingtalkPersonalStatus: async () => ({
+        available: false,
+        authenticated: false,
+        hint: 'unused',
+      }),
+      dingtalkPersonalLogout: async () => Promise.resolve(),
       markDone: async () => Promise.reject(new Error('unused')),
       markRead: async () => Promise.reject(new Error('unused')),
       markAllRead: async () => 0,
@@ -134,5 +141,25 @@ describe('AppStore', () => {
     await store.init();
     expect(store.getSnapshot().initialized).toBe(true);
     expect(store.getSnapshot().messages.length).toBeGreaterThan(0);
+  });
+
+  it('实时失败事件写入 sendFailure 供全局 toast；加载历史失败消息不触发', async () => {
+    const { store, realtime } = makeStore();
+    await store.init();
+    // 种子里本来就有 failed 消息：初始化加载不产生「刚失败」提示
+    expect(store.getSnapshot().sendFailure).toBeNull();
+
+    const target = store.getSnapshot().messages[0];
+    realtime.emit({
+      type: 'message.failed',
+      data: { ...target, status: MsgStatus.FAILED, failureReason: 'platform 500：重试 3 次仍失败' },
+    });
+
+    const failure = store.getSnapshot().sendFailure;
+    expect(failure?.traceId).toBe(target.traceId);
+    expect(failure?.reason).toBe('platform 500：重试 3 次仍失败');
+
+    store.dismissSendFailure();
+    expect(store.getSnapshot().sendFailure).toBeNull();
   });
 });

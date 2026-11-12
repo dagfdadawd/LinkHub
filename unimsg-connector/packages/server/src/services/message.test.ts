@@ -299,3 +299,98 @@ test('ingest：富化抛异常时不崩溃、不回滚入库，并写 enrich_fai
   assert.equal(repo.get(message.traceId)!.status, MsgStatus.RECEIVED, '消息照常保留');
   assert.equal(repo.list().length, 1);
 });
+
+
+test('ingestUnified：个人身份接收器与 ingest 共用幂等/trace 链路，重复到达返回 duplicate', async () => {
+  const { svc, repo } = makeSvc();
+  const incoming = {
+    traceId: 'trace-user-1',
+    platform: Platform.FEISHU,
+    externalId: 'om_personal_1',
+    sender: { id: 'ou_peer', name: '对方' },
+    conversation: { id: 'oc_1', type: 'p2p' as const },
+    type: 'text' as const,
+    body: '本人账号收到的消息',
+    receivedAs: 'user' as const,
+    status: MsgStatus.RECEIVED,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  const a = await svc.ingestUnified(Platform.FEISHU, incoming);
+  assert.equal(a.duplicate, false);
+  assert.equal(a.message.receivedAs, 'user');
+  const b = await svc.ingestUnified(Platform.FEISHU, { ...incoming, traceId: 'trace-user-1-dup' });
+  assert.equal(b.duplicate, true);
+  assert.equal(b.message.traceId, a.message.traceId);
+  assert.equal(repo.list({ platform: Platform.FEISHU }).length, 1);
+  // 缺 externalId → 与 ingest 同一守卫（不得占死去重键）
+  await assert.rejects(
+    () => svc.ingestUnified(Platform.FEISHU, { ...incoming, externalId: 'unknown' }),
+    /externalId/,
+  );
+});
+
+test('reply 指定 identity：写入 sendIdentity 并在 processing trace 里如实标注', async () => {
+  const { svc, repo } = makeSvc();
+  const { message } = await svc.ingest(Platform.FEISHU, feishuSample);
+  const ack = await svc.reply(message.traceId, '收到', [], 'bot');
+  assert.equal(ack.message.sendIdentity, 'bot');
+  await wait();
+  const saved = repo.get(message.traceId)!;
+  assert.equal(saved.sendIdentity, 'bot');
+  const processing = repo.getLoopLog(message.traceId).find((e) => e.event === 'processing');
+  assert.match(processing?.detail ?? '', /指定发送身份=机器人/);
+  assert.ok(!(processing?.detail ?? '').endsWith('，'), '不得有尾逗号');
+});
+
+
+test('processSend 失败：failureReason 上浮到消息（截断 300 字）、完整原因进 trace/DLQ、广播带原因', async () => {
+  const repo = new InMemoryRepository();
+  const broadcasts: { type: string; data?: any }[] = [];
+  const longReason = '飞书当前是真实模式（FEISHU_MODE=real），但缺少 FEISHU_APP_ID / FEISHU_APP_SECRET。'.repeat(20);
+  const failingConnectors = {
+    ...connectors,
+    [Platform.FEISHU]: {
+      ...connectors[Platform.FEISHU],
+      send: async () => {
+        throw new Error(longReason);
+      },
+    },
+  } as typeof connectors;
+  const svc = new MessageService(
+    repo, failingConnectors, new LlmService(), new OcrService(), new RateLimiter(1, 5),
+    (e) => broadcasts.push(e as any),
+  );
+  const { message } = await svc.ingest(Platform.FEISHU, feishuSample);
+  await svc.reply(message.traceId, '收到');
+  const started = Date.now();
+  while (repo.get(message.traceId)!.status !== MsgStatus.FAILED) {
+    if (Date.now() - started > 3000) throw new Error('waitFor failed');
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  const failed = repo.get(message.traceId)!;
+  assert.ok(failed.failureReason, '消息必须带 failureReason');
+  assert.ok(failed.failureReason!.length <= 301, 'failureReason 必须截断（≤300+省略号）');
+  assert.ok(failed.failureReason!.endsWith('…'));
+  // 完整原因仍进 trace 与死信队列
+  const traceFailed = repo.getLoopLog(message.traceId).find((e) => e.event === 'failed');
+  assert.ok((traceFailed?.detail ?? '').length > 300, 'trace 保留完整原因');
+  assert.equal(repo.listDlq().length, 1);
+  assert.ok(repo.listDlq()[0]!.reason.length > 300, 'DLQ 保留完整原因');
+  // WS 广播 message.failed 带原因
+  const failedEvent = broadcasts.find((b) => b.type === 'message.failed');
+  assert.ok(failedEvent, '必须广播 message.failed');
+  assert.ok(failedEvent!.data.failureReason, '广播数据带 failureReason');
+});
+
+test('reply 重试时清掉上一次失败原因', async () => {
+  const repo = new InMemoryRepository();
+  const svc = new MessageService(repo, connectors, new LlmService(), new OcrService(), new RateLimiter(1, 5), () => {});
+  const { message } = await svc.ingest(Platform.FEISHU, feishuSample);
+  // 直接写入一条历史失败原因，模拟上一次失败
+  repo.update(message.traceId, { status: MsgStatus.FAILED, failureReason: '上一次失败的原因' });
+  const ack = await svc.reply(message.traceId, '重试');
+  assert.equal(ack.message.failureReason, undefined);
+  await wait();
+  assert.equal(repo.get(message.traceId)!.failureReason, undefined);
+});

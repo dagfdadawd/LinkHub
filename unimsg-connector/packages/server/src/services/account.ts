@@ -2,12 +2,12 @@
  * 账号/凭据状态（只读视图，供前端展示"每个平台现在到底走真实接口还是 Mock"）。
  *
  * 安全约定：只返回布尔值、环境变量名、脱敏后的邮箱地址；
- * 绝不返回任何密钥 / 授权码。
+ * 绝不返回任何密钥 / 授权码 / 令牌 / 完整工号。
  */
-import { Platform, type DeliveryMode } from '@unimsg/shared';
+import { Platform, type DeliveryMode, type PlatformIdentityView } from '@unimsg/shared';
 import { config } from '../config';
 import { mailAccountSummary } from '../config/runtime';
-import { feishuUserAuth, type FeishuIdentityView } from '../connectors/feishuUserAuth';
+import { resolveIdentity } from './identity';
 
 export interface MailAccountView {
   key: string;
@@ -46,8 +46,11 @@ export interface AccountView {
   accounts?: MailAccountView[];
   /** 邮箱配置问题（缺授权码、host 未填等） */
   issues?: { level: 'error' | 'warn'; message: string }[];
-  /** 仅飞书：出站发送身份与用户授权状态（不含令牌） */
-  feishuIdentity?: FeishuIdentityView;
+  /**
+   * 仅飞书 / 钉钉：完整身份视图（本人 / 机器人 / 模拟 + 连接状态 + 修复提示）。
+   * 前端据此渲染「接收身份 / 发送身份」标签与连接按钮，无需自己推导策略。
+   */
+  identity?: PlatformIdentityView;
 }
 
 /** 脱敏邮箱地址：只保留首字符与域名，避免把账号明文贴进截图/日志 */
@@ -74,8 +77,9 @@ export function listAccounts(): AccountView[] {
       warnings: [...r.warnings],
       reason: r.reason,
     };
-    if (platform === Platform.FEISHU) {
-      view.feishuIdentity = feishuUserAuth().identityView();
+    // 飞书 / 钉钉：统一下发身份视图（本人 / 机器人 / 模拟）
+    if (platform === Platform.FEISHU || platform === Platform.DINGTALK) {
+      view.identity = resolveIdentity(platform);
     }
     if (platform === Platform.MAIL) {
       view.accounts = config.mail.accounts.map((a) => ({

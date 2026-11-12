@@ -7,6 +7,7 @@ import { store } from '../../store';
 import type { TraceEntry } from '../../types';
 import { formatClock, formatDateTime, formatRelative, shortTrace, STATUS_META } from '../../utils/format';
 import { AvatarBadge } from '../../components/AvatarBadge';
+import { IdentityTag } from '../../components/IdentityTag';
 import { PlatformTag } from '../../components/PlatformTag';
 import { StatusBadge } from '../../components/StatusBadge';
 import { EmptyState } from '../../components/EmptyState';
@@ -134,6 +135,21 @@ export function TracePage() {
               </div>
 
               <p className="trace-summary__body">{selected.body}</p>
+
+              {/* 身份如实标注：接收身份 + 回写身份（Mock 明确写模拟） */}
+              {(selected.receivedAs || selected.delivery) && (
+                <div className="trace-summary__identity" aria-label="本条消息的身份">
+                  {selected.receivedAs && (
+                    <IdentityTag role={selected.receivedAs} action="receive" />
+                  )}
+                  {selected.delivery?.mode === 'mock' && (
+                    <IdentityTag role="mock" action="send" />
+                  )}
+                  {selected.delivery?.mode === 'real' && selected.delivery.identity && (
+                    <IdentityTag role={selected.delivery.identity} action="send" />
+                  )}
+                </div>
+              )}
 
               <div className="trace-summary__foot">
                 <Tag className="mono-tag">{selected.traceId}</Tag>

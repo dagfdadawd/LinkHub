@@ -44,6 +44,13 @@ RUN pnpm install --frozen-lockfile --prod
 COPY packages/shared packages/shared
 COPY packages/server packages/server
 COPY --from=build /app/packages/web/dist packages/web/dist
+# scripts/fake-dws.mjs：钉钉本人身份的【离线桩】。容器内可设
+#   DWS_BIN=node /app/scripts/fake-dws.mjs
+# 完整演示「本人身份收发」而无需真实登录/企业开通 CLI。
+# 默认镜像【不安装】钉钉官方 dws CLI：它是外部二进制且需要真人 OAuth 授权
+# （token 存在 ~/.dws，容器内无浏览器/keychain）；真实本人身份建议本机运行，
+# 或自建镜像安装 dws 并把 ~/.dws 挂载为卷（详见 docs/deploy.md）。
+COPY scripts scripts
 
 # 闭环数据（消息 / trace / 死信队列）落在这个卷里，重启后回放不丢
 RUN mkdir -p /app/data
