@@ -322,22 +322,22 @@ button {
   overflow: hidden;
 }
 
-/* 顶栏（Apple 式工具条）：磨砂只用于这一层，不整站玻璃化。
+/* 顶栏（简约工具条）：一条细底线分层，不用阴影和色块。
    三段式网格：标题 / 居中搜索 / 右侧操作。两侧轨道等宽（1fr），
    中间轨道定宽，搜索因此严格落在顶栏正中；「新建发送」永远在最右。 */
 .cmdbar {
   flex: 0 0 auto;
   height: var(--header-h);
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 420px) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 360px) minmax(0, 1fr);
   align-items: center;
   gap: 20px;
   padding: 0 32px;
-  border-bottom: 0;
-  background: color-mix(in srgb, var(--surface) 72%, transparent);
-  backdrop-filter: saturate(180%) blur(20px);
-  -webkit-backdrop-filter: saturate(180%) blur(20px);
-  box-shadow: 0 8px 30px -28px rgba(17, 17, 19, 0.16);
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  background: color-mix(in srgb, var(--surface) 86%, transparent);
+  backdrop-filter: saturate(180%) blur(16px);
+  -webkit-backdrop-filter: saturate(180%) blur(16px);
+  box-shadow: none;
   position: relative;
   z-index: 20;
 }
@@ -387,19 +387,62 @@ button {
   justify-content: flex-start;
 }
 
-/* ⌘K 提示靠右，视觉上像输入框里的快捷键角标 */
+/* ⌘K 提示靠右，弱化成一行快捷字，不再画成小键帽 */
 .cmdbar__search .kbd {
   margin-left: auto;
+  min-width: 0;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .cmdbar__actions {
   justify-self: end;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
-/* 搜索触发器：顶栏只留一个入口，真正的搜索在 ⌘K 面板里 */
+/* 主动发送：系统内的低饱和雾蓝灰主按钮（--send），比品牌蓝实心块更克制 */
+.cmdbar__compose {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 13px;
+  border: 0;
+  border-radius: var(--r-8);
+  background: var(--send);
+  color: var(--send-ink);
+  font-family: inherit;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease-out),
+    transform 280ms var(--ease-out);
+}
+
+.cmdbar__compose:hover {
+  background: var(--send-hover);
+}
+
+.cmdbar__compose:active {
+  transform: scale(0.97);
+  transition-duration: 90ms;
+}
+
+.cmdbar__compose:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+.cmdbar__compose .anticon {
+  font-size: 0.875rem;
+}
+
+/* 搜索触发器：顶栏只留一个入口，真正的搜索在 ⌘K 面板里。
+   简约处理：透明底 + 一条细边，不做灰色实心胶囊。 */
 .search-trigger {
   display: inline-flex;
   align-items: center;
@@ -407,27 +450,31 @@ button {
   height: 32px;
   flex: 0 0 auto;
   white-space: nowrap; /* 否则窄屏会把「搜索」竖排成两行 */
-  padding: 0 8px 0 10px;
-  border: 0;
-  border-radius: var(--r-pill);
-  background: var(--surface-2);
+  padding: 0 8px 0 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-8);
+  background: transparent;
   color: var(--text-3);
   font: inherit;
   font-size: 0.7813rem;
   cursor: pointer;
   transition: background-color var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out), transform 360ms var(--ease-spring);
+    color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
 }
 
 .search-trigger:hover {
-  background: var(--surface-3);
+  background: var(--surface-2);
+  border-color: var(--border-strong);
   color: var(--text-2);
-  transform: scale(1.02);
 }
 
 .search-trigger:active {
-  transform: scale(0.97);
-  transition-duration: 90ms;
+  background: var(--surface-3);
+}
+
+.search-trigger:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
 }
 
 .search-trigger__label {
@@ -465,32 +512,31 @@ button {
 .demo-btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   height: 32px;
-  padding: 0 12px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text-2);
-  font-size: 0.8125rem;
+  padding: 0 9px;
+  border-radius: var(--r-8);
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 0.7813rem;
   cursor: pointer;
   transition: background-color var(--dur-fast) var(--ease-out),
-    border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out),
-    transform 360ms var(--ease-spring), box-shadow var(--dur-base) var(--ease-out);
+    color var(--dur-fast) var(--ease-out);
 }
 
 .demo-btn:hover {
-  border-color: transparent;
-  background: var(--surface-3);
-  color: var(--text);
-  transform: scale(1.045);
-  box-shadow: var(--shadow-sm);
+  background: var(--surface-2);
+  color: var(--text-2);
 }
 
 .demo-btn:active {
-  transform: scale(0.955);
-  transition-duration: 90ms;
-  box-shadow: none;
+  background: var(--surface-3);
+}
+
+.demo-btn:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
 }
 
 .demo-btn__caret {
@@ -4162,7 +4208,7 @@ html.vt-morph .detail {
 
   .cmdbar__search {
     width: 100%;
-    max-width: 420px;
+    max-width: 360px;
     justify-self: center;
   }
 
@@ -4192,7 +4238,7 @@ html.vt-morph .detail {
   }
 
   .cmdbar__search {
-    max-width: 360px;
+    max-width: 320px;
   }
 
   .cmdbar__actions .ant-segmented {
