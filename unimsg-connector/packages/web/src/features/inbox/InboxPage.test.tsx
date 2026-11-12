@@ -38,6 +38,8 @@ vi.mock('../../store', () => ({
     dismissError: vi.fn(),
     reply: vi.fn(),
     markDone: vi.fn(),
+    markRead: vi.fn(),
+    markAllRead: vi.fn(async () => 0),
     getTrace: vi.fn(),
     refreshHealth: vi.fn(),
     simulateIncoming: vi.fn(),
