@@ -6,8 +6,10 @@ import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { resolveDwsBin, defaultMonorepoRoot, defaultToolsDir } from './dwsBin';
 
-const ROOT = 'C:\\repo\\unimsg-connector';
-const HOME = 'C:\\Users\\tester';
+const IS_WIN = process.platform === 'win32';
+// 路径要跟测试运行平台一致：CI 是 Linux，硬编码 Windows 盘符会被 path.resolve 当成相对路径展开。
+const ROOT = IS_WIN ? 'C:\\repo\\unimsg-connector' : '/repo/unimsg-connector';
+const HOME = IS_WIN ? 'C:\\Users\\tester' : '/home/tester';
 
 function resolver(opts: {
   env?: NodeJS.ProcessEnv;
