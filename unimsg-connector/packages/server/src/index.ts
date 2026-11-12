@@ -16,8 +16,11 @@ import { MessageService } from './services/message';
 import { startDingtalkStream } from './stream/dingtalkStream';
 import { startFeishuStream } from './stream/feishuStream';
 import { startMailPoller } from './stream/mailPoller';
-import { startFeishuUserPoller, type FeishuUserPollerHandle } from './stream/feishuUserPoller';
-import { startDingtalkPersonalStream, type DingtalkPersonalStream } from './stream/dingtalkPersonalStream';
+import {
+  IDENTITY_CHANNELS_RECONCILE_MS,
+  initIdentityChannels,
+  reconcileIdentityChannels,
+} from './services/identityChannels';
 import { identityStartupLines, warmIdentityProbes } from './services/identity';
 import { dingtalkPersonalClient } from './connectors/dingtalkPersonal';
 import { initWs, wsBroadcast } from './ws';
@@ -143,20 +146,25 @@ startMailPoller(svc);
 // ---------------------------------------------------------------------------
 // 本人身份通道（飞书用户轮询 / 钉钉 dws 个人事件）
 //
-// 先异步预热身份探测（钉钉 auth status 实测 1–3s，绝不阻塞 listen），再决定是否启动：
-//  - 平台为模拟模式 / 未连接本人身份 → 只打印中文原因，不启动任何真实通道；
-//  - 只有真实可用的本人身份才起轮询/子进程（契约 §1、§10.2）。
+// 由 IdentityChannelsCoordinator 统一按「当前身份是否可用」start/stop：
+//  - 启动 warm 之后 align 一次；运行中完成登录（浏览器授权成功）也会自动启动接收通道；
+//  - 平台为模拟模式 / 未连接本人身份 → 不起任何真实通道（契约 §1、§10.2）；
+//  - 30–60s 兜底 reconcile：登录可能在本机终端外部完成，没有回调可依赖。
 // ---------------------------------------------------------------------------
-let feishuUserPoller: FeishuUserPollerHandle | null = null;
-let dingtalkPersonalStream: DingtalkPersonalStream | null = null;
+const identityChannels = initIdentityChannels(svc);
 
 void (async () => {
   await warmIdentityProbes().catch((e) => {
     console.warn('[unimsg] 身份探测失败（不影响其他平台）：', e instanceof Error ? e.message : e);
   });
   for (const line of identityStartupLines()) console.log(line);
-  feishuUserPoller = startFeishuUserPoller(svc);
-  dingtalkPersonalStream = startDingtalkPersonalStream(svc);
+  // ① 启动 warm 之后对齐一次
+  await identityChannels.reconcile();
+  // 登录子进程结束（通常是浏览器授权成功）→ 立刻对齐，无需等前端轮询/兜底定时器
+  dingtalkPersonalClient().setLoginFinishedHandler(() => reconcileIdentityChannels('钉钉登录会话结束'));
+  // ⑥ 兜底定时 reconcile（unref：不阻塞进程退出）
+  const timer = setInterval(() => reconcileIdentityChannels('定时对齐'), IDENTITY_CHANNELS_RECONCILE_MS);
+  timer.unref?.();
 })().catch((e) => {
   console.error('[unimsg] 本人身份通道启动失败（其他平台不受影响）：', e instanceof Error ? e.message : e);
 });
@@ -168,8 +176,7 @@ async function shutdown(reason: string): Promise<void> {
   shuttingDown = true;
   console.log(`[unimsg] 收到 ${reason}，正在停止本人身份接收器与子进程…`);
   try {
-    await dingtalkPersonalStream?.stop();
-    feishuUserPoller?.stop();
+    await identityChannels.stopAll();
     dingtalkPersonalClient().dispose();
   } catch (e) {
     console.warn('[unimsg] 停止身份接收器时出错（继续关闭）：', e instanceof Error ? e.message : e);

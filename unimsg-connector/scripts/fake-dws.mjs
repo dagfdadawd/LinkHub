@@ -207,9 +207,19 @@ if (argv[0] === 'auth' && argv[1] === 'login') {
     });
   };
   if (device) {
-    // 真实 dws 设备码登录会先给出 user_code + 短 URL；这里同样先输出，再模拟用户完成授权
-    process.stdout.write(
-      `请访问 https://fake-login.dingtalk.example/device 并输入设备码 FAKE-1234（fake-dws 模拟，不会真登录）\n`,
+    // 真实 dws 设备码登录会先给出 user_code + 短 URL + 有效期；这里同样先输出，再模拟用户完成授权
+    process.stderr.write(
+      '设备授权地址：https://login.dingtalk.com/oauth2/device/verify?user_code=FAKE-1234\n'
+      + '授权码将在 900 秒后过期\n'
+      + '（fake-dws 模拟登录，不会访问钉钉）\n',
+    );
+  } else {
+    // 真实 dws loopback 浏览器登录：起 127.0.0.1 本地回调并把 OAuth URL 打到 stderr（实测格式）
+    process.stderr.write(
+      '请在浏览器中完成钉钉登录：https://login.dingtalk.com/oauth2/auth'
+      + '?caller=dws&client_id=fake-dws-client&response_type=code'
+      + '&redirect_uri=http%3A%2F%2F127.0.0.1%3A60520%2Fcallback&state=fake-state'
+      + '\n（fake-dws 模拟登录，不会访问钉钉；浏览器不会真的打开）\n',
     );
   }
   if (delay <= 0) {

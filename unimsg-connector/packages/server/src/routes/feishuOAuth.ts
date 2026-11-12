@@ -10,6 +10,7 @@ import { randomBytes } from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
 import { feishuUserAuth, type FeishuUserTokenStatus } from '../connectors/feishuUserAuth';
 import { config } from '../config';
+import { reconcileIdentityChannels } from '../services/identityChannels';
 
 const STATE_TTL_MS = 10 * 60_000;
 const pendingStates = new Map<string, number>();
@@ -168,6 +169,8 @@ export function feishuOAuthCallbackRouter(): Router {
     try {
       const status = await feishuUserAuth().exchange(code);
       sendHtml(res, 200, successPage(status));
+      // ④ 运行中完成授权后自动启动本人身份接收通道（无需重启后端）
+      reconcileIdentityChannels('飞书授权完成');
       console.log('[feishu-oauth] 用户身份授权成功（令牌已落盘）');
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);

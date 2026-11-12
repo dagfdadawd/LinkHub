@@ -21,7 +21,7 @@ LinkHub 把飞书、钉钉、企业微信、邮箱的消息与待办收拢到一
 | **Windows 上只想双击看效果** | 双击仓库根目录的 `start.bat`，自动起后端 + 前端并打开浏览器 | 约 1 分钟 | 下文「Windows 一键启动」 |
 | **我只想看效果**（零账号、零平台配置） | `cd unimsg-connector` → `corepack enable`（重开终端）→ `pnpm install` → `pnpm e2e` → 起后端+前端 | 约 5 分钟 | [docs/quickstart.md](docs/quickstart.md) |
 | **我要换成自己的账号**（飞书 / 钉钉 / 企微 / 邮箱任选） | 复制 `.env.example` 为 `.env`，只填目标平台 → `pnpm run doctor` → 启动 | 约 10 分钟 | 下文「换一个账号，只要 3 步」+ [docs/swap-accounts.md](docs/swap-accounts.md) |
-| **我要用本人账号收发**（推荐，免把机器人拉进每个群） | 先按平台要求开权限 / 装 dws，再到「平台账号」页连接本人身份 | 飞书约 10 分钟（需管理员开权限）；钉钉约 15 分钟（需企业开启 CLI 访问 + 真人授权） | [docs/personal-identity.md](docs/personal-identity.md) |
+| **我要用本人账号收发**（推荐，免把机器人拉进每个群） | 先按平台要求开权限 / 装 dws，再到「平台账号」页连接本人身份 | 飞书约 10 分钟（需管理员开权限）；钉钉约 10–15 分钟（企业先开 CLI 访问；本机用「浏览器登录（推荐）」，服务器/无浏览器用设备码） | [docs/personal-identity.md](docs/personal-identity.md) |
 | **我要现场演示 / 录视频** | 按分镜脚本走，含演示前 10 分钟检查清单、本人身份分镜与纯 Mock 兜底 | 5–8 分钟 | [docs/demo-script.md](docs/demo-script.md) |
 | **我要交付/打包给评审** | `pnpm run deliver`（git archive，自动排除 `.env`/日志/node_modules）+ 打包后自检 | 约 5 分钟 | [docs/delivery-checklist.md](docs/delivery-checklist.md) |
 | **我要在纯净服务器独立部署** | `cd unimsg-connector && docker compose up -d --build` → 打开 `http://<IP>:3001` | 约 5 分钟 | [docs/deploy.md](docs/deploy.md) |
@@ -39,7 +39,7 @@ cp .env.example .env        # Windows PowerShell 可用：Copy-Item .env.example
 #    飞书：FEISHU_APP_ID / FEISHU_APP_SECRET / FEISHU_VERIFY_TOKEN / FEISHU_ENCRYPT_KEY
 #          本人身份收发：FEISHU_IDENTITY=auto + 账号页点「连接本人账号」（详见 docs/personal-identity.md）
 #    钉钉：DINGTALK_CLIENT_ID / DINGTALK_CLIENT_SECRET / DINGTALK_ROBOT_CODE / DINGTALK_STREAM=true
-#          本人身份收发：DINGTALK_IDENTITY=auto + 本机安装并登录 dws（详见 docs/personal-identity.md）
+#          本人身份收发：DINGTALK_IDENTITY=auto + 本机安装 dws，账号页用「浏览器登录（推荐）」或设备码登录（详见 docs/personal-identity.md）
 #    企微：WECOM_CORP_ID / WECOM_AGENT_ID / WECOM_SECRET（要收消息再加 WECOM_TOKEN / WECOM_AES_KEY）
 #    邮箱：MAIL_<KEY>_ADDRESS / MAIL_<KEY>_AUTH_CODE（可配任意多个账号、任意服务商）
 
@@ -136,7 +136,7 @@ MAIL_MODE=real
 | 用前要做什么 | 每个人把机器人拉进自己的群 | 在账号页连接本人账号（飞书 OAuth / 钉钉 dws 登录），不用拉群 |
 | 接收范围 | 只收「单聊 + 群里 @机器人」 | 飞书：本人可见会话（轮询，5–30s 延迟）；钉钉：本人事件（默认全部单聊 + @我） |
 | 发送显示 | 机器人应用 | 你本人 |
-| 平台前提 | 应用 / 机器人能力发布 | 飞书用户身份权限；钉钉本机 dws + 企业管理员开 CLI 访问 + 首次真人授权 |
+| 平台前提 | 应用 / 机器人能力发布 | 飞书用户身份权限；钉钉本机 dws + 企业管理员开 CLI 访问 + 首次真人授权（本机推荐浏览器登录，远程/无浏览器用设备码） |
 | 状态标注 | 真实 / 模拟 | **本人 / 机器人 / 模拟** 三态如实标注，绝不混淆 |
 
 配置（`.env` 关键项；完整变量 / 取值范围见下文「身份能力」表与 `.env.example`）：
@@ -158,7 +158,7 @@ MAIL_MODE=real
 平台限制（务必如实说明，详见 [docs/personal-identity.md](docs/personal-identity.md) §3）：
 
 - **飞书**：接收是**轮询**（默认 20s，通常 5–30s 延迟）、**只能读本人可见会话**；用户身份读消息权限需管理员开通并重新发布版本；未认证租户可能被 `21001` 拦截。
-- **钉钉**：`dws` 是官方**共创阶段**开源 CLI，需企业管理员开启「CLI 访问管理」（或 Custom App 模式）+ **首次真人浏览器授权**；凭据绑定设备，**Windows 不能跨机复制**，容器部署需在容器内登录。
+- **钉钉**：`dws` 是官方**共创阶段**开源 CLI，需企业管理员开启「CLI 访问管理」（或 Custom App 模式）+ **首次真人授权**；登录推荐本机浏览器 loopback（与 LinkHub 同机），远程 / 容器用设备码（约 15 分钟有效、过期需重新获取，否则钉钉提示 `Invalid or expired user code`）；凭据绑定设备，**Windows 不能跨机复制**，容器部署需在容器内登录。
 - **共同**：当前是**单实例单身份**（一次连接一个飞书账号 / 一个 dws 登录用户），多员工共享同一实例不在本期范围。
 
 ## 只有部分平台账号时的行为矩阵
@@ -193,7 +193,7 @@ MAIL_MODE=real
 | 共享消息契约（`shared/src/message.ts`） | ✅ 完成（含 `conversation`、`delivery`、邮箱 `mailMeta`；`SendResult.mode` 强制如实标注通道） |
 | 运行时可替换性（`config/runtime.ts`） | ✅ 完成：四平台独立 `*_MODE`、`auto` 自动判定、`missing/warnings/reason`，旧 `MOCK` 废弃兼容 |
 | 平台适配器（飞书 / 钉钉 / 企业微信 / 邮箱） | ✅ 代码与单测全部完成；钉钉 Stream 真实收发、邮箱四跳闭环已实测；飞书卡租户策略 `21001`；企微卡「企业可信 IP」 |
-| **本人身份收发（飞书 / 钉钉）** | ✅ 代码 / 单测 / fake-dws 桩完成：统一身份解析（`auto/bot/user`）、飞书用户身份轮询接收（水位持久化）、钉钉 dws 个人事件 + 本人发送（子进程监管 / 退避重启）、`/api/accounts` identity 视图、发送身份分流与 400 校验、doctor 身份探针；真实端到端待平台条件（飞书 `21001`、钉钉需企业开 CLI 访问 + 真人授权）——见 [docs/personal-identity.md](docs/personal-identity.md) |
+| **本人身份收发（飞书 / 钉钉）** | ✅ 代码 / 单测 / fake-dws 桩完成：统一身份解析（`auto/bot/user`）、飞书用户身份轮询接收（水位持久化）、钉钉 dws 个人事件 + 本人发送（子进程监管 / 退避重启）、`/api/accounts` identity 视图、发送身份分流与 400 校验、doctor 身份探针；钉钉登录支持**浏览器 loopback（推荐，本机）+ 设备码（远程/容器，带有效期倒计时与重新获取）**，登录/注销后自动启停接收通道、无需重启；真实端到端待平台条件（飞书 `21001`、钉钉需企业开 CLI 访问 + 本人授权）——见 [docs/personal-identity.md](docs/personal-identity.md) |
 | 邮箱数据源 | ✅ 任意数量 / 任意服务商（8 个常见服务商预设 + `custom`）；IMAP 收 + SMTP 发；993/465 隐式 TLS 与 143/587/25 STARTTLS 均支持 |
 | `doctor` 自检 | ✅ 环境 + 模式 + 逐平台探针（飞书 token / 钉钉 token + 机器人 + 通道 / 企微 gettoken / 邮箱 IMAP+SMTP 登录）+ 大模型连通性（`llm:chat`，仅在未加 `--platform=` 时执行）+ 出口公网 IP + 中文修复建议；支持 `--json`、`--platform=`、`--help` |
 | 真实平台 API 接入 | ✅ 钉钉 Stream 端到端（真实收 + 回写）；✅ 邮箱四跳闭环；🟡 飞书适配器完成（机器人 / 用户本人双身份，OAuth 一键授权；部分租户仍可能被 `21001` 拦截）；🟡 企微 `gettoken` 通过，真实发送卡「企业可信 IP」 |
@@ -201,7 +201,7 @@ MAIL_MODE=real
 | 安全：Bearer 鉴权 + WebSocket 握手校验 | ✅ 完成 |
 | 闭环日志（traceId 全链路可回放） | ✅ 完成（Mock 与真实通道分开描述） |
 | 边界降级：限流退避、OCR 置信度、意图失败回退、DLQ | ✅ 完成 |
-| 单元测试 / 端到端冒烟 | ✅ **2026-11-12 本轮实测**：`typecheck` 通过；server **402 tests** 全过（2026-11-12 本轮实测）；web **194 tests**（25 文件）全过；`pnpm e2e` **20 项断言 PASS + SMOKE OK**；契约自检 **81 PASS / 0 FAIL**（含 2 个邮箱账号；含 `identity`、钉钉 personal status 等新接口，N 视是否配置邮箱账号：有邮箱 81 / 无邮箱 75） |
+| 单元测试 / 端到端冒烟 | ✅ **2026-11-12 本轮实测**：`typecheck` 通过；server **412 tests** 全过（2026-11-12 本轮实测）；web **210 tests**（25 文件）全过；`pnpm e2e` **20 项断言 PASS + SMOKE OK**；契约自检 **81 PASS / 0 FAIL**（含 2 个邮箱账号；含 `identity`、钉钉 personal status 等新接口，N 视是否配置邮箱账号：有邮箱 81 / 无邮箱 75） |
 | 上手与交付文档 | ✅ [quickstart.md](docs/quickstart.md)（5 分钟上手）/ [personal-identity.md](docs/personal-identity.md)（本人身份收发配置与边界）/ [demo-script.md](docs/demo-script.md)（演示脚本）/ [delivery-checklist.md](docs/delivery-checklist.md)（交付打包）/ [ai-integration.md](docs/ai-integration.md)（AI 服务集成说明）/ [risk-register.md](docs/risk-register.md)（风险台账）；README 顶部有「30 秒选路径」 |
 | 健壮性加固（本轮） | ✅ webhook 空/畸形事件 400 不入库、端口占用中文提示、CORS 白名单、状态回流防倒退、日志脱敏、空 `API_TOKEN` 不关鉴权、邮箱嵌套 MIME/水位持久化/中文目录 |
 | 大模型真实调用（意图 / 摘要 / 回复草稿） | ✅ OpenAI 兼容协议（默认小米 MiMo `mimo-v2.6-flash`）；失败一律回退规则识别并如实标注来源；见 [ai-integration.md](docs/ai-integration.md) |
@@ -526,8 +526,8 @@ pnpm install
 | GET | `/api/messages/trace/:traceId` | Bearer | 全链路回放（消息 + 闭环日志；未知 traceId 返回空数组） |
 | POST | `/api/feishu/oauth/start` | Bearer | 获取飞书本人身份授权链接：`{url, redirectUri}`；缺 App 凭据时 400 中文错误 |
 | GET | `/api/feishu/oauth/callback` | 公开 | 飞书 OAuth 回调（浏览器跳转，校验 state）；成功/失败都返回中文结果页 |
-| POST | `/api/dingtalk/personal/login` | Bearer | 拉起 dws 登录引导，立即返回 `{started, mode: 'device'\|'browser', command, instructions, url?, code?}`；dws 不存在时 400 中文安装指引 |
-| GET | `/api/dingtalk/personal/status` | Bearer | dws 登录状态：`{available, version?, authenticated, state, displayName?, detail?, hint, loginCommand?, installHint?}`（缓存，前端 2s 轮询安全） |
+| POST | `/api/dingtalk/personal/login` | Bearer | 拉起钉钉本人身份登录。可选 body `{mode: 'auto'\|'browser'\|'device', force?: boolean}`（默认 `auto`：优先本机浏览器、启动失败才回退设备码）；返回 `{started, mode, requestedMode, command, instructions, url?, code?, expiresInSec?, expiresAt?, loginId?}`。`browser` 的 `url` 是 `127.0.0.1` 回调授权页（600s 窗口），`device` 返回授权码（默认 900s）；同方式重复调用复用同一个 `loginId`，`force:true` 才换新码；dws 不存在时 400 中文安装指引 |
+| GET | `/api/dingtalk/personal/status` | Bearer | dws 登录状态：`{available, version?, authenticated, state, displayName?, detail?, hint, loginCommand?, installHint?}` + 进行中登录字段 `{loginInProgress, loginMode?, loginUrl?, loginCode?, loginExpiresAt?, loginExpiresInSec?, loginInstructions?, loginId?}`（恢复弹窗用；缓存，前端 2s 轮询安全，绝不含 token） |
 | POST | `/api/dingtalk/personal/logout` | Bearer | 注销 dws 登录：`{ok:true, authenticated:false}` |
 | WS | `/ws?token=<API_TOKEN>` | Token | 推送 `connected` / `message.received` / `message.updated` / `message.failed`（携带 `failureReason`）；token 错误直接 `1008` 关闭 |
 
@@ -540,8 +540,8 @@ pnpm install
 | 命令 | 实测结果 |
 |---|---|
 | `pnpm typecheck` | **2026-11-12 实测通过**：`shared` / `server` / `web` 三包检查 exit 0 |
-| `pnpm --filter @unimsg/server test` | **2026-11-12 本轮实测 402 tests 全过**（exit 0；条数以最终代码实际输出为准；覆盖连接器、真实适配器、身份解析 / 飞书用户轮询 / 钉钉 dws、MIME、IMAP 水位/目录、webhook HTTP 级、app/CORS、doctor 探针/渲染/拼写检查等），约 2s |
-| `pnpm --filter @unimsg/web test` | **2026-11-12 实测 25 文件 / 194 tests 全过**（exit 0；覆盖 httpApi / wsRealtime / appStore / mockApi / AccountsPage（含身份 / OAuth / .env 重启）/ PersonalIdentityModal / FirstRunGuide / InboxPage / MessageCard / DetailPanel / ReplyComposer / ComposeModal 身份选择 / format / ink / due / footerState 等） |
+| `pnpm --filter @unimsg/server test` | **2026-11-12 本轮实测 412 tests 全过**（exit 0；条数以最终代码实际输出为准；覆盖连接器、真实适配器、身份解析 / 飞书用户轮询 / 钉钉 dws、MIME、IMAP 水位/目录、webhook HTTP 级、app/CORS、doctor 探针/渲染/拼写检查等），约 2s |
+| `pnpm --filter @unimsg/web test` | **2026-11-12 实测 25 文件 / 210 tests 全过**（exit 0；覆盖 httpApi / wsRealtime / appStore / mockApi / AccountsPage（含身份 / OAuth / .env 重启）/ PersonalIdentityModal / FirstRunGuide / InboxPage / MessageCard / DetailPanel / ReplyComposer / ComposeModal 身份选择 / format / ink / due / footerState 等） |
 | `pnpm e2e -Port 3199`（Windows PowerShell） | **2026-11-12 本轮实测 20 项断言 PASS + `SMOKE OK`**，exit 0（e2e.ps1，本机 3199 端口；约 10s）；强制四平台 `mock` + **独立临时数据目录**（脚本隔离 `DATA_DIR`/`DATA_FILE` 并在结束时清理，不影响本机 `.env`/历史数据），完全离线 |
 | `pnpm e2e:sh`（Git Bash，3123 端口） | 同上，**20 项 PASS + `SMOKE OK`**（CI 使用此命令） |
 | 契约自检（后端起 mock 后） | `node packages/web/scripts/verify-contract.mjs http://127.0.0.1:3001 dev-token` → 本机 2026-11-12 实测 **81 PASS / 0 FAIL**（含 `modes` / `sentMock` / `mode`+`policy` / 邮箱账号明细 / `delivery` / WS 握手 / 身份 `identity` / 钉钉 personal status；N 视是否配置邮箱账号：有邮箱 81、无邮箱 75，以实际输出为准） |
@@ -629,7 +629,7 @@ pnpm install
 - **钉钉 / 企业微信群聊只推「@机器人」的消息**（平台规则，不是本项目限制）：普通群消息不会推给机器人，钉钉 Stream 的机器人通道只投递「单聊」和「群内 @机器人」。所以群聊场景能聚合的就是被 @ 的那一条，**不能承诺"群里所有消息都收"**。另外群里要添加的是**企业内部应用机器人**（自定义 Webhook 机器人只能发、不能收）。群内 @ 消息入库后会保留群会话与群名，回复走群消息接口回到原群（界面「会话」一行显示「群聊「群名」· 回复会发回该群」）。参考：[钉钉机器人接收消息](https://open.dingtalk.com/document/robots/receive-message)。
 - **本人身份（飞书 / 钉钉）的真实端到端仍待平台条件**：身份解析、飞书用户轮询、钉钉 dws 子进程 / 事件解析 / 本人发送都有单测与 fake-dws 桩覆盖，但**真实端到端尚未验证**——飞书本机租户受 `21001` 限制，钉钉需要企业管理员开启 CLI 访问并真人授权（本机 dws v1.0.68-beta.1 已安装但未登录）。文档不写"实测通过"，边界见 [docs/personal-identity.md](docs/personal-identity.md) §11。
 - **飞书本人接收是轮询，不是实时推送**：默认 20s 一轮（`FEISHU_USER_RECEIVE_SECONDS`，最小 5），新消息通常 5–30s 出现；**只能读本人可见的会话**；首轮默认只立基线不灌历史（`FEISHU_USER_BACKFILL_HOURS=0`）；用户身份读消息权限需管理员在后台开通**并重新发布版本**；**从旧版本升级后需重新授权一次**（OAuth 会额外申请读消息 scope，旧 token 不含，轮询会报 `99991672`）。
-- **钉钉本人身份依赖官方开源 CLI `dws`（官方处于共创阶段）**：需企业管理员在钉钉开发者平台开启「CLI 访问管理」（或走 Custom App 自有应用模式）；**首次必须真人浏览器授权**；凭据加密绑定设备，**Windows 上不能跨机复制**，容器部署需在容器内登录（见 [docs/deploy.md](docs/deploy.md)）。dws 未安装 / 未登录时 `auto` 回退机器人、`user` 显式报错，不会假成功。
+- **钉钉本人身份依赖官方开源 CLI `dws`（官方处于共创阶段）**：需企业管理员在钉钉开发者平台开启「CLI 访问管理」（或走 Custom App 自有应用模式）；**首次必须真人授权**——本机推荐「用浏览器登录（推荐）」（`127.0.0.1` loopback，浏览器必须与 LinkHub 同机，约 10 分钟操作窗口），服务器 / SSH / 容器用设备码（约 15 分钟有效，过期必须「重新获取授权码」，旧码会报 `Invalid or expired user code`）。凭据加密绑定设备，**Windows 上不能跨机复制**，容器部署需在容器内登录（见 [docs/deploy.md](docs/deploy.md)）。dws 未安装 / 未登录时 `auto` 回退机器人、`user` 显式报错，不会假成功。
 - **钉钉本人事件暂不支持按群 / 按人订阅**：`DINGTALK_USER_EVENT_KINDS` 里的 `group` / `sender` 需要 dws 的目标参数（`--chat-id` / `--user`），本期不做；**配置了会被忽略并在启动日志告警**，回退默认 `all-direct,at-me`（不会导致子进程重启）。支持的范围是 `all-direct` / `at-me` / `all-group`。
 - **钉钉双通道同时开启会重复入库（已知限制）**：机器人 Stream（`DINGTALK_STREAM=true`）与本人身份个人事件同时开启时，同一条钉钉消息可能**各入库一次**——机器人通道与个人事件的平台消息 ID 体系不同，跨通道幂等键不通用。**建议二选一**：要用本人身份就关机器人 Stream，或关本人接收（`DINGTALK_USER_RECEIVE=false`）。
 - **单实例单身份**：一次只绑定一个飞书账号 / 一个 dws 登录用户；不支持多员工共享同一实例，需要各自部署。飞书 `refresh_token` 单次有效，不要让多个后端进程共享同一个令牌文件（并发刷新会互相失效）。

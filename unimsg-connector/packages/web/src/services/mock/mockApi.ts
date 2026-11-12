@@ -6,6 +6,7 @@ import type {
 import type {
   AccountInfo,
   DemoApi,
+  DingtalkLoginOptions,
   DingtalkLoginStart,
   DingtalkPersonalStatus,
   FeishuOAuthStart,
@@ -217,7 +218,7 @@ export class MockApi implements DemoApi {
     throw new Error('演示模式未接入真实后端，无法发起飞书用户授权');
   }
 
-  async dingtalkPersonalLogin(): Promise<DingtalkLoginStart> {
+  async dingtalkPersonalLogin(_options?: DingtalkLoginOptions): Promise<DingtalkLoginStart> {
     throw new Error('演示模式未接入真实后端，无法连接钉钉本人账号');
   }
 

@@ -35,15 +35,28 @@ export interface FeishuOAuthStart {
   redirectUri?: string;
 }
 
+/** 钉钉登录方式：auto=后端决定（优先浏览器 loopback，失败回退设备码）；browser=本机浏览器；device=远程/无浏览器设备码 */
+export type DingtalkLoginMode = 'auto' | 'browser' | 'device';
+
+/** POST /api/dingtalk/personal/login 请求体 */
+export interface DingtalkLoginOptions {
+  mode?: DingtalkLoginMode;
+  /** true = 杀掉进行中的登录流程并重新发起（重新获取设备码 / 换方式） */
+  force?: boolean;
+}
+
 /**
  * 钉钉本人身份登录：POST /api/dingtalk/personal/login 的返回。
  * 后端只负责把本机 dws 登录流程拉起来并把操作指引返回给前端（接口立即返回，不阻塞）。
- *  - browser：dws 会打开浏览器做 OAuth 授权，前端轮询 /status 等结果；
- *  - device ：无浏览器 / 容器环境，展示 code + 终端命令，用户在手机或终端完成确认。
+ *  - browser：dws 会打开浏览器做 loopback OAuth 授权（授权完成自动回调），前端轮询 /status 等结果；
+ *  - device ：无浏览器 / 容器环境，展示授权码 + 授权链接，需在有效期内由另一台设备完成。
  */
 export interface DingtalkLoginStart {
   started: boolean;
+  /** 后端实际采用的登录方式（请求 auto 时可能是 browser 或 device） */
   mode: 'browser' | 'device';
+  /** 用户请求的方式（auto/browser/device）：后端诊断用，前端可忽略 */
+  requestedMode?: DingtalkLoginMode;
   /** 实际执行的命令（可复制到终端） */
   command: string;
   /** 人话操作指引（中文） */
@@ -52,6 +65,12 @@ export interface DingtalkLoginStart {
   url?: string;
   /** device 模式的用户码（在浏览器打开 url 后输入） */
   code?: string;
+  /** 本次登录流程有效期（秒）：设备码过期 / 浏览器授权超时用 */
+  expiresInSec?: number;
+  /** 有效期截止时间（ISO，后端能推算时下发；与 expiresInSec 二选一或都给） */
+  expiresAt?: string;
+  /** 本次登录流程 ID（后端用于避免重复发起 / 恢复状态） */
+  loginId?: string;
 }
 
 /** GET /api/dingtalk/personal/status：登录倒计时轮询用（后端有缓存，不每次等 dws） */
@@ -71,6 +90,21 @@ export interface DingtalkPersonalStatus {
   loginCommand?: string;
   /** 仅在 available=false 时返回：dws 安装指引 */
   installHint?: string;
+  /** 当前是否有登录流程在进行（用于打开弹窗时恢复 URL / 设备码 / 倒计时） */
+  loginInProgress?: boolean;
+  loginMode?: 'browser' | 'device';
+  /** 进行中的授权链接（设备码模式为设备授权页；浏览器模式为 loopback OAuth 页） */
+  loginUrl?: string;
+  /** 进行中的设备授权码 */
+  loginCode?: string;
+  /** 进行中的登录流程过期时间（ISO） */
+  loginExpiresAt?: string;
+  /** 登录剩余有效秒数（后端算好，避免本机时钟偏差；与 loginExpiresAt 二选一或都给） */
+  loginExpiresInSec?: number;
+  /** 进行中流程的操作指引（中文；恢复弹窗时原样展示） */
+  loginInstructions?: string;
+  /** 进行中登录的唯一 ID：前端据此判断是否同一次流程 */
+  loginId?: string;
 }
 
 /** 邮箱平台下的单个账号：只含展示所需的非敏感字段，授权码永不下发前端 */
@@ -158,8 +192,10 @@ export interface MessageApi {
   /**
    * 拉起钉钉本人身份登录（本机 dws CLI）。接口立即返回操作指引，
    * 完成后端登录后由前端轮询 dingtalkPersonalStatus() 判断。
+   * `mode=auto` 由后端决定（优先浏览器 loopback，失败回退设备码）：
+   * 本机有浏览器时推荐 browser，远程 / 无浏览器用 device。
    */
-  dingtalkPersonalLogin(): Promise<DingtalkLoginStart>;
+  dingtalkPersonalLogin(options?: DingtalkLoginOptions): Promise<DingtalkLoginStart>;
   /** 轮询钉钉本人身份登录状态（后端有缓存，2s 轮询安全） */
   dingtalkPersonalStatus(): Promise<DingtalkPersonalStatus>;
   /** 注销钉钉本人身份（退回机器人 / Mock 通道） */

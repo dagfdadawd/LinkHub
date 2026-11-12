@@ -16,6 +16,7 @@ import type {
 import type { TraceEntry, UnifiedMessage } from '../types';
 import type {
   AccountInfo,
+  DingtalkLoginOptions,
   DingtalkLoginStart,
   DingtalkPersonalStatus,
   FeishuOAuthStart,
@@ -120,11 +121,12 @@ export class HttpApi implements MessageApi {
     return body.data;
   }
 
-  async dingtalkPersonalLogin(): Promise<DingtalkLoginStart> {
-    // 后端会立即返回（后台拉起 dws 登录），不会阻塞 HTTP 线程
+  async dingtalkPersonalLogin(options: DingtalkLoginOptions = {}): Promise<DingtalkLoginStart> {
+    // 后端会立即返回（后台拉起 dws 登录），不会阻塞 HTTP 线程。
+    // body 透传 {mode,force}：mode=browser 时后端走本机 loopback OAuth，device 走设备码。
     const body = await this.request<{ data?: DingtalkLoginStart }>(
       '/api/dingtalk/personal/login',
-      { method: 'POST', body: '{}' },
+      { method: 'POST', body: JSON.stringify(options) },
     );
     if (!body.data) throw new ApiError('后端未返回钉钉登录指引', 0);
     return body.data;
