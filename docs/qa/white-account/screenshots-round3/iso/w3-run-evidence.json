@@ -5,7 +5,7 @@
   },
   "bannerText": "首次使用：先连接你自己的账号\n邮箱、钉钉、飞书、企业微信逐项连接；不用把机器人拉进群。其中 2 项需管理员开通、2 项可自己登录/添加。\n去连接账号\n先体验演示\n稍后再说",
   "guideSummary": "需要管理员配置（2 个平台） · 另有 2 项可自己登录/添加",
-  "guideAdminExpanded": "需要管理员配置（2 个平台） · 另有 2 项可自己登录/添加\n飞书：2 项待配置（飞书 App ID、飞书 App Secret） ——需要企业管理员在平台后台开通；也可以把「连接账号」里的清单发给管理员。\n钉钉：4 项待配置（钉钉 Client ID、钉钉 Client Secret、钉钉 AES Token、钉钉 AES Key） ——需要企业管理员在平台后台开通；也可以把「连接账号」里的清单发给管理员。\n企业微信：5 项待配置（企业微信 Corp ID、企业微信 Secret、企业微信 Agent ID、企业微信 Token、企业微信 EncodingAESKey） ——需要企业管理员在平台后台开通；也可以把「连接账号」里的清单发给管理员。\n邮箱：1 项待配置（MAIL_ACCOUNTS（或 MAIL_<KEY>_ADDRESS / MAIL_<KEY>_AUTH_CODE）） ——需要企业管理员在平台后台开通；也可以把「连接账号」里的清单发给管理员。",
+  "guideAdminExpanded": "需要管理员配置（2 个平台） · 另有 2 项可自己登录/添加\n飞书：2 项待配置（飞书 App ID、飞书 App Secret） ——需要企业管理员在平台后台开通；也可以把「连接账号」里的清单发给管理员。\n企业微信：5 项待配置（企业微信 Corp ID、企业微信 Secret、企业微信 Agent ID、企业微信 Token、企业微信 EncodingAESKey） ——需要企业管理员在平台后台开通；也可以把「连接账号」里的清单发给管理员。\n钉钉、邮箱：可以自己添加/登录（打开「连接账号」按卡片操作即可；邮箱只需授权码，钉钉需企业已开启 CLI 访问）。",
   "inbox": {
     "restart": false,
     "envWarn": false
@@ -271,7 +271,7 @@
   },
   "modalUp": true,
   "modalReady": true,
-  "modalText": "连接钉钉本人账号\n钉钉当前是 Mock 运行态：可以先登录本人账号\n没有企业机器人应用也能用本人身份：登录后到「连接账号」页点「用钉钉本人账号登录（推荐）」，会先切换身份模式（热应用、无需重启），再用浏览器完成授权。Mock 下不会真实收发，也不会假成功。\n不用把机器人拉进群：登录后，消息以你自己的钉钉账号接收（私聊 / @我）， 回复也以你本人发出。\n登录的是本机 dws 官方 CLI：授权在钉钉官方页面完成，LinkHub 只读取 「已登录 / 未登录」状态，不接触你的密码。\n随时可回退：不登录或注销后，消息会自动走机器人通道兜底；也可以把 身份策略已被部署配置固定为「只用机器人」。\n尚未登录钉钉本人身份：当前用机器人收发；推荐连接本人账号（免把机器人拉进每个群），登录后自动切换为本人\n用浏览器登录（推荐）\n已尝试在本机打开浏览器。如果没有弹出授权页，点下面的「打开授权页」；授权完成后本弹窗会自动刷新为已连接。\n授权链接：\n打开授权页\nhttps://login.dingtalk.com/oauth2/auth?caller=dws&callerUmt=P1gAJgJ10-w6n08VbosE2zokYtdiPysG8jkqqlHAbG1zb9hivGko8gOsDiZ3KTPXRebEmHo8_y7dOSS_V9EAhxeR&client_id=dingmbw5n9ktkkbbjv3g&prompt=consent&redirect_uri=http%3A%2F%2F127.0.0.1%3A63254%2Fcallback&response_type=code&scope=openid+corpid\n没反应？直接点这里打开授权链接\n授权地址是运行 LinkHub 这台机器的 127.0.0.1 回调，必须在同一台机器的浏览器打开；远程 / 无浏览器请改用设备码登录。\n终端等价命令：\nC:\\Users\\zx\\AppData\\Local\\Temp\\linkhub-r3-sandbox\\unimsg-connector\\tools\\dws.exe auth login\n正在自动检测登录状态（每 2 秒一次）…\n我已登录，刷新状态\n改用设备码登录\n重新发起\n关闭",
+  "modalText": "连接钉钉本人账号\n钉钉当前是 Mock 运行态：可以先登录本人账号\n没有企业机器人应用也能用本人身份：登录后到「连接账号」页点「用钉钉本人账号登录（推荐）」，会先切换身份模式（热应用、无需重启），再用浏览器完成授权。Mock 下不会真实收发，也不会假成功。\n不用把机器人拉进群：登录后，消息以你自己的钉钉账号接收（私聊 / @我）， 回复也以你本人发出。\n登录的是本机 dws 官方 CLI：授权在钉钉官方页面完成，LinkHub 只读取 「已登录 / 未登录」状态，不接触你的密码。\n随时可回退：不登录或注销后，消息会自动走机器人通道兜底；也可以把 身份策略已被部署配置固定为「只用机器人」。\n尚未登录钉钉本人身份：当前用机器人收发；推荐连接本人账号（免把机器人拉进每个群），登录后自动切换为本人\n用浏览器登录（推荐）\n已尝试在本机打开浏览器。如果没有弹出授权页，点下面的「打开授权页」；授权完成后本弹窗会自动刷新为已连接。\n授权链接：\n打开授权页\nhttps://login.dingtalk.com/oauth2/auth?caller=dws&callerUmt=P1gA5pFP3GKmN1JtPlxKFcGqZvc6-P3HiKZVyfblalQe-DNVusPsMI_oNcnQdarIc0Jo8m_f14w-ejxTnf2UrxiB&client_id=dingmbw5n9ktkkbbjv3g&prompt=consent&redirect_uri=http%3A%2F%2F127.0.0.1%3A64218%2Fcallback&response_type=code&scope=openid+corpid\n没反应？直接点这里打开授权链接\n授权地址是运行 LinkHub 这台机器的 127.0.0.1 回调，必须在同一台机器的浏览器打开；远程 / 无浏览器请改用设备码登录。\n终端等价命令：\nC:\\Users\\zx\\AppData\\Local\\Temp\\linkhub-r3-sandbox\\unimsg-connector\\tools\\dws.exe auth login\n正在自动检测登录状态（每 2 秒一次）…\n我已登录，刷新状态\n改用设备码登录\n重新发起\n关闭",
   "apiWhileModal": {
     "ok": true,
     "data": {
@@ -495,11 +495,11 @@
       "loginCommand": "C:\\Users\\zx\\AppData\\Local\\Temp\\linkhub-r3-sandbox\\unimsg-connector\\tools\\dws.exe auth login",
       "loginInProgress": true,
       "loginMode": "browser",
-      "loginUrl": "https://login.dingtalk.com/oauth2/auth?caller=dws&callerUmt=P1gAJgJ10-w6n08VbosE2zokYtdiPysG8jkqqlHAbG1zb9hivGko8gOsDiZ3KTPXRebEmHo8_y7dOSS_V9EAhxeR&client_id=dingmbw5n9ktkkbbjv3g&prompt=consent&redirect_uri=http%3A%2F%2F127.0.0.1%3A63254%2Fcallback&response_type=code&scope=openid+corpid",
-      "loginExpiresAt": "2026-11-12T09:44:05.730Z",
+      "loginUrl": "https://login.dingtalk.com/oauth2/auth?caller=dws&callerUmt=P1gA5pFP3GKmN1JtPlxKFcGqZvc6-P3HiKZVyfblalQe-DNVusPsMI_oNcnQdarIc0Jo8m_f14w-ejxTnf2UrxiB&client_id=dingmbw5n9ktkkbbjv3g&prompt=consent&redirect_uri=http%3A%2F%2F127.0.0.1%3A64218%2Fcallback&response_type=code&scope=openid+corpid",
+      "loginExpiresAt": "2026-11-12T09:48:53.621Z",
       "loginExpiresInSec": 598,
       "loginInstructions": "已尝试打开浏览器（若未弹出请点下方授权链接）。请在运行 LinkHub 的这台机器上用钉钉扫码/账号登录并确认授权，完成后回到本页点「我已登录，刷新状态」（约 10 分钟内有效）。注意：浏览器授权地址是 127.0.0.1 本机回调，必须在这台机器上打开；服务器/SSH/容器请改用设备码登录。",
-      "loginId": "bf5524cb-4af5-453d-8554-37fe52b1ca0b"
+      "loginId": "35ec51bc-679d-4411-af48-2514d23402c6"
     }
   },
   "closeClick": {
@@ -727,9 +727,9 @@
   "onboardingAfter": {
     "ok": true,
     "data": {
-      "generatedAt": "2026-11-12T09:34:10.289Z",
+      "generatedAt": "2026-11-12T09:38:58.147Z",
       "firstRun": true,
-      "startedAt": "2026-11-12T09:32:44.562Z",
+      "startedAt": "2026-11-12T09:38:19.058Z",
       "envFile": null,
       "dws": {
         "available": true,
@@ -985,11 +985,11 @@
       "loginCommand": "C:\\Users\\zx\\AppData\\Local\\Temp\\linkhub-r3-sandbox\\unimsg-connector\\tools\\dws.exe auth login",
       "loginInProgress": true,
       "loginMode": "browser",
-      "loginUrl": "https://login.dingtalk.com/oauth2/auth?caller=dws&callerUmt=P1gAJgJ10-w6n08VbosE2zokYtdiPysG8jkqqlHAbG1zb9hivGko8gOsDiZ3KTPXRebEmHo8_y7dOSS_V9EAhxeR&client_id=dingmbw5n9ktkkbbjv3g&prompt=consent&redirect_uri=http%3A%2F%2F127.0.0.1%3A63254%2Fcallback&response_type=code&scope=openid+corpid",
-      "loginExpiresAt": "2026-11-12T09:44:05.730Z",
+      "loginUrl": "https://login.dingtalk.com/oauth2/auth?caller=dws&callerUmt=P1gA5pFP3GKmN1JtPlxKFcGqZvc6-P3HiKZVyfblalQe-DNVusPsMI_oNcnQdarIc0Jo8m_f14w-ejxTnf2UrxiB&client_id=dingmbw5n9ktkkbbjv3g&prompt=consent&redirect_uri=http%3A%2F%2F127.0.0.1%3A64218%2Fcallback&response_type=code&scope=openid+corpid",
+      "loginExpiresAt": "2026-11-12T09:48:53.621Z",
       "loginExpiresInSec": 595,
       "loginInstructions": "已尝试打开浏览器（若未弹出请点下方授权链接）。请在运行 LinkHub 的这台机器上用钉钉扫码/账号登录并确认授权，完成后回到本页点「我已登录，刷新状态」（约 10 分钟内有效）。注意：浏览器授权地址是 127.0.0.1 本机回调，必须在这台机器上打开；服务器/SSH/容器请改用设备码登录。",
-      "loginId": "bf5524cb-4af5-453d-8554-37fe52b1ca0b"
+      "loginId": "35ec51bc-679d-4411-af48-2514d23402c6"
     }
   },
   "dingtalkCardText": "钉钉\n需本人授权",
@@ -1561,9 +1561,9 @@
     "onboarding": {
       "ok": true,
       "data": {
-        "generatedAt": "2026-11-12T09:34:39.089Z",
+        "generatedAt": "2026-11-12T09:39:26.861Z",
         "firstRun": true,
-        "startedAt": "2026-11-12T09:32:44.563Z",
+        "startedAt": "2026-11-12T09:38:19.066Z",
         "envFile": null,
         "dws": {
           "available": true,
@@ -1923,13 +1923,13 @@
   "log": [
     {
       "step": "A-inbox",
-      "at": "2026-11-12T09:33:47.816Z",
+      "at": "2026-11-12T09:38:36.279Z",
       "banner": "首次使用：先连接你自己的账号\n邮箱、钉钉、飞书、企业微信逐项连接；不用把机器人拉进群。其中 2 项需管理员开通、2 项可自己登录/添加。\n去连接账号\n先体验演示\n稍后再说",
       "summary": "需要管理员配置（2 个平台） · 另有 2 项可自己登录/添加"
     },
     {
       "step": "A-dismiss",
-      "at": "2026-11-12T09:33:52.347Z",
+      "at": "2026-11-12T09:38:40.777Z",
       "dismiss": {
         "ok": true,
         "tag": "BUTTON",
@@ -1941,7 +1941,7 @@
     },
     {
       "step": "B-connect",
-      "at": "2026-11-12T09:33:55.616Z",
+      "at": "2026-11-12T09:38:44.030Z",
       "restartBanner": false,
       "pnpm": false,
       "envModified": false,
@@ -1950,20 +1950,20 @@
     },
     {
       "step": "B-accounts",
-      "at": "2026-11-12T09:33:58.885Z",
+      "at": "2026-11-12T09:38:47.287Z",
       "envModified": false,
       "restart": true,
       "saved": false
     },
     {
       "step": "B-about",
-      "at": "2026-11-12T09:34:00.781Z",
+      "at": "2026-11-12T09:38:49.184Z",
       "localBackend": true,
       "accounts": true
     },
     {
       "step": "C-cancel",
-      "at": "2026-11-12T09:34:10.291Z",
+      "at": "2026-11-12T09:38:58.152Z",
       "restartBanner": false,
       "pnpm": false,
       "needsAuth": true,
@@ -1977,7 +1977,7 @@
     },
     {
       "step": "C-logout",
-      "at": "2026-11-12T09:34:16.368Z",
+      "at": "2026-11-12T09:39:03.937Z",
       "status": {
         "available": true,
         "version": "v1.0.68-beta.1",
@@ -1997,33 +1997,33 @@
     },
     {
       "step": "D-test",
-      "at": "2026-11-12T09:34:20.566Z",
+      "at": "2026-11-12T09:39:08.395Z",
       "ok": true,
       "text": "连接测试失败\n请检查邮箱地址、授权码（不是登录密码）与服务商 IMAP 设置。\n这是页面添加的账号：请核对邮箱地址 / 授权码 / IMAP 服务器； 如果是 .env 里的旧账号，请修改 .env 后重启后端。\n技术详情（给管理员看）",
       "toast": "邮箱连接测试失败，请检查授权码与服务器地址\n邮箱连接测试失败，请检查授权码与服务器地址"
     },
     {
       "step": "D-save",
-      "at": "2026-11-12T09:34:24.072Z",
+      "at": "2026-11-12T09:39:11.848Z",
       "toast": "邮箱账号已保存为未验证账号：点「测试连接」验证通过后才会真实收信（首轮只建立 UID 基线，不会导入历史邮件）。\n邮箱账号已保存为未验证账号：点「测试连接」验证通过后才会真实收信（首轮只建立 UID 基线，不会导入历史邮件）。",
       "unverified": true,
       "notReady": true
     },
     {
       "step": "D-delete",
-      "at": "2026-11-12T09:34:27.116Z",
+      "at": "2026-11-12T09:39:14.881Z",
       "empty": true,
       "toast": "已删除本地邮箱账号\n已删除本地邮箱账号"
     },
     {
       "step": "E-demo",
-      "at": "2026-11-12T09:34:32.384Z",
+      "at": "2026-11-12T09:39:20.152Z",
       "toast": "已注入一条飞书消息\n已注入一条飞书消息",
       "hasMessage": true
     },
     {
       "step": "E-compose",
-      "at": "2026-11-12T09:34:35.835Z",
+      "at": "2026-11-12T09:39:23.591Z",
       "hint": true,
       "send": {
         "ok": true,

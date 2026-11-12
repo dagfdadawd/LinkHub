@@ -9,7 +9,7 @@
 已尝试在本机打开浏览器。如果没有弹出授权页，点下面的「打开授权页」；授权完成后本弹窗会自动刷新为已连接。
 授权链接：
 打开授权页
-https://login.dingtalk.com/oauth2/auth?caller=dws&callerUmt=P1gAJgJ10-w6n08VbosE2zokYtdiPysG8jkqqlHAbG1zb9hivGko8gOsDiZ3KTPXRebEmHo8_y7dOSS_V9EAhxeR&client_id=dingmbw5n9ktkkbbjv3g&prompt=consent&redirect_uri=http%3A%2F%2F127.0.0.1%3A63254%2Fcallback&response_type=code&scope=openid+corpid
+https://login.dingtalk.com/oauth2/auth?caller=dws&callerUmt=P1gA5pFP3GKmN1JtPlxKFcGqZvc6-P3HiKZVyfblalQe-DNVusPsMI_oNcnQdarIc0Jo8m_f14w-ejxTnf2UrxiB&client_id=dingmbw5n9ktkkbbjv3g&prompt=consent&redirect_uri=http%3A%2F%2F127.0.0.1%3A64218%2Fcallback&response_type=code&scope=openid+corpid
 没反应？直接点这里打开授权链接
 授权地址是运行 LinkHub 这台机器的 127.0.0.1 回调，必须在同一台机器的浏览器打开；远程 / 无浏览器请改用设备码登录。
 终端等价命令：
