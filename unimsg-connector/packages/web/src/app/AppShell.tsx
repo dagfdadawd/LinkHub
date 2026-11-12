@@ -20,7 +20,6 @@ import {
 } from '@ant-design/icons';
 import { useAppState } from '../hooks/useAppState';
 import { store } from '../store';
-import { ConnectionDot } from '../components/ConnectionDot';
 import { footerShortLabel, footerState } from '../utils/footerState';
 import { clamp } from '../utils/format';
 import { formatSendError } from '../utils/sendError';
@@ -234,14 +233,18 @@ export function AppShell() {
     <div className="app-shell">
       <aside className="app-side">
         <div className="rail__brand">
-          <Tooltip title="LinkHub · 统一消息中心" placement="right">
+          {/* 个人头像占据原品牌位：用柔和的同色浅染，避免高饱和色块抢走第一眼 */}
+          <Tooltip title={`${profile.name} · 个人设置`} placement="right" mouseEnterDelay={0.22}>
             <button
-              className="brand__mark"
+              className="avatar-btn"
               type="button"
-              aria-label="返回收件箱"
-              onClick={() => navigate('/inbox')}
+              aria-label="打开个人设置"
+              style={{ '--avatar-tone': profile.tone } as CSSProperties}
+              onClick={() => setSettingsOpen(true)}
             >
-              L
+              <Avatar size={32} className="brand-avatar" src={profile.avatarUrl ?? undefined}>
+                {initialOf(profile.name)}
+              </Avatar>
             </button>
           </Tooltip>
         </div>
@@ -303,19 +306,8 @@ export function AppShell() {
             <h1 className="cmdbar__title">{page.title}</h1>
           </div>
 
-          <div className="cmdbar__actions">
-            <Tooltip title="从统一入口向指定平台发送文本或文件">
-              <Button
-                type="primary"
-                icon={<SendOutlined />}
-                onClick={() => setComposeOpen(true)}
-                aria-label="新建发送"
-                data-testid="open-compose"
-              >
-                新建发送
-              </Button>
-            </Tooltip>
-
+          {/* 搜索居中：顶栏只留一个入口，真正的搜索在 ⌘K 面板里 */}
+          <div className="cmdbar__search">
             <button
               className="search-trigger"
               type="button"
@@ -326,12 +318,16 @@ export function AppShell() {
               <span className="search-trigger__label">搜索</span>
               <kbd className="kbd">⌘K</kbd>
             </button>
+          </div>
 
-            <Tooltip title={state.demoMode ? '服务连接状态（演示模式）' : '服务连接状态（本地后端 + 实时推送）'}>
-              <span>
-                <ConnectionDot status={state.connection} />
-              </span>
-            </Tooltip>
+          <div className="cmdbar__actions">
+            {state.demoMode && (
+              <Dropdown menu={demoMenu} trigger={['click']}>
+                <button className="demo-btn" type="button">
+                  <ThunderboltOutlined /> 演示 <DownOutlined className="demo-btn__caret" />
+                </button>
+              </Dropdown>
+            )}
 
             <Tooltip title={mode === 'dark' ? '切换到明色' : '切换到暗色'}>
               <button
@@ -344,29 +340,17 @@ export function AppShell() {
               </button>
             </Tooltip>
 
-            {state.demoMode && (
-              <Dropdown menu={demoMenu} trigger={['click']}>
-                <button className="demo-btn" type="button">
-                  <ThunderboltOutlined /> 演示 <DownOutlined className="demo-btn__caret" />
-                </button>
-              </Dropdown>
-            )}
-
-            <Tooltip title={`${profile.name} · 个人设置`}>
+            {/* 主动发送是最重的操作：收在右侧最末端，用系统内的低饱和主按钮色 */}
+            <Tooltip title="从统一入口向指定平台发送文本或文件">
               <button
-                className="avatar-btn"
+                className="cmdbar__compose"
                 type="button"
-                aria-label="打开个人设置"
-                onClick={() => setSettingsOpen(true)}
+                onClick={() => setComposeOpen(true)}
+                aria-label="新建发送"
+                data-testid="open-compose"
               >
-                <Avatar
-                  size={30}
-                  className="brand-avatar"
-                  style={{ background: profile.tone }}
-                  src={profile.avatarUrl ?? undefined}
-                >
-                  {initialOf(profile.name)}
-                </Avatar>
+                <SendOutlined />
+                新建发送
               </button>
             </Tooltip>
           </div>
