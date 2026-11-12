@@ -19,6 +19,9 @@ const original = {
   sendAs: config.feishuAuth.sendAs,
   tokenFile: config.feishuAuth.tokenFile,
   appId: config.platforms.feishu.appId,
+  // appSecret 也要快照/注入：canAuthorize() 依赖 appId + appSecret 同时存在，
+  // 只注入 appId 会让测试在「无 .env 的干净 checkout / CI」下靠环境碰巧通过。
+  appSecret: config.platforms.feishu.appSecret,
   policy: config.identity.feishu.policy,
   runtime: Object.values(Platform).map((p) => [p, { ...config.runtime[p] }] as const),
 };
@@ -46,12 +49,15 @@ function setConfig(patch: {
   policy: typeof config.identity.feishu.policy;
   tokenFile: string;
   appId?: string;
+  appSecret?: string;
   mode?: 'real' | 'mock';
 }): void {
   config.identity.feishu.policy = patch.policy;
   config.feishuAuth.sendAs = patch.policy;
   config.feishuAuth.tokenFile = patch.tokenFile;
-  if (patch.appId !== undefined) config.platforms.feishu.appId = patch.appId;
+  // 测试自洽：不依赖本机 .env 恰好配了飞书应用凭据（干净 checkout / CI 下无 .env）
+  config.platforms.feishu.appId = patch.appId ?? 'cli_test';
+  config.platforms.feishu.appSecret = patch.appSecret ?? 'cli_test_secret';
   const mode = patch.mode ?? 'real';
   config.runtime[Platform.FEISHU].mode = mode;
   config.runtime[Platform.FEISHU].policy = mode;
@@ -71,6 +77,7 @@ after(() => {
   config.feishuAuth.sendAs = original.sendAs;
   config.feishuAuth.tokenFile = original.tokenFile;
   config.platforms.feishu.appId = original.appId;
+  config.platforms.feishu.appSecret = original.appSecret;
   config.identity.feishu.policy = original.policy;
   for (const [platform, snapshot] of original.runtime) Object.assign(config.runtime[platform], snapshot);
   resetFeishuUserAuthCache();
