@@ -186,7 +186,9 @@ export function AppShell() {
   }, [prefs.density, prefs.motion]);
 
   const counts = useMemo(() => {
-    const inbox = state.messages.filter((m) => m.status !== 'synced' && m.status !== 'failed').length;
+    // 收件箱角标 = 未读数（阅读状态），不再用「未终结条数」——
+    // 那个口径会让人误以为「角标 4 但其实都看过了」。
+    const inbox = state.messages.filter((m) => !m.readAt).length;
     const todos = state.messages.filter((m) => m.type === 'todo' && !m.done).length;
     return { inbox, todos };
   }, [state.messages]);

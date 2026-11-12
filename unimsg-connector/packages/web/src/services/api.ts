@@ -165,6 +165,10 @@ export interface MessageApi {
   /** 注销钉钉本人身份（退回机器人 / Mock 通道） */
   dingtalkPersonalLogout(): Promise<void>;
   markDone(id: string): Promise<UnifiedMessage>;
+  /** 标记已读 / 未读（阅读状态独立于业务状态） */
+  markRead(id: string, read: boolean): Promise<UnifiedMessage>;
+  /** 全部标为已读（可只标当前筛选范围），返回实际改动条数 */
+  markAllRead(ids?: string[]): Promise<number>;
   trace(id: string): Promise<TraceResult>;
   accounts(): Promise<AccountInfo[]>;
   health(): Promise<HealthInfo>;
