@@ -127,7 +127,7 @@ curl -H "Authorization: Bearer dev-token" http://127.0.0.1:3001/api/accounts
 7. **版本管理与发布**：创建版本并发布（可用范围可先设「仅我可见」自测）。**不发布版本，事件订阅可能不生效。**
 8. 配置回调 URL 时飞书会发 `url_verification` 挑战（仅 HTTP 回调方式），本服务会自动回 `challenge`；这一步**不用**手动处理。
 
-> 飞书现已支持**长连接（WebSocket）收消息**（`FEISHU_STREAM=true`，实现见 `packages/server/src/stream/feishuStream.ts`）：与钉钉 Stream 同理，免公网回调、事件明文推送，本机 / 决赛服务器直接收。代价是仍依赖应用已发布且启用——否则 `tenant_access_token` 同样报 `21001`。不想配公网时优先用长连接；纯本地演示仍可用 `FEISHU_MODE=mock`。
+> 飞书现已支持**长连接（WebSocket）收消息**（`FEISHU_STREAM=true`，实现见 `packages/server/src/stream/feishuStream.ts`）：与钉钉 Stream 同理，免公网回调、事件明文推送，本机 / 决赛服务器直接收。代价是仍依赖应用已发布且启用——否则 `tenant_access_token` 同样报 `21001`（**21001 本机租户 2026-11-12 已解除；其他租户仍可能**）。不想配公网时优先用长连接；纯本地演示仍可用 `FEISHU_MODE=mock`。
 
 ### 3.2 填哪些 env
 
@@ -169,7 +169,7 @@ curl -H "Authorization: Bearer dev-token" http://127.0.0.1:3001/api/accounts
 
 | 现象 | 原因 | 处理 |
 |---|---|---|
-| `21001 Access denied due to platform policy` | 租户级策略 / 合规限制，常见于未完成企业认证的租户 | 代码、Secret、IP 白名单、应用发布都救不了；见「现实说明」 |
+| `21001 Access denied due to platform policy` | 租户级策略 / 合规限制，常见于未完成企业认证的租户（**历史：本机租户 2026-11-12 已解除；换租户仍可能**） | 代码、Secret、IP 白名单、应用发布都救不了；见「现实说明」 |
 | `10014` | App Secret 错误 | 回后台重新复制 App Secret（别复制成 App ID），更新后重跑 doctor |
 | `10003` 或 `app_id not found` | App ID 不存在 / 应用被删除 | 核对 `FEISHU_APP_ID`，确认应用仍存在 |
 | `99991663` | tenant_access_token 无效 | 重置 Secret 后旧 token 失效；重跑 doctor；核对 `FEISHU_BASE_URL` 与数据中心一致 |
@@ -179,10 +179,12 @@ curl -H "Authorization: Bearer dev-token" http://127.0.0.1:3001/api/accounts
 | 解密失败 / JSON 解析失败 | Encrypt Key 错误，或后台关闭加密但 `.env` 仍按加密处理 | 两处保持一致；改完重启 |
 | 能发不能收 | 缺 `FEISHU_VERIFY_TOKEN`、事件未订阅、权限未开通或版本未发布 | 看 `/api/accounts` 的 `missing` / `warnings`，逐项补齐 |
 | 长连接保存时提示「连接校验失败」 | 本地后端未启动，或 `FEISHU_STREAM=true` 未设，或应用未发布启用 | 先 `FEISHU_STREAM=true` 启动后端，确认日志出现 `[feishu-stream] 飞书长连接启动指令已下发` 且随后出现「已就绪」，再回后台保存订阅方式 |
-| 长连接启动后日志无「已就绪」 | `FEISHU_STREAM` 未开，或 `FEISHU_MODE≠real`，或 21001（应用未发布/未启用），或 appId 格式不对 | 看 `[feishu-stream]` 日志（SDK 异步建连，启动指令下发 ≠ 已连通）；21001 见「现实说明」 |
+| 长连接启动后日志无「已就绪」 | `FEISHU_STREAM` 未开，或 `FEISHU_MODE≠real`，或 21001（应用未发布/未启用；**本机租户已解除，其他租户仍可能**），或 appId 格式不对 | 看 `[feishu-stream]` 日志（SDK 异步建连，启动指令下发 ≠ 已连通）；21001 见「现实说明」 |
 | 长连接能收但回复发失败 | 缺 `im:message:send_as_bot` 权限，或版本未发布 | 开通权限并重新发布版本 |
 
 ### 3.5 现实说明：飞书 21001 与企业认证
+
+> **2026-11-12 现状**：本机租户已恢复正常（实测 `app_access_token` / `tenant_access_token` 均 `code:0`）；本段保留作为**换租户 / 换环境时的排错参考**——`21001` 仍是飞书平台策略，其他租户仍可能遇到。
 
 飞书 `21001` 是**租户级平台策略**，不是配置错误。已实测排除的方向：错误 Secret（会报 `10014`）、IP 白名单（未开启）、应用未发布（已发布且启用）、测试企业通道（建测试企业并关联后仍 `21001`）。
 
@@ -193,7 +195,7 @@ curl -H "Authorization: Bearer dev-token" http://127.0.0.1:3001/api/accounts
 3. 换一个合规租户重新创建自建应用——**只需要改 `.env` 的 `FEISHU_APP_ID` / `FEISHU_APP_SECRET`**，代码与其余配置不动；
 4. 仍不通时按 doctor 建议走飞书客服 / 工单确认租户策略。
 
-> 所以：飞书适配器、验签、加解密、发送、事件订阅代码均已就绪，`21001` 属于「换租户 / 走认证」才能解决的外部约束。
+> 所以：飞书适配器、验签、加解密、发送、事件订阅代码均已就绪，`21001` 属于「换租户 / 走认证」才能解决的外部约束（**本机租户已于 2026-11-12 解除**）。
 
 ### 3.6 以用户本人身份收发（user_access_token）
 
@@ -205,12 +207,13 @@ curl -H "Authorization: Bearer dev-token" http://127.0.0.1:3001/api/accounts
    - `im:message`（获取与发送单聊、群组消息）
    - `im:message.send_as_user`（以用户身份发消息）
    - `im:resource`（上传图片/文件；只发文本也建议一起开）
-   - **本人接收**另需：`im:message`、`im:message.p2p_msg:get_as_user`（以用户身份获取单聊消息）、`im:message.group_msg:get_as_user`（以用户身份获取群聊消息）、`im:resource`（附件资源）；缺权限时报 `99991672` 并给出权限清单。
-   - LinkHub 的 OAuth 会**自动申请**上述 scope（本人接收开启时附带两个读消息权限，FEISHU_USER_RECEIVE=false / FEISHU_IDENTITY=bot 时不申请）；**从旧版本升级后需重新授权一次**，旧 token 不含读消息权限（轮询会报 99991672）。
+   - **本人接收**另需：`im:message.p2p_msg:get_as_user`（以用户身份获取单聊消息）、`im:message.group_msg:get_as_user`（以用户身份获取群聊消息）、`im:chat:read`（查看群信息 / 列会话，缺它列不出任何会话、报 `99991679`）；缺权限时报 `99991672` 并给出权限清单。
+   - **持续授权**：`offline_access`（后台显示「持续访问已授权的数据」）——refresh_token / 自动续期必需；缺它授权页会报 `20027`。
+   - LinkHub 的 OAuth 会**自动申请**上述 scope（本人接收开启时额外附带 `im:message.p2p_msg:get_as_user`、`im:message.group_msg:get_as_user`、`im:chat:read`，FEISHU_USER_RECEIVE=false / FEISHU_IDENTITY=bot 时不申请）；**从旧版本升级后需重新授权一次**，旧 token 不含读消息 / 列会话权限（轮询会报 `99991672` / `99991679`）。
 2. **安全设置 → 重定向 URL** 添加：`http://localhost:3001/api/feishu/oauth/callback`
    - 如果后端端口不是 3001，先设 `FEISHU_REDIRECT_URI`，再把**同一个值**原样填进后台；协议、域名、端口、路径、结尾斜杠都必须完全一致。
-3. **安全设置 → 打开「刷新 user_access_token」**（否则 refresh_token 无法续期）。
-4. **版本管理与发布**：重新发布版本并等待权限生效；完成授权的飞书账号必须在应用可用范围内（否则报 `20010`）。
+3. **持续授权（自动续期）由 `offline_access` 决定**：在「用户身份权限」开通它（后台显示「持续访问已授权的数据」）并重新授权后，OAuth 会返回 `refresh_token` + `refresh_token_expires_in`（2026-11-12 实测已验证）；旧版控制台曾有「刷新 user_access_token」开关，**新版控制台已无此项**。
+4. **应用发布**：正式应用需发布版本并等待权限生效（**测试应用**改动免审即时生效）；完成授权的飞书账号必须在应用可用范围内（否则报 `20010`）。
 
 **env 写法**
 
@@ -256,17 +259,17 @@ FEISHU_USER_BACKFILL_HOURS=0       # 首轮回溯小时数：0=只立基线不�
 - 自己发出的消息会被过滤（自环保护）；水位文件损坏时安全回退重建基线；重启后从水位续传。
 - 权限不足不会静默：账号页身份块 / 日志会给出所需权限与「重新授权」提示（权限变更后必须重新授权，旧 token 不带新权限）。
 - 机器人长连接 / 回调**保留**：本人轮询与机器人通道可同时存在，入库按 `platform + externalId` 幂等去重，界面如实标注每条是「本人账号接收」还是「机器人接收」。
-- **注意**：接收链路是否真实可用仍受租户策略影响（`21001` 时应用本身都换不到 token）；真实端到端状态见 [personal-identity.md](personal-identity.md) §11。
+- **注意**：接收链路真实可用性受租户策略影响——**本机租户 2026-11-12 已解除 `21001`，飞书本人身份真实端到端已实测通过（收单聊 + 群聊、发本人）**；换租户 / 换环境仍可能遇到 `21001`（应用本身都换不到 token），状态见 [personal-identity.md](personal-identity.md) §11 与 [飞书验收记录](verification/feishu-personal-e2e-2026-11-12.md)。
 
 **用户身份常见报错**
 
 | 现象 | 原因 | 处理 |
 |---|---|---|
-| 授权页报 `20027` / 权限不足 | 用户身份权限未开通或版本未发布 | 按上面第 1、4 步开通并发布 |
+| 授权页报 `20027` / 权限不足 | 用户身份权限未开通或版本未发布（**实测常因缺 `offline_access` / `im:resource`**） | 按上面第 1、4 步开通并发布 |
 | 授权页报 `20010` | 当前飞书账号不在应用可用范围 | 让管理员把账号加入应用可用范围 |
-| 授权页报 `20029` / redirect_uri 不合法 | 回调地址与后台登记不一致 | 两处都改成 `FEISHU_REDIRECT_URI` 的同一个值（含端口与斜杠） |
+| 授权页报 `20029` / redirect_uri 不合法 | 回调地址与后台登记不一致（**实测：后台该栏为空也会报 `20029`**） | 两处都改成 `FEISHU_REDIRECT_URI` 的同一个值（含端口与斜杠） |
 | 账号页提示「用户身份未授权」 | 还没点连接，或令牌文件被删 | 点「连接本人账号」 |
-| 发送失败「授权已过期 / 请重新授权」 | refresh_token 失效或被使用 | 点「重新授权」；确认后台已打开刷新开关 |
+| 发送失败「授权已过期 / 请重新授权」 | refresh_token 失效或被使用 | 点「重新授权」；确认后台已开通 `offline_access`（持续访问已授权的数据） |
 | 文件发送失败但文本成功 | `im:resource` 未开通 | 开通用户身份的资源上传权限并发布 |
 
 ---
@@ -664,12 +667,12 @@ MAIL_WORK_FOLDERS=INBOX,Junk
 
 | 平台 | 错误码 / 关键词 | 含义 | 处理 |
 |---|---|---|---|
-| 飞书 | `21001` | 租户策略 / 合规限制，无法换 tenant_access_token | 企业认证或换合规租户；改 Secret / IP / 代码无效 |
+| 飞书 | `21001` | 租户策略 / 合规限制，无法换 tenant_access_token（**历史：本机租户 2026-11-12 已解除；换租户 / 换环境仍可能**） | 企业认证或换合规租户；改 Secret / IP / 代码无效 |
 | 飞书 | `10014` | App Secret 错误 | 回后台重新复制 Secret |
 | 飞书 | `10003` | App ID 不存在 / 应用被删除 | 核对 `FEISHU_APP_ID` |
 | 飞书 | `99991663` | tenant_access_token 无效 | 重置 Secret 后旧 token 失效；重跑 doctor；核对 base URL |
 | 飞书 | `401 verify failed` | Verification Token 不一致 | 对齐 `FEISHU_VERIFY_TOKEN` |
-| 飞书 | `20027` / `99991672` / `99991679` / `230027`（用户身份） | 用户身份权限未开通 / 版本未发布 / 旧 token 不带新权限 | 开通 §3.6 的用户身份权限 → 发布版本 → **重新授权** |
+| 飞书 | `20027` / `99991672` / `99991679` / `230027`（用户身份） | 用户身份权限未开通（`20027` 实测常因缺 `offline_access` / `im:resource`；`99991679` 缺 `im:chat:read`）/ 版本未发布 / 旧 token 不带新权限 | 开通 §3.6 的用户身份权限（按需发布版本）→ **重新授权** |
 | 飞书 | `20010`（授权页） | 当前账号不在应用可用范围 | 让管理员加入可用范围 |
 | 飞书 | `20029` / redirect_uri 不合法 | 回调地址与后台登记不一致 | `FEISHU_REDIRECT_URI` 与后台逐字符一致 |
 | 钉钉 | `40089` / `InvalidAuthentication` | Client ID / Secret 错误 | 重新复制 `DINGTALK_CLIENT_ID` / `_CLIENT_SECRET` |
@@ -722,7 +725,7 @@ A：按顺序查：① 是否显式 `*_MODE=mock`；② `/api/accounts` 的 `mis
 A：消息详情页「回写失败」区域会直接显示 `failureReason`（形如「原因：…」），并提供「重试发送」按钮；完整错误仍在「全链路回放」的闭环日志与死信队列里。收到失败 WebSocket 推送时也会弹失败 toast（带一句可读原因）。
 
 **Q：账号页显示「真实接口 / 已配置」，为什么实际发不出去？**
-A：账号页只说明**变量填齐了**，不代表平台能连通——假 App ID、权限未开、租户策略（飞书 `21001`）、出口 IP（企微 `60020`）都会这样。以 `pnpm run doctor --platform=<平台>` 的 PASS / FAIL 为准；FAIL 会带错误码和修复建议。改完 `.env` 记得**重启后端**（账号页会提示需重启）。
+A：账号页只说明**变量填齐了**，不代表平台能连通——假 App ID、权限未开、租户策略（飞书 `21001`；**本机租户 2026-11-12 已解除，换租户仍可能**）、出口 IP（企微 `60020`）都会这样。以 `pnpm run doctor --platform=<平台>` 的 PASS / FAIL 为准；FAIL 会带错误码和修复建议。改完 `.env` 记得**重启后端**（账号页会提示需重启）。
 
 **Q：doctor 显示 SKIP，是失败吗？**
 A：不是。SKIP 表示该平台当前未启用真实通道（`mode=mock` 且不是强制 `real`），doctor 按约定不发起真实探针。退出码只看 FAIL 与 Node 版本：全 PASS / SKIP → 0，有 FAIL → 1。
@@ -746,7 +749,7 @@ A：确认加的是**当前真实出口公网 IP**（公司代理 / VPN / 家庭
 A：**一般不会**。电脑重启只是重新拿内网 DHCP 地址，公网出口 IP 在路由器 / 校园网或公司出口网关 / 运营商侧，重启电脑不会让出口网关重拨；本次实测 2026-11-03 → 11-04 出口 IP 未变。会变的情况：重启路由器 / 光猫、校园网重新认证、运营商重新分配、切换 Wi-Fi / 手机热点、开或换 VPN / 代理。既然 `pnpm run doctor` 每次都会打印当前出口公网 IP，演示前扫一眼即可；变了就回后台更新可信 IP。要彻底免维护，就用带固定公网 IP 的云服务器部署后端（或把出口固定到该服务器）。
 
 **Q：飞书 21001 能靠改配置解决吗？**
-A：不能。21001 是租户级策略，已排除 Secret（10014）、IP 白名单、应用未发布、测试企业通道等因素；需要企业认证或换合规租户，换租户后只改 `FEISHU_APP_ID` / `FEISHU_APP_SECRET` 即可。
+A：不能。21001 是租户级策略，已排除 Secret（10014）、IP 白名单、应用未发布、测试企业通道等因素；需要企业认证或换合规租户，换租户后只改 `FEISHU_APP_ID` / `FEISHU_APP_SECRET` 即可。**2026-11-12 本机租户已恢复正常（实测 `app_access_token` / `tenant_access_token` 均 `code:0`）**；其他租户仍可能遇到。
 
 **Q：如何完全离线演示给评审？**
 A：四个平台都设 `*_MODE=mock`（或什么都不填，`auto` 自动 Mock），启动后端 + 前端即可走通「收件箱 → 回复 → 回放」；或直接 `pnpm e2e`（强制四平台 mock，完全离线，20 项断言 + `SMOKE OK`）。
@@ -767,4 +770,4 @@ A：不能绕。dws 涉及企业数据访问，官方设计就是管理员授权
 A：dws 发送默认带钉钉平台的 AI 发送角标（`--ai-tag` 默认 `true`），LinkHub 保留这个默认、不隐藏不伪造——对方能看出是自动化工具以你本人身份发出的，属于透明标注。
 
 **Q：本人身份真实端到端验证过吗？**
-A：代码、单测与 fake-dws 离线桩已覆盖；真实端到端**待实测**：飞书受本机租户 `21001` 限制，钉钉需企业开启 CLI 访问并真人授权。文档不写"已实测通过"，详见 [personal-identity.md](personal-identity.md) §11。
+A：代码、单测与 fake-dws 离线桩已覆盖；**飞书已于 2026-11-12 真实端到端验证通过**（真实 OAuth → 单聊 + 群聊轮询入库 → 以本人身份发送，飞书侧核对 `sender_type=user`；本机租户 `21001` 已解除），见 [飞书验收记录](verification/feishu-personal-e2e-2026-11-12.md)。**钉钉真实端到端待实测**：需企业开启 CLI 访问并真人授权。
