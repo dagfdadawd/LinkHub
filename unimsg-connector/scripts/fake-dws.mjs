@@ -32,6 +32,12 @@
  *   **停止推流但进程保持存活**（离线演示不会无限灌重复消息）；显式 --max-events=N 或
  *   FAKE_DWS_MAX_EVENTS=N 时行为不变（N=0 表示不限）。
  *   FAKE_DWS_MAX_EVENTS      无 --max-events 时的事件条数上限（默认 5，0 = 不限）
+ *
+ * 事件输出（与真实 dws v1.0.68 一致）：transport envelope
+ *   {"type":"event","event_type":"user_im_message_receive_o2o_all","event_id":"...",
+ *    "data":"<业务字段 JSON 字符串>","headers":{...},"received_at_unix_ms":...}
+ * `--flatten` 只属于 event consume/schema，+listen-im 不支持：fake 与真 CLI 一样报
+ * `unknown flag: --flatten` 并 exit 3（让单测能抓到回归）。
  *   FAKE_DWS_SENT_LOG        发送记录 NDJSON（默认状态文件旁 fake-dws-sent.ndjson）
  *   FAKE_DWS_LOGIN_DELAY_MS  登录后多久变为已登录（默认 1200ms，测试可设 0）
  *
@@ -260,15 +266,20 @@ if (argv[0] === 'contact' && argv[1] === 'user' && argv[2] === 'get-self') {
   markHandled();
   failByEnv('contact user get-self');
   if (!authenticated()) failNotLoggedIn();
+  // 真实 dws v1.0.68 输出（实测）：{result:[{isAdmin, orgEmployeeModel:{corpId,orgUserName,userId,depts}}]}
+  // 注意真实 CLI **不返回 openDingTalkId**，fake 保持一致（自环过滤因此是 best-effort，不 warn）。
   printJson({
-    ok: true,
-    outcome: 'success',
-    data: {
-      openDingTalkId: defaultProfile().openDingTalkId,
-      userId: defaultProfile().userId,
-      displayName: defaultProfile().displayName,
-      corpId: defaultProfile().corpId,
-    },
+    result: [
+      {
+        isAdmin: false,
+        orgEmployeeModel: {
+          corpId: defaultProfile().corpId,
+          orgUserName: defaultProfile().displayName,
+          userId: defaultProfile().userId,
+          depts: [{ deptId: 1, deptName: '模拟部门', deptPathName: '模拟部门' }],
+        },
+      },
+    ],
   });
   process.exit(0);
 }
@@ -278,6 +289,22 @@ if (argv[0] === 'contact' && argv[1] === 'user' && argv[2] === 'get-self') {
 // ---------------------------------------------------------------------------
 if (argv[0] === 'event' && (argv[1] === '+listen-im' || argv[1] === 'consume')) {
   markHandled();
+  // 真实 dws v1.0.68：+listen-im 不支持 --flatten（只属于 event consume/schema），
+  // 会向 stderr 输出 validation JSON 并 exit 3；fake 必须同样拒绝，否则单测抓不到回归（task-13）。
+  if (argv.includes('--flatten')) {
+    process.stderr.write(`${JSON.stringify({
+      error: {
+        actions: ["Run 'dws event +listen-im --help' for valid flags"],
+        category: 'validation',
+        cause: 'unknown flag: --flatten',
+        code: 3,
+        hint: "Run 'dws event +listen-im --help' to see available options",
+        message: "unknown flag: --flatten\\nSee 'dws event +listen-im --help' for usage.",
+        reason: 'unknown_flag',
+      },
+    }, null, 2)}\n`);
+    process.exit(3);
+  }
   failByEnv('event');
   if (!authenticated()) failNotLoggedIn();
 
@@ -339,24 +366,36 @@ if (argv[0] === 'event' && (argv[1] === '+listen-im' || argv[1] === 'consume')) 
     seq += 1;
     const tpl = templates[(seq - 1) % templates.length]();
     const nowMs = Date.now();
-    // --flatten 输出：业务字段位于 payload（与 dws v1.0.68 一致）
-    const line = {
+    // 真实 dws v1.0.68 transport envelope：data 是「业务 payload 的 JSON 字符串」，
+    // event_type 在根上；业务字段（message_id/create_time/...）在 data 解析后。
+    const business = {
       type: eventKey,
+      event_id: `fake-event-${seq}-${nowMs}`,
+      message_id: `fake-open-message-${seq}-${nowMs}`,
+      conversation_id: kind.includes('group') || kind === 'at-me' ? `cid-fake-group-${kind}` : `cid-fake-o2o-${kind}`,
+      content: tpl.content,
+      create_time: String(nowMs),
+      event_time: nowMs,
+      timestamp: nowMs,
+      sender: '张三（模拟）',
+      sender_open_dingtalk_id: 'fake-open-dingtalk-id-002',
+      subscribe_id: `fake-subscribe-${kind}`,
+    };
+    const line = {
+      type: 'event',
       event_type: eventKey,
-      payload: {
-        type: eventKey,
-        event_id: `fake-event-${seq}-${nowMs}`,
-        message_id: `fake-open-message-${seq}-${nowMs}`,
-        conversation_id: kind.includes('group') || kind === 'at-me' ? `cid-fake-group-${kind}` : `cid-fake-o2o-${kind}`,
-        content: tpl.content,
-        create_time: String(nowMs),
-        event_time: nowMs,
-        timestamp: nowMs,
-        sender: '张三（模拟）',
-        sender_open_dingtalk_id: 'fake-open-dingtalk-id-002',
-        subscribe_id: `fake-subscribe-${kind}`,
-      },
-      headers: { messageId: `fake-envelope-${seq}`, topic: 'fake-personal-stream' },
+      event_id: `fake-envelope-${seq}-${nowMs}`,
+      data: JSON.stringify(business),
+      headers: { messageId: `fake-envelope-${seq}`, topic: 'fake-personal-stream', event_type: eventKey },
+      event_born_time: nowMs,
+      received_at_unix_ms: nowMs,
+      seq: String(seq),
+      subscribe_id: `fake-subscribe-${kind}`,
+      rule_type: 'message',
+      event_scope: 'personal',
+      event_corp_id: 'fake-corp',
+      event_unified_app_id: 'fake-app',
+      source_id: 'fake-source',
     };
     // 偶尔混入一行非 JSON 诊断输出，验证 LinkHub 的 NDJSON 容错（真实 dws 诊断大多走 stderr）
     if (seq % 5 === 0) process.stdout.write(`WARN: fake-dws 诊断行（非 JSON，应被忽略）seq=${seq}\n`);
@@ -379,6 +418,13 @@ if (argv[0] === 'event' && (argv[1] === '+listen-im' || argv[1] === 'consume')) 
   if (durationMs > 0) durationTimer = setTimeout(() => stop(0), durationMs);
   process.on('SIGTERM', () => stop(0));
   process.on('SIGINT', () => stop(0));
+  // 真实 dws 官方停机方式之一是「关 stdin」：fake 同样在 stdin EOF/close 时优雅退出，
+  // 让 LinkHub 的优雅关闭逻辑（close stdin → 等退出 → 超时硬杀）在离线演示/单测里可验证。
+  if (process.stdin && typeof process.stdin.on === 'function') {
+    process.stdin.on('end', () => stop(0));
+    process.stdin.on('close', () => stop(0));
+    process.stdin.resume();
+  }
   timer = setTimeout(emit, 300);
   // 保持进程存活
 } else if (argv[0] === 'event' && argv[1] === 'list') {

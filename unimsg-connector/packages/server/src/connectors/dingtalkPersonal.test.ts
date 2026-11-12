@@ -174,6 +174,80 @@ test('parseEventLine：--flatten 的 payload / 普通 envelope / 垃圾行容错
   assert.equal(approval!.messageId, '');
 });
 
+test('parseEventLine：真实 transport envelope（data 是 JSON 字符串）→ o2o/at-me、ms 时间', () => {
+  const business = {
+    type: 'user_im_message_receive_o2o_all',
+    event_id: 'evt-1',
+    message_id: 'om_real_1',
+    conversation_id: 'cid_real_1',
+    content: '你好，周报周五前发我',
+    create_time: '1731000000000',
+    event_time: 1_731_000_000_123,
+    sender: '李四',
+    sender_open_dingtalk_id: 'od_sender_1',
+  };
+  const envelope = {
+    type: 'event',
+    event_type: 'user_im_message_receive_o2o_all',
+    event_id: 'envelope-1',
+    data: JSON.stringify(business),
+    headers: { messageId: 'h1', topic: 'personal_stream', event_type: 'user_im_message_receive_o2o_all' },
+    event_born_time: 1_731_000_000_200,
+    received_at_unix_ms: 1_731_000_000_300,
+    seq: '1',
+    subscribe_id: 'sub-1',
+  };
+  const o2o = parseEventLine(JSON.stringify(envelope));
+  assert.ok(o2o, 'data 字符串必须被 JSON.parse 后解析出消息');
+  assert.equal(o2o!.messageId, 'om_real_1');
+  assert.equal(o2o!.conversationId, 'cid_real_1');
+  assert.equal(o2o!.content, '你好，周报周五前发我');
+  assert.equal(o2o!.eventType, 'user_im_message_receive_o2o_all');
+  assert.equal(o2o!.senderName, '李四');
+  assert.equal(o2o!.senderOpenDingtalkId, 'od_sender_1');
+  assert.equal(o2o!.createTimeMs, 1_731_000_000_123, 'event_time(ms) 优先');
+
+  // at-me：群消息
+  const atMe = parseEventLine(JSON.stringify({
+    ...envelope,
+    event_type: 'user_im_message_receive_at',
+    data: JSON.stringify({ ...business, type: 'user_im_message_receive_at', conversation_id: 'cid_group_1' }),
+  }));
+  assert.equal(atMe!.eventType, 'user_im_message_receive_at');
+  assert.equal(atMe!.conversationId, 'cid_group_1');
+  assert.ok(mapPersonalEventToMessage(atMe!)?.conversation?.type === 'group');
+
+  // create_time 是字符串时间（非纯数字）时用 Date 解析
+  const iso = parseEventLine(JSON.stringify({
+    type: 'event',
+    event_type: 'user_im_message_receive_o2o_all',
+    data: JSON.stringify({ message_id: 'om_iso', content: 'hi', create_time: '2024-11-08T02:13:20.000Z' }),
+  }));
+  assert.equal(iso!.createTimeMs, Date.parse('2024-11-08T02:13:20.000Z'));
+
+  // data 是对象（旧格式/兼容）也能处理
+  const objData = parseEventLine(JSON.stringify({
+    type: 'event',
+    event_type: 'user_im_message_receive_o2o_all',
+    data: { message_id: 'om_obj', content: '对象型 data' },
+  }));
+  assert.equal(objData!.messageId, 'om_obj');
+
+  // data 是坏 JSON 字符串 → 不崩溃：按「非消息事件」带出类型，映射层忽略（绝不 throw）
+  const broken = parseEventLine(JSON.stringify({ type: 'event', event_type: 'x', data: '{bad json' }));
+  assert.ok(broken);
+  assert.equal(broken!.messageId, '');
+  assert.equal(broken!.eventType, 'x');
+  // 非消息事件：envelope 根 event_type 仍能带出，messageId 为空
+  const nonMsg = parseEventLine(JSON.stringify({
+    type: 'event',
+    event_type: 'user_oa_approval_task_created',
+    data: JSON.stringify({ event_id: 'e9' }),
+  }));
+  assert.equal(nonMsg!.messageId, '');
+  assert.equal(nonMsg!.eventType, 'user_oa_approval_task_created');
+});
+
 test('mapPersonalEventToMessage：文本 / 文件 / 群单聊 / 自己发的一律过滤', () => {
   const base = {
     eventType: 'user_im_message_receive_o2o_all',
@@ -688,20 +762,46 @@ test('fake-dws 冒烟：未登录/失败模式映射成中文错误', async () =
   }
 });
 
-test('parseSelfProfileJson / client.getSelfOpenDingtalkId：用于过滤自己发出的消息', async () => {
+test('parseSelfProfileJson / client.getSelfOpenDingtalkId：真实 get-self 不返回 openDingTalkId（best-effort 不自环过滤）', async () => {
+  // 真实 v1.0.68 输出：{result:[{isAdmin, orgEmployeeModel:{corpId,orgUserName,userId,depts}}]}，无 openDingTalkId
+  const real = parseSelfProfileJson(JSON.stringify({
+    result: [{ isAdmin: true, orgEmployeeModel: { corpId: 'c1', orgUserName: '陈', userId: 'u1', depts: [] } }],
+  }));
+  assert.equal(real.openDingtalkId, undefined);
+  assert.equal(real.displayName, '陈');
+  assert.equal(real.userId, 'u1');
+
+  // 旧版/模拟格式的 openDingTalkId 仍兼容（未来 dws 返回时自动启用自环过滤）
   assert.equal(parseSelfProfileJson('{"ok":true,"data":{"openDingTalkId":"od_self","displayName":"我"}}').openDingtalkId, 'od_self');
   assert.equal(parseSelfProfileJson('{"open_dingtalk_id":"od_2"}').openDingtalkId, 'od_2');
   assert.equal(parseSelfProfileJson('not-json').openDingtalkId, undefined);
 
   setFakeEnv();
   const client = new DingtalkPersonalClient({ bin: `node ${FAKE_DWS}` });
-  const id = await client.getSelfOpenDingtalkId();
-  assert.equal(id, 'fake-open-dingtalk-id-001');
-  assert.equal(client.peekSelfOpenDingtalkId(), 'fake-open-dingtalk-id-001');
+  assert.equal(await client.getSelfOpenDingtalkId(), undefined, 'fake 与真实一致：不返回 openDingTalkId');
+  assert.equal(client.peekSelfOpenDingtalkId(), undefined);
   client.invalidateStatus();
   assert.equal(client.peekSelfOpenDingtalkId(), undefined);
 });
 
+
+test('fake-dws 与真实 CLI 一致：event +listen-im 拒绝 --flatten（exit 3 unknown flag）', async () => {
+  setFakeEnv();
+  const result = await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve) => {
+    const child = spawn(process.execPath, [
+      FAKE_DWS, 'event', '+listen-im', '--kind', 'all-direct', '--events', 'message', '--flatten', '-f', 'ndjson', '-y',
+    ], { cwd: process.cwd(), env: process.env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (d) => { stdout += String(d); });
+    child.stderr.on('data', (d) => { stderr += String(d); });
+    child.on('close', (code) => resolve({ code, stdout, stderr }));
+  });
+  assert.equal(result.code, 3, '应像真实 dws 一样 exit 3');
+  assert.match(result.stderr, /unknown flag: --flatten/);
+  assert.match(result.stderr, /"reason":\s*"unknown_flag"|unknown_flag/);
+  assert.ok(!result.stdout.startsWith('{'), '不得输出事件，应直接拒绝');
+});
 
 test('NEW-P2-2 fake-dws 默认只推 5 条示例事件后停止推流（进程保持存活）', async () => {
   setFakeEnv({ FAKE_DWS_EVENT_INTERVAL_MS: '40' });
@@ -711,7 +811,7 @@ test('NEW-P2-2 fake-dws 默认只推 5 条示例事件后停止推流（进程�
       cwd: process.cwd(),
       env: process.env,
       windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe'],
     });
     const lines: string[] = [];
     let stderr = '';
@@ -752,7 +852,7 @@ test('NEW-P2-2 默认模式推完 5 条后进程必须保持存活（无 pending
     cwd: process.cwd(),
     env: process.env,
     windowsHide: true,
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: ['pipe', 'pipe', 'pipe'],
   });
   let buf = '';
   const lines: string[] = [];
