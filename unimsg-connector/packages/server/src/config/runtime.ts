@@ -258,6 +258,124 @@ export interface MailAccountsParseResult {
   issues: MailAccountIssue[];
 }
 
+// ---------------------------------------------------------------------------
+// 邮箱账号运行时导入（个人版在「连接账号」页填表，替代手改 .env）
+// ---------------------------------------------------------------------------
+
+/** 「连接账号」页提交的邮箱账号输入（字段名与本地账号文件一致） */
+export interface MailAccountInput {
+  /** 环境变量段名/本地 key（可选；不传按邮箱地址推导） */
+  key?: string;
+  address?: string;
+  /** 授权码（不是网页登录密码）；只在服务端内存/本地文件，绝不下发 */
+  authCode?: string;
+  /** qq / 163 / 126 / yeah / gmail / outlook / icloud / custom（可省略，按域名推断） */
+  provider?: string;
+  label?: string;
+  imapHost?: string;
+  imapPort?: number | string;
+  imapSecure?: boolean | string;
+  smtpHost?: string;
+  smtpPort?: number | string;
+  smtpSecure?: boolean | string;
+  folders?: string[] | string;
+}
+
+export interface MailAccountBuildResult {
+  account?: MailAccount;
+  /** 校验错误（中文，可直接展示） */
+  errors: string[];
+}
+
+function boolish(v: unknown): boolean | undefined {
+  if (typeof v === 'boolean') return v;
+  if (typeof v === 'string') {
+    const t = v.trim().toLowerCase();
+    if (['true', '1', 'yes', 'on'].includes(t)) return true;
+    if (['false', '0', 'no', 'off'].includes(t)) return false;
+  }
+  return undefined;
+}
+
+function portOf(v: unknown, fallback: number): number {
+  const n = typeof v === 'number' ? v : Number(String(v ?? '').trim());
+  return Number.isInteger(n) && n > 0 && n < 65_536 ? n : fallback;
+}
+
+/**
+ * 把表单/本地文件里的一条账号输入规范化+校验成 MailAccount。
+ * 纯函数、不落盘、不联网；错误全部中文（供接口 400 直接展示）。
+ */
+export function createMailAccountFromInput(input: MailAccountInput): MailAccountBuildResult {
+  const errors: string[] = [];
+  const address = String(input.address ?? '').trim();
+  if (!address) {
+    errors.push('请填写邮箱地址');
+  } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address)) {
+    errors.push('邮箱地址格式不对（示例：you@qq.com）');
+  }
+  const authCode = String(input.authCode ?? '').trim();
+  if (!authCode) {
+    errors.push('请填写授权码（在邮箱网页版「设置 → POP3/SMTP/IMAP」里生成；不是网页登录密码）');
+  } else if (authCode.length > 512) {
+    errors.push('授权码过长（请确认复制正确，不要粘贴整段网页内容）');
+  }
+
+  const explicitKey = String(input.key ?? '').trim().toLowerCase();
+  let key = explicitKey;
+  if (key) {
+    if (!/^[a-z0-9][a-z0-9._-]{0,31}$/.test(key)) {
+      errors.push('账号 key 只能用小写字母/数字/._-（最长 32 位），例如 qq / work');
+    }
+  } else {
+    const local = address.includes('@') ? address.split('@')[0]! : address;
+    key = local.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 24) || 'mail';
+  }
+
+  const provider = inferMailProvider(address, input.provider);
+  const preset = MAIL_PROVIDER_PRESETS[provider] ?? MAIL_PROVIDER_PRESETS.custom!;
+  const imapHost = String(input.imapHost ?? '').trim() || preset.imapHost;
+  const smtpHost = String(input.smtpHost ?? '').trim() || preset.smtpHost;
+  if (!imapHost) errors.push('未识别的邮箱服务商：请填写 IMAP 服务器地址（如 imap.company.com）');
+  if (!smtpHost) errors.push('未识别的邮箱服务商：请填写 SMTP 服务器地址（如 smtp.company.com）');
+
+  const imapPort = portOf(input.imapPort, preset.imapPort || 993);
+  const smtpPort = portOf(input.smtpPort, preset.smtpPort || 465);
+  // 显式端口优先按端口推导加密方式（143=STARTTLS、993=隐式 TLS；587/25=STARTTLS、465=隐式 TLS），
+  // 未显式端口时用服务商预设，保证自定义邮箱/端口覆盖不会配错加密。
+  const imapSecure = boolish(input.imapSecure)
+    ?? (input.imapPort !== undefined ? imapPort === 993 : (preset.imapSecure ?? imapPort === 993));
+  const smtpSecure = boolish(input.smtpSecure)
+    ?? (input.smtpPort !== undefined ? smtpPort === 465 : (preset.smtpSecure ?? smtpPort === 465));
+
+  const folderRaw = Array.isArray(input.folders)
+    ? input.folders
+    : String(input.folders ?? '').split(/[,;\s]+/);
+  const folders = [...new Set(folderRaw.map((f) => String(f).trim()).filter(Boolean))].slice(0, 8);
+  if (folders.length === 0) folders.push('INBOX');
+
+  const label = String(input.label ?? '').trim() || preset.label || provider;
+
+  if (errors.length > 0) return { errors };
+  return {
+    errors,
+    account: {
+      key,
+      label,
+      address,
+      authCode,
+      provider,
+      imapHost,
+      imapPort,
+      imapSecure,
+      smtpHost,
+      smtpPort,
+      smtpSecure,
+      folders,
+    },
+  };
+}
+
 /**
  * 解析邮箱账号（可单测，不依赖模块级 process.env）：
  *  - `MAIL_ACCOUNTS=qq,163,work` 显式列出账号与环境变量段；
@@ -792,8 +910,15 @@ export interface DingtalkIdentityConfig {
   receive: ReceiveToggle;
   /** 个人事件订阅范围（已归一化，顺序保留） */
   eventKinds: string[];
-  /** DWS_BIN 原样保留（可带参数，如 `node scripts/fake-dws.mjs`） */
+  /**
+   * dws 可执行文件（可带参数，如 `node scripts/fake-dws.mjs`）。
+   * 由 connectors/dwsBin.ts 统一解析：DWS_BIN → LINKHUB_TOOLS_DIR → 仓库 tools/ → ~/.local/bin → PATH。
+   */
   bin: string;
+  /** dws 来源（env/tools/user_profile/path/missing，onboarding 如实展示） */
+  binSource?: 'env' | 'tools' | 'user_profile' | 'path' | 'missing';
+  /** 来源人话说明（例如「仓库 tools/（pnpm run fetch:dws 下载位置）」） */
+  binPathHint?: string;
   /** DWS_PROFILE */
   profile: string;
   authTimeoutMs: number;
@@ -815,10 +940,19 @@ export interface IdentityRuntimeConfig {
 
 /** 飞书发送/资源基础权限（本人身份发送用） */
 export const FEISHU_BASE_SCOPES = ['im:message', 'im:message.send_as_user', 'im:resource'] as const;
-/** 飞书「本人身份接收」额外权限（用户身份读消息） */
+/**
+ * 飞书「本人身份接收」额外权限（用户身份读消息 + 列会话）。
+ *
+ * `im:chat:read`（查看群信息）是**列会话的硬前提**：`GET /open-apis/im/v1/chats` 用
+ * user_access_token 调用时缺它直接返回 `99991679`
+ * （required one of [im:chat:readonly, im:chat, im:chat.group_info:readonly, im:chat:read]），
+ * 一条会话都列不出来，轮询等于空转 —— 2026-11-12 用真实令牌实测确认。
+ * 它和读消息权限是两码事（只申请读消息权限不够），所以必须一起申请。
+ */
 export const FEISHU_USER_RECEIVE_SCOPES = [
   'im:message.p2p_msg:get_as_user',
   'im:message.group_msg:get_as_user',
+  'im:chat:read',
 ] as const;
 /** refresh_token 必需 */
 export const FEISHU_OFFLINE_SCOPE = 'offline_access';

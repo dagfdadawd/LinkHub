@@ -150,10 +150,11 @@ function appendLogChunk(chunk) {
   }
 }
 
-/** 找到 dws.exe（钉钉本人身份可选依赖）：PATH 或 %USERPROFILE%\.local\bin */
+/** 找到 dws.exe（钉钉本人身份可选依赖）：内置 tools → %USERPROFILE%\.local\bin → PATH */
 function resolveDwsBin() {
   if (process.env.DWS_BIN && process.env.DWS_BIN.trim()) return process.env.DWS_BIN.trim();
   const candidates = [
+    path.join(__dirname, 'tools', 'dws.exe'), // 构建时内置（pnpm run fetch:dws 后打包）
     path.join(process.env.USERPROFILE || '', '.local', 'bin', 'dws.exe'),
     'dws',
   ];
@@ -423,7 +424,7 @@ function showConfigHelp() {
       '· 不填任何凭据 = 四平台 Mock，可完整演示闭环；',
       '· 要接真实平台：按内置模板或 docs/personal-identity.md 填写后，菜单「配置 → 重新加载」；',
       '· 飞书本人身份：账号页点「连接本人账号」完成 OAuth；',
-      '· 钉钉本人身份：需本机安装官方 dws CLI 并在终端执行 dws auth login（App 会自动探测）。',
+      '· 钉钉本人身份：本版本会优先使用包内内置的官方 dws CLI（tools/dws.exe），未内置时自动探测本机安装；均可从「连接账号」页按引导完成登录。',
     ].join('\n'),
     buttons: ['打开配置文件', '打开配置文件夹', '关闭'],
     defaultId: 0,

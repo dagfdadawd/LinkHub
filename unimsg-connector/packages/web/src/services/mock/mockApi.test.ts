@@ -160,3 +160,31 @@ describe('MockApi', () => {
     expect(incoming.status).toBe(MsgStatus.RECEIVED);
   });
 });
+describe('MockApi 授权中心（纯前端演示）', () => {
+  it('onboarding 如实返回 4 个「演示模式」平台，不伪造已连接', async () => {
+    const { api } = makeApi();
+    const view = await api.onboarding();
+    expect(view.firstRun).toBe(true);
+    expect(view.dws).toMatchObject({ available: false, source: 'missing' });
+    expect(view.overall).toEqual({ ready: 0, total: 4, needsAction: 0 });
+    expect(view.steps.map((s) => s.id)).toEqual(['mail', 'dingtalk', 'feishu', 'wecom']);
+    expect(view.steps.every((s) => s.state === 'mock')).toBe(true);
+    expect(view.steps.every((s) => s.actions.length === 0)).toBe(true);
+  });
+
+  it('邮箱账号在演示模式不假成功：无账号、测试返回明确失败、保存/删除报错', async () => {
+    const { api } = makeApi();
+    expect(await api.mailAccounts()).toEqual([]);
+    const tested = await api.mailAccountTest({
+      provider: 'qq',
+      address: 'me@qq.com',
+      authCode: 'secret',
+    });
+    expect(tested.ok).toBe(false);
+    expect(tested.message).toContain('演示模式');
+    await expect(
+      api.mailAccountCreate({ provider: 'qq', address: 'me@qq.com', authCode: 'secret' }),
+    ).rejects.toThrow(/演示模式/);
+    await expect(api.mailAccountDelete('local-1')).rejects.toThrow(/演示模式/);
+  });
+});

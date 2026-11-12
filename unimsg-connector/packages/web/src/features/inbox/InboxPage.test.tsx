@@ -5,7 +5,7 @@
  * 以「状态驱动」的方式覆盖：真实后端空收件箱 → 显示 QuickStart；Mock 模式 / 有消息 / 加载失败 → 不显示。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ACCOUNTS } from '../../services/mock/fixtures';
 import { MsgStatus, Platform } from '../../types';
@@ -22,6 +22,7 @@ const hoisted = vi.hoisted(() => {
     connection: 'connected' as 'connected' | 'reconnecting' | 'offline',
     demoMode: false,
     initialized: true,
+    onboarding: null as null | { firstRun?: boolean; overall?: { ready: number; total: number } },
   };
   return { state };
 });
@@ -42,6 +43,7 @@ vi.mock('../../store', () => ({
     refreshHealth: vi.fn(),
     simulateIncoming: vi.fn(),
     armFailure: vi.fn(),
+    refreshOnboarding: vi.fn(async () => null),
   },
 }));
 
@@ -70,6 +72,7 @@ function mockState(patch: Partial<typeof hoisted.state> = {}) {
     connection: 'connected',
     demoMode: false,
     initialized: true,
+    onboarding: null,
     ...patch,
   };
 }
@@ -158,5 +161,47 @@ describe('InboxPage 首启空态接线', () => {
 
     expect(await screen.findByTestId('detail-panel')).toBeInTheDocument();
     expect(within(screen.getByTestId('detail-panel')).getByText('周五前交周报。')).toBeInTheDocument();
+  });
+});
+
+
+describe('首启入口（连接账号横幅）', () => {
+  it('首次打开：收件箱顶部提示去「连接账号」，点击后写入本地标记不再打扰', () => {
+    mockState({ accounts: ACCOUNTS });
+    renderInboxPage();
+
+    const banner = screen.getByTestId('onboarding-banner');
+    expect(banner).toBeInTheDocument();
+    expect(screen.getByText(/首次使用：先连接你自己的账号/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '去连接账号' }));
+    expect(window.localStorage.getItem('linkhub.onboarded')).toBe('1');
+    expect(screen.queryByTestId('onboarding-banner')).toBeNull();
+  });
+
+  it('点过「稍后再说」后不再打扰', () => {
+    window.localStorage.setItem('linkhub.onboarded', '1');
+    mockState({ accounts: ACCOUNTS });
+    renderInboxPage();
+    expect(screen.queryByTestId('onboarding-banner')).toBeNull();
+  });
+
+  it('后端 firstRun=true 时即使本地有旧标记也重新提示（换环境仍有用）', () => {
+    window.localStorage.setItem('linkhub.onboarded', '1');
+    mockState({
+      accounts: ACCOUNTS,
+      onboarding: { firstRun: true, overall: { ready: 1, total: 4 } },
+    });
+    renderInboxPage();
+    expect(screen.getByTestId('onboarding-banner')).toBeInTheDocument();
+  });
+
+  it('全部平台已就绪 / 纯前端演示模式：不出现横幅', () => {
+    mockState({
+      accounts: ACCOUNTS,
+      onboarding: { firstRun: false, overall: { ready: 4, total: 4 } },
+    });
+    renderInboxPage();
+    expect(screen.queryByTestId('onboarding-banner')).toBeNull();
   });
 });

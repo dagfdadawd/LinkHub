@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useState } from 'react';
 import type { ReactNode } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Alert, Button, Card, Col, message, Popconfirm, Row, Tag, Typography } from 'antd';
 import {
   ApiOutlined,
@@ -26,14 +27,8 @@ import { IdentityTag } from '../../components/IdentityTag';
 import { Sparkline } from '../../components/Sparkline';
 import { useHealthSeries } from '../../hooks/useHealthSeries';
 import { PersonalIdentityModal } from './PersonalIdentityModal';
-import {
-  FEISHU_OAUTH_CHECKLIST,
-  FEISHU_OAUTH_UNFINISHED_HINT,
-  clearFeishuOAuthPending,
-  defaultOAuthStorage,
-  markFeishuOAuthPending,
-  readFeishuOAuthPending,
-} from './feishuOAuthFeedback';
+import { FEISHU_OAUTH_CHECKLIST, FEISHU_OAUTH_UNFINISHED_HINT } from './feishuOAuthFeedback';
+import { useFeishuOAuth } from './useFeishuOAuth';
 
 /** 本次实际通道：真实接口=绿，Mock 模拟=橙（Mock 结果绝不伪装成真实成功） */
 const MODE_META: Record<DeliveryMode, { label: string; color: 'success' | 'warning' }> = {
@@ -418,16 +413,12 @@ export function AccountCard({
 
 export function AccountsPage() {
   const state = useAppState();
+  const navigate = useNavigate();
   const health = state.health;
   const [metricsOpen, setMetricsOpen] = useState(false);
-  const [feishuConnecting, setFeishuConnecting] = useState(false);
   const [dingtalkOpen, setDingtalkOpen] = useState(false);
-  /** 飞书回跳后仍未连接：显示中文原因与配置清单，而不是静默无反应 */
-  const [feishuUnfinished, setFeishuUnfinished] = useState(false);
-  /** 弹窗被浏览器拦截时，给用户可点的授权链接（绝不把当前页整页跳走） */
-  const [feishuFallbackUrl, setFeishuFallbackUrl] = useState<string>();
-  const connectingRef = useRef(false);
-  const oauthStorage = useMemo(() => defaultOAuthStorage(), []);
+  /** 飞书 OAuth 共用流程：与「连接账号」授权中心同一套回跳/拦截反馈 */
+  const feishu = useFeishuOAuth();
   // 只在小抽屉展开时采样（不做后台轮询）；数据不足 3 点不画
   const receivedSeries = useHealthSeries(health?.received, metricsOpen);
 
@@ -440,88 +431,6 @@ export function AccountsPage() {
 
   // P1-5：.env 在上次启动后被改过 → 明确提示「需重启后端」
   const envRestart = checkEnvRestart(health);
-
-  /**
-   * 飞书 OAuth 回跳反馈（P1-6）：
-   * 授权页在另一个标签，回到本页时刷新账号；若仍是未连接，展示中文原因 + 配置清单。
-   * 页面重载回来（sessionStorage 标记还在）同样会恢复提示。
-   */
-  useEffect(() => {
-    let timer: number | undefined;
-    let alive = true;
-    const pending = readFeishuOAuthPending(oauthStorage);
-    if (pending) setFeishuUnfinished(true);
-
-    const evaluateReturn = async () => {
-      if (!readFeishuOAuthPending(oauthStorage)) return;
-      await store.refreshAccounts();
-      if (!alive) return;
-      const feishu = store.getSnapshot().accounts.find((a) => a.platform === Platform.FEISHU);
-      if (feishu?.identity?.user.linked) {
-        clearFeishuOAuthPending(oauthStorage);
-        setFeishuUnfinished(false);
-        message.success('飞书本人身份已连接');
-      } else {
-        setFeishuUnfinished(true);
-      }
-    };
-
-    const onFocus = () => {
-      window.clearTimeout(timer);
-      timer = window.setTimeout(() => {
-        void store.refreshAccounts();
-        // 授权回调可能还在服务端落 token：稍等再判断一次，避免「刚成功却提示失败」
-        void evaluateReturn();
-      }, 250);
-    };
-    window.addEventListener('focus', onFocus);
-    // 页面重载进入时也判断一次（同页跳转/刚拿到回调的情况）
-    if (pending) timer = window.setTimeout(() => { void evaluateReturn(); }, 800);
-    return () => {
-      alive = false;
-      window.clearTimeout(timer);
-      window.removeEventListener('focus', onFocus);
-    };
-  }, [oauthStorage]);
-
-  const connectFeishu = async (): Promise<void> => {
-    // state 更新是异步的，同 tick 连点会绕过 feishuConnecting；用 ref 同步拦截
-    if (connectingRef.current) return;
-    connectingRef.current = true;
-    setFeishuConnecting(true);
-    setFeishuFallbackUrl(undefined);
-    // 在授权前落 pending 标记：回来若仍未连接，就能给出失败反馈
-    markFeishuOAuthPending(oauthStorage);
-    // 必须在 await 之前同步开空白页，否则会被浏览器当作弹窗拦截
-    const tab = window.open('about:blank', '_blank');
-    if (tab) {
-      try { tab.opener = null; } catch { /* 跨域前设置失败不影响授权 */ }
-    }
-    try {
-      const { url } = await store.feishuOAuthStart();
-      if (tab) {
-        tab.location.href = url;
-      } else {
-        // 弹窗被拦截：绝不整页跳走（会丢失 LinkHub 上下文，失败回来也没有提示）；
-        // 改为展示可点击链接 + 可复制 URL，用户点一下仍在浏览器手势内，能正常打开。
-        setFeishuFallbackUrl(url);
-        message.warning('浏览器拦截了飞书授权窗口，请点页面上的「打开飞书授权页」继续');
-      }
-    } catch (e) {
-      tab?.close();
-      clearFeishuOAuthPending(oauthStorage);
-      message.error(e instanceof Error ? e.message : '获取飞书授权地址失败');
-    } finally {
-      connectingRef.current = false;
-      setFeishuConnecting(false);
-    }
-  };
-
-  const dismissFeishuUnfinished = (): void => {
-    clearFeishuOAuthPending(oauthStorage);
-    setFeishuUnfinished(false);
-    setFeishuFallbackUrl(undefined);
-  };
 
   const logoutDingtalk = async (): Promise<void> => {
     try {
@@ -578,6 +487,9 @@ export function AccountsPage() {
             <ApiOutlined /> 平台账号
           </h1>
         </div>
+        <Button icon={<LinkOutlined />} onClick={() => navigate('/connect')}>
+          打开「连接账号」向导
+        </Button>
       </header>
 
       <p className="accounts-intro">
@@ -627,25 +539,25 @@ export function AccountsPage() {
       )}
 
       {/* P1-6：飞书 OAuth 失败/被拦截的回跳反馈——不再静默，也不再整页跳走 */}
-      {(feishuUnfinished || feishuFallbackUrl) && (
+      {(feishu.unfinished || feishu.fallbackUrl) && (
         <Alert
           className="accounts-alert"
           type="warning"
           showIcon
-          message={feishuFallbackUrl ? '浏览器拦截了飞书授权窗口' : '飞书授权未完成'}
+          message={feishu.fallbackUrl ? '浏览器拦截了飞书授权窗口' : '飞书授权未完成'}
           description={
             <div className="accounts-alert__detail">
               <div>
-                {feishuFallbackUrl
+                {feishu.fallbackUrl
                   ? '授权页没能自动打开。点下面的按钮或复制链接，在新标签里完成授权；完成后回到本页会自动刷新状态。'
                   : FEISHU_OAUTH_UNFINISHED_HINT}
               </div>
-              {feishuFallbackUrl && (
+              {feishu.fallbackUrl && (
                 <div className="accounts-alert__row">
                   <Button
                     type="primary"
                     size="small"
-                    href={feishuFallbackUrl}
+                    href={feishu.fallbackUrl}
                     target="_blank"
                     rel="noreferrer"
                   >
@@ -653,7 +565,7 @@ export function AccountsPage() {
                   </Button>
                   <Typography.Text
                     className="accounts-alert__copy"
-                    copyable={{ text: feishuFallbackUrl, tooltips: ['复制授权链接', '已复制'] }}
+                    copyable={{ text: feishu.fallbackUrl, tooltips: ['复制授权链接', '已复制'] }}
                   >
                     复制授权链接
                   </Typography.Text>
@@ -670,12 +582,12 @@ export function AccountsPage() {
               <div className="accounts-alert__row">
                 <Button
                   size="small"
-                  loading={feishuConnecting}
-                  onClick={() => void connectFeishu()}
+                  loading={feishu.connecting}
+                  onClick={() => void feishu.connect()}
                 >
                   重新发起授权
                 </Button>
-                <Button size="small" type="text" onClick={dismissFeishuUnfinished}>
+                <Button size="small" type="text" onClick={feishu.dismiss}>
                   我知道了
                 </Button>
               </div>
@@ -690,8 +602,8 @@ export function AccountsPage() {
             <AccountCard
               account={account}
               actionsEnabled={actionsEnabled}
-              feishuConnecting={feishuConnecting}
-              onFeishuConnect={connectFeishu}
+              feishuConnecting={feishu.connecting}
+              onFeishuConnect={feishu.connect}
               onDingtalkConnect={() => setDingtalkOpen(true)}
               onDingtalkLogout={logoutDingtalk}
             />
@@ -759,3 +671,4 @@ export function AccountsPage() {
     </div>
   );
 }
+

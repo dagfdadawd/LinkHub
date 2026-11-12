@@ -377,24 +377,28 @@ test('邮箱轮询关闭原因：显式 MAIL_ENABLED=false 与"未开启"区分�
 });
 
 
-test('resolveFeishuScopes：本人接收开启时 OAuth 必须一并申请读消息权限（否则授权后仍 99991672）', () => {
+test('resolveFeishuScopes：本人接收开启时 OAuth 必须一并申请读消息 + 列会话权限（否则授权后仍 99991672/99991679）', () => {
   const auto = resolveFeishuScopes({ policy: 'auto', receive: 'auto' });
   assert.ok(auto.includes('im:message'));
   assert.ok(auto.includes('im:message.send_as_user'));
   assert.ok(auto.includes('im:resource'));
   assert.ok(auto.includes('im:message.p2p_msg:get_as_user'), 'auto 必须申请单聊读消息权限');
   assert.ok(auto.includes('im:message.group_msg:get_as_user'), 'auto 必须申请群聊读消息权限');
+  assert.ok(auto.includes('im:chat:read'), 'auto 必须申请列会话权限（缺它对 user token 报 99991679）');
   assert.ok(auto.includes('offline_access'));
 
   const forcedReceive = resolveFeishuScopes({ policy: 'bot', receive: true });
   assert.ok(forcedReceive.includes('im:message.p2p_msg:get_as_user'), '显式 receive=true 也要申请');
+  assert.ok(forcedReceive.includes('im:chat:read'), '显式 receive=true 也要申请列会话权限');
 
   const botOnly = resolveFeishuScopes({ policy: 'bot', receive: 'auto' });
   assert.ok(!botOnly.includes('im:message.p2p_msg:get_as_user'), '固定机器人不需要读消息权限');
+  assert.ok(!botOnly.includes('im:chat:read'), '固定机器人不需要列会话权限');
   assert.ok(botOnly.includes('im:message.send_as_user'));
 
   const receiveOff = resolveFeishuScopes({ policy: 'auto', receive: false });
   assert.ok(!receiveOff.includes('im:message.group_msg:get_as_user'), '关闭本人接收时不申请读消息权限');
+  assert.ok(!receiveOff.includes('im:chat:read'), '关闭本人接收时不申请列会话权限');
 });
 
 test('身份配置默认值：未设置时必须用文档默认值（clampInt 空串 bug 回归）', () => {

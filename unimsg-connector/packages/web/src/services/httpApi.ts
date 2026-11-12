@@ -21,8 +21,12 @@ import type {
   DingtalkPersonalStatus,
   FeishuOAuthStart,
   HealthInfo,
+  MailAccountInput,
+  MailAccountTestResult,
+  MailAccountView,
   MessageApi,
   MessageFilter,
+  OnboardingView,
   ReplyAck,
   TraceResult,
 } from './api';
@@ -144,6 +148,40 @@ export class HttpApi implements MessageApi {
     await this.request('/api/dingtalk/personal/logout', { method: 'POST', body: '{}' });
   }
 
+  async onboarding(): Promise<OnboardingView> {
+    // 后端聚合「连接账号」需要的全部状态；旧后端没有此接口时由页面给出升级提示
+    const body = await this.request<{ data?: OnboardingView }>('/api/onboarding');
+    if (!body.data || !Array.isArray(body.data.steps)) {
+      throw new ApiError('后端未返回授权中心数据（可能需要重启或升级后端）', 0);
+    }
+    return body.data;
+  }
+
+  async mailAccounts(): Promise<MailAccountView[]> {
+    const body = await this.request<{ data?: unknown }>('/api/mail/accounts');
+    // 兼容 data 直接是数组 / data.accounts 两种后端返回
+    return normalizeMailAccounts(body.data);
+  }
+
+  async mailAccountTest(input: MailAccountInput): Promise<MailAccountTestResult> {
+    // 只做 IMAP / SMTP 登录自检：后端不落盘、不回显授权码。
+    // 测试失败时后端返回 200 + {ok:false, imap/smtp 明细}：不能当业务异常丢掉明细。
+    const body = await this.request<Record<string, unknown>>(
+      '/api/mail/accounts/test',
+      { method: 'POST', body: JSON.stringify(input) },
+      { allowOkFalse: true },
+    );
+    return normalizeMailTestResult(body);
+  }
+
+  async mailAccountCreate(input: MailAccountInput): Promise<void> {
+    await this.request('/api/mail/accounts', { method: 'POST', body: JSON.stringify(input) });
+  }
+
+  async mailAccountDelete(key: string): Promise<void> {
+    await this.request(`/api/mail/accounts/${encodeURIComponent(key)}`, { method: 'DELETE' });
+  }
+
   async markDone(id: string): Promise<UnifiedMessage> {
     // 后端只回 {ok:true}；完整消息同时经 WS 广播，这里重取一次作为兜底（幂等）
     await this.request(`/api/messages/${encodeURIComponent(id)}/done`, { method: 'POST', body: '{}' });
@@ -205,7 +243,11 @@ export class HttpApi implements MessageApi {
   }
 
   /** 统一请求入口：鉴权头 + 超时控制 + 信封解包 + 错误码映射 */
-  private async request<T>(path: string, init?: RequestInit): Promise<T> {
+  private async request<T>(
+    path: string,
+    init?: RequestInit,
+    opts: { allowOkFalse?: boolean } = {},
+  ): Promise<T> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     let res: Response;
@@ -234,8 +276,80 @@ export class HttpApi implements MessageApi {
     if (res.status === 401) throw new ApiError('未授权：API Token 无效或缺失', 401);
     if (res.status === 404) throw new ApiError('资源不存在', 404);
     if (!res.ok) throw new ApiError(String(body?.error ?? `请求失败（HTTP ${res.status}）`), res.status);
-    if (body && body.ok === false) throw new ApiError(String(body.error ?? '业务处理失败'), res.status);
+    // 少数接口把「自检未通过」放在 200 + ok:false（如邮箱测试）：需要明细的调用方跳过这里
+    if (body && body.ok === false && !opts.allowOkFalse) {
+      throw new ApiError(String(body.error ?? '业务处理失败'), res.status);
+    }
 
     return (body ?? {}) as T;
   }
+}
+
+/** 只把对象转成 Record；数组/原始值返回 undefined，便于宽松兼容后端字段包法 */
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+/**
+ * 兼容两种邮箱账号返回：data 直接是数组，或 data.accounts 数组。
+ * 只保留带 key 的条目（source 缺失时按本地文件处理，避免误删 .env 账号）。
+ */
+export function normalizeMailAccounts(raw: unknown): MailAccountView[] {
+  const list = Array.isArray(raw) ? raw : Array.isArray(asRecord(raw)?.accounts) ? (asRecord(raw)!.accounts as unknown[]) : [];
+  const accounts: MailAccountView[] = [];
+  for (const item of list) {
+    const rec = asRecord(item);
+    if (!rec || typeof rec.key !== 'string' || rec.key.length === 0) continue;
+    const source = rec.source === 'env' ? 'env' : 'file';
+    accounts.push({
+      key: rec.key,
+      ...(typeof rec.label === 'string' ? { label: rec.label } : {}),
+      ...(typeof rec.address === 'string' ? { address: rec.address } : {}),
+      ...(typeof rec.maskedAddress === 'string' ? { maskedAddress: rec.maskedAddress } : {}),
+      ...(typeof rec.addressMasked === 'string' ? { addressMasked: rec.addressMasked } : {}),
+      ...(typeof rec.provider === 'string' ? { provider: rec.provider } : {}),
+      source,
+      ...(typeof rec.removable === 'boolean' ? { removable: rec.removable } : {}),
+      ...(Array.isArray(rec.folders) ? { folders: rec.folders.filter((f): f is string => typeof f === 'string') } : {}),
+      ...(rec.mode === 'real' || rec.mode === 'mock' ? { mode: rec.mode } : {}),
+    });
+  }
+  return accounts;
+}
+
+/**
+ * 兼容邮箱测试结果的几种后端写法：
+ *  {ok,message} / {data:{ok,message}} / {data:{ok,imap:{ok,message},smtp:{...}}}
+ * 统一成中文可展示结构，前端绝不回显授权码。
+ */
+export function normalizeMailTestResult(body: unknown): MailAccountTestResult {
+  const outer = asRecord(body) ?? {};
+  const payload = asRecord(outer.data) ?? outer;
+  const ok = payload.ok === true;
+  const rawMessage = payload.message ?? payload.reason ?? payload.error;
+  const details: string[] = [];
+  for (const [label, key] of [['IMAP', 'imap'], ['SMTP', 'smtp']] as const) {
+    const check = asRecord(payload[key]) ?? asRecord(asRecord(payload.checks)?.[key]);
+    if (!check) continue;
+    const itemOk = check.ok === true;
+    const itemDetail =
+      typeof check.detail === 'string'
+        ? check.detail
+        : typeof check.message === 'string'
+          ? check.message
+          : itemOk
+            ? '连接正常'
+            : '连接失败';
+    const itemHint = typeof check.hint === 'string' && check.hint.trim() ? `（${check.hint.trim()}）` : '';
+    details.push(`${label}：${itemDetail}${itemHint}`);
+  }
+  const rawDetails = Array.isArray(payload.details) ? payload.details : Array.isArray(asRecord(payload.checks)?.details) ? (asRecord(payload.checks)!.details as unknown[]) : [];
+  for (const item of rawDetails) if (typeof item === 'string' && item.length > 0) details.push(item);
+  return {
+    ok,
+    ...(typeof rawMessage === 'string' && rawMessage.length > 0 ? { message: rawMessage } : {}),
+    ...(details.length > 0 ? { details } : {}),
+  };
 }

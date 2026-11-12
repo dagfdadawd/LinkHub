@@ -9,7 +9,8 @@ import type {
   ComposeRequest, MsgType, OutboundAttachment, Platform, UnifiedMessage,
 } from '../types';
 import type {
-  AccountInfo, DingtalkLoginOptions, DingtalkLoginStart, DingtalkPersonalStatus, FeishuOAuthStart, HealthInfo, MessageApi,
+  AccountInfo, DingtalkLoginOptions, DingtalkLoginStart, DingtalkPersonalStatus, FeishuOAuthStart, HealthInfo,
+  MailAccountInput, MailAccountTestResult, MailAccountView, MessageApi, OnboardingView,
 } from '../services/api';
 import { isDemoApi } from '../services/api';
 import type { RealtimeClient, RealtimeStatus } from '../services/realtime';
@@ -41,6 +42,8 @@ export interface AppState {
    * AppShell 消费后调用 dismissSendFailure 清掉，避免重复提示。
    */
   sendFailure: { traceId: string; reason?: string; at: number } | null;
+  /** 授权中心聚合状态（GET /api/onboarding）；旧后端不支持时为 null */
+  onboarding: OnboardingView | null;
 }
 
 export const DEFAULT_FILTERS: Filters = {
@@ -85,6 +88,7 @@ export class AppStore {
     demoMode: true,
     initialized: false,
     sendFailure: null,
+    onboarding: null,
   };
 
   private listeners = new Set<() => void>();
@@ -130,6 +134,8 @@ export class AppStore {
         this.api.health(),
       ]);
       this.set({ messages, accounts, health, loading: false, error: null });
+      // 授权中心是首启锦上添花：旧后端没有该接口时不阻塞主流程
+      void this.refreshOnboarding();
     } catch (e) {
       this.set({ loading: false, error: e instanceof Error ? e.message : '加载失败' });
     }
@@ -263,6 +269,42 @@ export class AppStore {
     }
   }
 
+  /**
+   * 刷新授权中心聚合状态（个人版首启向导）。
+   * 失败返回 null 且不覆盖已有数据：旧后端 / 网络抖动时页面可提示「后端版本较旧」。
+   */
+  async refreshOnboarding(): Promise<OnboardingView | null> {
+    try {
+      const onboarding = await this.api.onboarding();
+      this.set({ onboarding });
+      return onboarding;
+    } catch {
+      return null;
+    }
+  }
+
+  /** 运行时邮箱账号（脱敏）；失败时抛出给页面展示中文错误 */
+  async mailAccounts(): Promise<MailAccountView[]> {
+    return this.api.mailAccounts();
+  }
+
+  /** 测试邮箱 IMAP / SMTP 登录：只读自检，成功/失败都返回结构化结果 */
+  async mailAccountTest(input: MailAccountInput): Promise<MailAccountTestResult> {
+    return this.api.mailAccountTest(input);
+  }
+
+  /** 保存邮箱账号：落盘 + 热加载，随后刷新授权中心与账号页 */
+  async mailAccountCreate(input: MailAccountInput): Promise<void> {
+    await this.api.mailAccountCreate(input);
+    await Promise.all([this.refreshOnboarding(), this.refreshAccounts()]);
+  }
+
+  /** 删除本地邮箱账号（.env 来源后端会拒绝）；随后刷新授权中心与账号页 */
+  async mailAccountDelete(key: string): Promise<void> {
+    await this.api.mailAccountDelete(key);
+    await Promise.all([this.refreshOnboarding(), this.refreshAccounts()]);
+  }
+
   /** 静默重拉全量数据（断线重连后的状态兜底；失败则保持现有数据） */
   private async reload(): Promise<void> {
     try {
@@ -272,6 +314,7 @@ export class AppStore {
         this.api.health(),
       ]);
       this.set({ messages, accounts, health });
+      void this.refreshOnboarding();
     } catch {
       // 静默失败：保持现有数据，等待下一次实时推送
     }

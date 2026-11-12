@@ -398,3 +398,152 @@ describe('HttpApi', () => {
     });
   });
 });
+
+describe('授权中心 / 邮箱账号接口', () => {
+  it('onboarding：GET /api/onboarding 解包并保留 steps 顺序字段', async () => {
+    const fn = mockFetch(jsonResponse({
+      ok: true,
+      data: {
+        firstRun: true,
+        dws: { available: true, source: 'tools', version: 'v1.0.68' },
+        overall: { ready: 1, total: 4, needsAction: 3 },
+        steps: [
+          { id: 'mail', label: '邮箱', state: 'needs_user_auth', summary: '未添加邮箱', hints: [], actions: [] },
+          { id: 'dingtalk', label: '钉钉', state: 'needs_install', summary: 'dws 未安装', hints: [], actions: [] },
+        ],
+      },
+    }));
+    const api = new HttpApi(BASE, TOKEN);
+
+    const view = await api.onboarding();
+
+    expect(view.firstRun).toBe(true);
+    expect(view.dws.source).toBe('tools');
+    expect(view.steps.map((s) => s.id)).toEqual(['mail', 'dingtalk']);
+    const [url, init] = callArgs(fn);
+    expect(url).toBe(`${BASE}/api/onboarding`);
+    expect((init.headers as Record<string, string>).Authorization).toBe(`Bearer ${TOKEN}`);
+  });
+
+  it('onboarding：后端没有 data.steps 时抛中文错误（不把 undefined 传给页面）', async () => {
+    mockFetch(jsonResponse({ ok: true, data: {} }));
+    const api = new HttpApi(BASE, TOKEN);
+    await expect(api.onboarding()).rejects.toThrow(/未返回授权中心数据/);
+  });
+
+  it('mailAccounts：兼容 data 数组 / data.accounts 包法，并过滤无 key 条目', async () => {
+    const fn = mockFetch(
+      jsonResponse({
+        ok: true,
+        data: [
+          { key: 'local-1', maskedAddress: 'm***e@qq.com', source: 'file', provider: 'qq' },
+          { key: 'env-1', address: 'z***n@163.com', source: 'env' },
+          { address: 'broken@x.com', source: 'file' },
+        ],
+      }),
+      jsonResponse({
+        ok: true,
+        data: { accounts: [{ key: 'local-2', source: 'file' }] },
+      }),
+    );
+    const api = new HttpApi(BASE, TOKEN);
+
+    const first = await api.mailAccounts();
+    expect(first).toHaveLength(2);
+    expect(first[0]).toEqual({
+      key: 'local-1',
+      maskedAddress: 'm***e@qq.com',
+      source: 'file',
+      provider: 'qq',
+    });
+    expect(callArgs(fn)[0]).toBe(`${BASE}/api/mail/accounts`);
+
+    const second = await api.mailAccounts();
+    expect(second).toEqual([{ key: 'local-2', source: 'file' }]);
+  });
+
+  it('mailAccountTest：POST 请求体只含输入字段；兼容 imap/smtp 明细', async () => {
+    const fn = mockFetch(jsonResponse({
+      ok: true,
+      data: {
+        ok: false,
+        message: 'IMAP 登录失败：授权码无效',
+        checks: { imap: { ok: false, message: '登录失败' }, smtp: { ok: true, message: '连接正常' } },
+        details: ['请确认已开启 IMAP 服务'],
+      },
+    }));
+    const api = new HttpApi(BASE, TOKEN);
+
+    const result = await api.mailAccountTest({
+      provider: 'qq',
+      address: 'me@qq.com',
+      authCode: 'secret-code',
+      imapHost: 'imap.qq.com',
+      imapPort: 993,
+      smtpHost: 'smtp.qq.com',
+      smtpPort: 465,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toBe('IMAP 登录失败：授权码无效');
+    expect(result.details).toEqual(['IMAP：登录失败', 'SMTP：连接正常', '请确认已开启 IMAP 服务']);
+    const [url, init] = callArgs(fn);
+    expect(url).toBe(`${BASE}/api/mail/accounts/test`);
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(String(init.body))).toEqual({
+      provider: 'qq',
+      address: 'me@qq.com',
+      authCode: 'secret-code',
+      imapHost: 'imap.qq.com',
+      imapPort: 993,
+      smtpHost: 'smtp.qq.com',
+      smtpPort: 465,
+    });
+  });
+
+  it('mailAccountCreate / mailAccountDelete：POST 落盘、DELETE 对 key 做 URL 编码', async () => {
+    const fn = mockFetch(
+      jsonResponse({ ok: true, data: { key: 'local-1' } }),
+      jsonResponse({ ok: true }),
+    );
+    const api = new HttpApi(BASE, TOKEN);
+
+    await api.mailAccountCreate({ provider: 'qq', address: 'me@qq.com', authCode: 'secret' });
+    await api.mailAccountDelete('local/1');
+
+    const [createUrl, createInit] = callArgs(fn, 0);
+    expect(createUrl).toBe(`${BASE}/api/mail/accounts`);
+    expect(createInit.method).toBe('POST');
+    expect(JSON.parse(String(createInit.body))).toEqual({
+      provider: 'qq',
+      address: 'me@qq.com',
+      authCode: 'secret',
+    });
+
+    const [deleteUrl, deleteInit] = callArgs(fn, 1);
+    expect(deleteUrl).toBe(`${BASE}/api/mail/accounts/local%2F1`);
+    expect(deleteInit.method).toBe('DELETE');
+  });
+});
+
+describe('邮箱测试结果：后端真实形状（200 + ok:false + imap/smtp detail/hint）', () => {
+  it('保留 200 响应里的失败明细与 hint，不把它当成网络/业务异常', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({
+      ok: false,
+      address: 'm***e@qq.com',
+      provider: 'qq',
+      imap: { ok: false, detail: 'IMAP 登录失败：AUTHENTICATIONFAILED', hint: '请确认已开启 IMAP 并重新生成授权码' },
+      smtp: { ok: true, detail: 'SMTP 登录成功' },
+      checkedAt: '2026-11-12T06:40:00.000Z',
+    })));
+    const api = new HttpApi(BASE, TOKEN);
+
+    const result = await api.mailAccountTest({ provider: 'qq', address: 'me@qq.com', authCode: 'x' });
+
+    expect(result.ok).toBe(false);
+    expect(result.details).toEqual([
+      'IMAP：IMAP 登录失败：AUTHENTICATIONFAILED（请确认已开启 IMAP 并重新生成授权码）',
+      'SMTP：SMTP 登录成功',
+    ]);
+  });
+});

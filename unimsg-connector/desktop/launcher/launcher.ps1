@@ -113,8 +113,10 @@ $env:WEB_DIST = Join-Path $root 'web'
 $env:DATA_DIR = $dataDir
 $env:LINKHUB_DESKTOP = '1'
 $env:LINKHUB_CONFIG_FILE = $envFile
-$dws = Join-Path $env:USERPROFILE '.local\bin\dws.exe'
-if (Test-Path -LiteralPath $dws) { $env:DWS_BIN = $dws }
+$bundledDws = Join-Path $root 'tools\dws.exe'
+$userDws = Join-Path $env:USERPROFILE '.local\bin\dws.exe'
+if (Test-Path -LiteralPath $bundledDws) { $env:DWS_BIN = $bundledDws }
+elseif (Test-Path -LiteralPath $userDws) { $env:DWS_BIN = $userDws }
 $feishuRedirectConfigured = $false
 try {
   $envText = Get-Content -LiteralPath $envFile -Raw -Encoding UTF8

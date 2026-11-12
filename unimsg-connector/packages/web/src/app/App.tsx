@@ -4,6 +4,7 @@ import { InboxPage } from '../features/inbox/InboxPage';
 import { TodosPage } from '../features/todos/TodosPage';
 import { TracePage } from '../features/trace/TracePage';
 import { AccountsPage } from '../features/accounts/AccountsPage';
+import { ConnectPage } from '../features/connect/ConnectPage';
 
 export function App() {
   return (
@@ -16,6 +17,7 @@ export function App() {
         <Route path="/trace" element={<TracePage />} />
         <Route path="/trace/:traceId" element={<TracePage />} />
         <Route path="/accounts" element={<AccountsPage />} />
+        <Route path="/connect" element={<ConnectPage />} />
         <Route path="*" element={<Navigate to="/inbox" replace />} />
       </Route>
     </Routes>
