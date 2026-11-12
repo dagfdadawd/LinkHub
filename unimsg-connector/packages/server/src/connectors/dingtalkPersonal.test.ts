@@ -10,6 +10,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import {
   DingtalkPersonalClient,
@@ -491,4 +492,44 @@ test('parseSelfProfileJson / client.getSelfOpenDingtalkId：用于过滤自己�
   assert.equal(client.peekSelfOpenDingtalkId(), 'fake-open-dingtalk-id-001');
   client.invalidateStatus();
   assert.equal(client.peekSelfOpenDingtalkId(), undefined);
+});
+
+
+test('NEW-P2-2 fake-dws 默认只推 5 条示例事件后停止推流（进程保持存活）', async () => {
+  setFakeEnv({ FAKE_DWS_EVENT_INTERVAL_MS: '40' });
+  delete process.env.FAKE_DWS_MAX_EVENTS;
+  const run = (args: string[]): Promise<{ lines: string[]; code: number | null; stderr: string }> => new Promise((resolve) => {
+    const child = spawn(process.execPath, [FAKE_DWS, ...args], {
+      cwd: process.cwd(),
+      env: process.env,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const lines: string[] = [];
+    let stderr = '';
+    let buf = '';
+    child.stdout.on('data', (d) => {
+      buf += String(d);
+      for (;;) {
+        const i = buf.indexOf('\n');
+        if (i < 0) break;
+        const line = buf.slice(0, i);
+        buf = buf.slice(i + 1);
+        if (line.trim().startsWith('{')) lines.push(line);
+      }
+    });
+    child.stderr.on('data', (d) => { stderr += String(d); });
+    child.on('close', (code) => resolve({ lines, code, stderr }));
+  });
+
+  // 默认：--duration 让进程在有界时间内退出，验证「只推 5 条后不再推」
+  const def = await run(['event', '+listen-im', '--kind', 'all-direct', '--events', 'message', '-f', 'ndjson', '--duration', '1200ms']);
+  assert.equal(def.lines.length, 5, `默认应只推 5 条，实际 ${def.lines.length}`);
+  assert.equal(def.code, 0);
+  assert.match(def.stderr, /默认上限/);
+
+  // 显式 --max-events 行为不变
+  const explicit = await run(['event', '+listen-im', '--kind', 'all-direct', '--events', 'message', '-f', 'ndjson', '--max-events', '2']);
+  assert.equal(explicit.lines.length, 2);
+  assert.equal(explicit.code, 0);
 });

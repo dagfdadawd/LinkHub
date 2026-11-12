@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
-import { AccountCard, doctorCommand, sendBreakdown } from './AccountsPage';
+import { AccountCard, capabilityWarning, doctorCommand, sendBreakdown } from './AccountsPage';
 import { ACCOUNTS } from '../../services/mock/fixtures';
 import { Platform } from '../../types';
 import type { PlatformIdentityView, UserIdentityStatus } from '@unimsg/shared';
@@ -258,5 +258,48 @@ describe('账号页工具函数（指标口径 / 自检命令）', () => {
     expect(doctorCommand(Platform.DINGTALK)).toBe('pnpm run doctor --platform=dingtalk');
     expect(doctorCommand(Platform.WECOM)).toBe('pnpm run doctor --platform=wecom');
     expect(doctorCommand(Platform.MAIL)).toBe('pnpm run doctor --platform=mail');
+  });
+});
+
+describe('NEW-P2-1：卡片摘要能力 chip 与身份块口径一致（不打架）', () => {
+  it('本人身份已连接且生效：机器人通道不可用也不显示「不可接收/不可发送」', () => {
+    const identity = identityView(
+      { effectiveSend: 'user', effectiveReceive: 'user' },
+      { state: 'linked', linked: true, displayName: '陈晓', canLink: true },
+    );
+    render(
+      <AccountCard
+        account={{ ...dingtalkAccount(identity), canReceive: false, canSend: false }}
+        actionsEnabled
+        onDingtalkConnect={() => {}}
+      />,
+    );
+
+    // 摘要不再出现与身份块矛盾的「不可接收」
+    expect(screen.queryByText('不可接收')).toBeNull();
+    expect(screen.queryByText('不可发送')).toBeNull();
+    const block = screen.getByTestId('identity-block-dingtalk');
+    expect(within(block).getAllByText('本人')).toHaveLength(2);
+  });
+
+  it('本人未连接 + 机器人通道不可用：保留「不可接收/不可发送」如实提示', () => {
+    const identity = identityView(); // effective=bot, linked=false
+    render(<AccountCard account={{ ...feishuAccount(identity), canReceive: false, canSend: false }} />);
+
+    expect(screen.getByText('不可接收')).toBeInTheDocument();
+    expect(screen.getByText('不可发送')).toBeInTheDocument();
+  });
+
+  it('Mock / 无身份视图：能力 chip 保持原口径，不显示「本人可收」这类不实信息', () => {
+    const mockIdentity = identityView(
+      { effectiveSend: 'mock', effectiveReceive: 'mock' },
+      { state: 'unavailable', linked: false, canLink: false },
+    );
+    expect(capabilityWarning('receive', false, mockIdentity)).toBe('不可接收');
+    expect(capabilityWarning('send', false, mockIdentity)).toBe('不可发送');
+    expect(capabilityWarning('receive', false, undefined)).toBe('不可接收');
+    // 能力正常时不显示 chip
+    expect(capabilityWarning('receive', true, mockIdentity)).toBeUndefined();
+    expect(capabilityWarning('send', true, undefined)).toBeUndefined();
   });
 });

@@ -469,9 +469,14 @@ export function assertIdentityUsable(platform: Platform, requested: IdentityRole
   }
   if (canSendAsBot(platform)) return;
   const rt = runtimeOf(platform);
+  // 提示要可执行：本人身份未连接时，不能建议「改用 identity=user」（用户根本选不了），
+  // 而是先让用户去连接；已连接时保留原建议（NEW-P2-3，小白阶段二实测）。
+  const userReady = canSendAsUser(platform);
   throw new IdentityUnavailableError(
     `${label}机器人通道当前不可用（缺 ${rt.missing.join(' / ') || '应用凭据'}），无法以机器人身份发送；`
-    + '请补齐凭据后重试，或改用 identity=user 以本人身份发送。',
+    + (userReady
+      ? '请补齐凭据后重试，或改用 identity=user 以本人身份发送。'
+      : '请补齐凭据后重试；如需改用本人身份，请先在「平台账号」页连接本人身份，再用 identity=user 发送。'),
   );
 }
 
