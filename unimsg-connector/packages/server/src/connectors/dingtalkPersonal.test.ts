@@ -405,6 +405,13 @@ test('client.startLogin：device 模式解析设备码/URL，后台子进程不�
   const client = new DingtalkPersonalClient({
     bin: 'dws',
     loginHintWaitMs: 30,
+    // startLogin 会先跑 `dws version` 做能力探测：这里必须注入 runner，
+    // 否则测试依赖「本机装了 dws 且 dws.exe 在 PATH」，在 CI / 干净 checkout 上必挂。
+    runner: async (args) => ({
+      code: 0,
+      stdout: args[0] === 'version' ? 'Version: v1.0.68-beta.1\nBuild: test\n' : '{}',
+      stderr: '',
+    }),
     spawnImpl: (_file, args) => {
       spawnedArgs = args;
       setTimeout(() => {
