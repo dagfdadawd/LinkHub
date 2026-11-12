@@ -24,13 +24,42 @@ import {
 } from '../services/localConfig';
 
 const dirs: string[] = [];
+/**
+ * 测试期间清空的「凭据/模式类」环境变量。
+ * 仓库根 .env 存在时（本地开发）这些变量会被 config.ts 载入 process.env，导致 PUT 被当成
+ * 「已被 .env 占用」而跳过写盘，用例必须显式隔离，保证本地与 CI（无 .env）结果一致。
+ */
+const ISOLATED_ENV_KEYS = [
+  'DATA_DIR',
+  'FEISHU_APP_ID',
+  'FEISHU_APP_SECRET',
+  'FEISHU_VERIFY_TOKEN',
+  'FEISHU_ENCRYPT_KEY',
+  'FEISHU_STREAM',
+  'DINGTALK_CLIENT_ID',
+  'DINGTALK_CLIENT_SECRET',
+  'DINGTALK_ROBOT_CODE',
+  'DINGTALK_STREAM',
+  'DINGTALK_AES_TOKEN',
+  'DINGTALK_AES_KEY',
+  'WECOM_CORP_ID',
+  'WECOM_AGENT_ID',
+  'WECOM_SECRET',
+  'WECOM_TOKEN',
+  'WECOM_AES_KEY',
+  'LLM_PROVIDER',
+  'LLM_API_KEY',
+  'LLM_BASE_URL',
+  'LLM_MODEL',
+  'FEISHU_IDENTITY',
+  'DINGTALK_IDENTITY',
+  'FEISHU_USER_RECEIVE',
+  'DINGTALK_USER_RECEIVE',
+] as const;
+const originalEnv = new Map<string, string | undefined>(
+  ISOLATED_ENV_KEYS.map((key) => [key, process.env[key]]),
+);
 const original = {
-  dataDir: process.env.DATA_DIR,
-  feishuIdentity: process.env.FEISHU_IDENTITY,
-  dingtalkIdentity: process.env.DINGTALK_IDENTITY,
-  feishuReceive: process.env.FEISHU_USER_RECEIVE,
-  dingtalkReceive: process.env.DINGTALK_USER_RECEIVE,
-  feishuAppSecret: process.env.FEISHU_APP_SECRET,
   identity: {
     feishu: config.identity.feishu.policy,
     dingtalk: config.identity.dingtalk.policy,
@@ -46,25 +75,14 @@ function tempDir(): string {
 }
 
 function restoreEnv(): void {
-  for (const [key, value] of Object.entries({
-    DATA_DIR: original.dataDir,
-    FEISHU_IDENTITY: original.feishuIdentity,
-    DINGTALK_IDENTITY: original.dingtalkIdentity,
-    FEISHU_USER_RECEIVE: original.feishuReceive,
-    DINGTALK_USER_RECEIVE: original.dingtalkReceive,
-    FEISHU_APP_SECRET: original.feishuAppSecret,
-  })) {
+  for (const [key, value] of originalEnv) {
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
   }
 }
 
 beforeEach(() => {
-  delete process.env.FEISHU_IDENTITY;
-  delete process.env.DINGTALK_IDENTITY;
-  delete process.env.FEISHU_USER_RECEIVE;
-  delete process.env.DINGTALK_USER_RECEIVE;
-  delete process.env.FEISHU_APP_SECRET;
+  for (const key of ISOLATED_ENV_KEYS) delete process.env[key];
   config.identity.feishu.policy = original.identity.feishu;
   config.identity.dingtalk.policy = original.identity.dingtalk;
   config.identity.feishu.receive = original.identity.feishuReceive;
@@ -248,7 +266,11 @@ test('restartRequired（P1-1）：GET 排除 identity 热应用；凭据变化�
 
     // P3：路径只给 basename；settingsFile.mtime 允许 null
     assert.equal(get4.json.data.settingsFile.path, 'linkhub-config.json');
-    assert.equal(get4.json.data.envFile.path, '.env');
+    // CI/全新环境没有仓库 .env → envFile 为 null；本地开发有 .env → 只给 .env basename
+    assert.ok(
+      get4.json.data.envFile === null || get4.json.data.envFile.path === '.env',
+      `envFile: ${JSON.stringify(get4.json.data.envFile)}`,
+    );
     assert.ok(get4.json.data.settingsFile.mtime === null || typeof get4.json.data.settingsFile.mtime === 'string');
   });
 });

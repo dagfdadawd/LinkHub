@@ -235,7 +235,10 @@ test('killChildTree：优先关 stdin 让真实 dws 优雅退订，无 stdin 时
     },
   });
   await killChildTree(child, 200);
-  assert.deepEqual(events, ['stdin-end'], '有 stdin 时应关 stdin（Windows 下 SIGTERM 无法优雅退订）');
+  // Windows：只关 stdin（SIGTERM 在 Windows 上等于 TerminateProcess，dws 来不及退订）；
+  // POSIX：关 stdin 后再补一个真实 SIGTERM（实现如此，dws 能优雅退订）。
+  const expected = process.platform === 'win32' ? ['stdin-end'] : ['stdin-end', 'kill'];
+  assert.deepEqual(events, expected, '有 stdin 时应先关 stdin；POSIX 额外补 SIGTERM');
 
   const child2: any = Object.assign(new EventEmitter(), { pid: 988, exitCode: null as number | null });
   child2.kill = () => {
