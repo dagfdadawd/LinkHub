@@ -807,7 +807,8 @@ button {
 .inbox {
   height: 100%;
   display: grid;
-  grid-template-columns: 360px minmax(0, 1fr);
+  /* 详情模式左栏宽度：要能放下 5 个渠道 Tab，360px 会把「企微/邮箱」挤出视野 */
+  grid-template-columns: 440px minmax(0, 1fr);
   /* 关键：固定为一行并允许收缩，否则列表内容会把整行撑高、挤掉详情底部 */
   grid-template-rows: minmax(0, 1fr);
 }
@@ -829,6 +830,24 @@ button {
   overflow-x: auto;
   padding: 2px 0 10px;
   scrollbar-width: none;
+}
+
+/* 详情打开时左栏收窄：Tab 压缩内边距，仍放不下就换行，绝不被裁掉 */
+.inbox--detail .channel-tabs {
+  flex-wrap: wrap;
+  gap: 4px;
+  padding-bottom: 8px;
+}
+
+.inbox--detail .channel-tab {
+  height: 30px;
+  padding: 0 9px;
+  gap: 4px;
+  font-size: 0.75rem;
+}
+
+.inbox--detail .channel-tab__count {
+  font-size: 0.6875rem;
 }
 
 .channel-tabs::-webkit-scrollbar {
