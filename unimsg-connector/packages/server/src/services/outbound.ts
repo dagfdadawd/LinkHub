@@ -128,10 +128,25 @@ export function normalizeCompose(raw: unknown): ComposeRequest {
     ? v.conversationType
     : undefined;
 
+  const mailAccount = typeof v.mailAccount === 'string' ? v.mailAccount.trim() : '';
+  if (v.mailAccount !== undefined && v.mailAccount !== null && typeof v.mailAccount !== 'string') {
+    throw new InvalidOutboundRequest('mailAccount 必须是字符串（邮箱账号 key）');
+  }
+  if (mailAccount) {
+    if (platform !== Platform.MAIL) {
+      throw new InvalidOutboundRequest('mailAccount 仅适用于邮箱平台');
+    }
+    // key 来自 MAIL_ACCOUNTS / MAIL_<KEY>_*，只允许常见的环境变量段字符
+    if (!/^[a-z0-9][a-z0-9_-]{0,63}$/i.test(mailAccount)) {
+      throw new InvalidOutboundRequest('mailAccount 只允许字母/数字/下划线/连字符，最长 64 字符');
+    }
+  }
+
   return {
     platform: platform as Platform,
     ...(conversationId ? { conversationId } : {}),
     ...(conversationType ? { conversationType } : {}),
+    ...(mailAccount ? { mailAccount } : {}),
     text,
     ...(attachments.length > 0 ? { attachments } : {}),
   };

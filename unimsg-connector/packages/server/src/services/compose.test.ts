@@ -14,6 +14,7 @@ import { OcrService } from './ocr';
 import { RateLimiter } from './rateLimiter';
 import { MessageService } from './message';
 import { feishuSample } from '../connectors/samples';
+import { config, type MailAccount } from '../config';
 
 function makeSvc() {
   const repo = new InMemoryRepository();
@@ -31,6 +32,24 @@ function attachment() {
     mimeType: 'application/pdf',
     size: buf.byteLength,
     contentBase64: buf.toString('base64'),
+  };
+}
+
+function mailAccount(over: Partial<MailAccount> = {}): MailAccount {
+  return {
+    key: 'qq',
+    label: 'QQ邮箱',
+    address: 'me@qq.com',
+    authCode: 'code',
+    provider: 'qq',
+    imapHost: 'imap.qq.com',
+    imapPort: 993,
+    imapSecure: true,
+    smtpHost: 'smtp.qq.com',
+    smtpPort: 465,
+    smtpSecure: true,
+    folders: ['INBOX'],
+    ...over,
   };
 }
 
@@ -95,6 +114,50 @@ test('compose：只发文件也合法，正文退化为附件摘要', async () =
   assert.match(ack.message.body, /^\[附件\] report\.pdf$/);
   assert.equal(ack.message.attachments?.length, 1);
   await wait();
+});
+
+test('compose：邮箱可指定发件账号，未指定回退首个账号，未配置账号显式报错', async () => {
+  const { svc, repo } = makeSvc();
+  const saved = [...config.mail.accounts];
+  config.mail.accounts.splice(
+    0,
+    config.mail.accounts.length,
+    mailAccount({ key: 'qq', address: 'me@qq.com' }),
+    mailAccount({ key: 'work', label: '工作邮箱', address: 'me@corp.example.com' }),
+  );
+  try {
+    const ack = await svc.compose({
+      platform: Platform.MAIL,
+      conversationId: 'to@example.com',
+      text: '请查收',
+      mailAccount: 'work',
+    });
+    assert.equal(ack.message.mailMeta?.account, 'work');
+    assert.equal(ack.message.externalId.startsWith('work:compose:'), true);
+    await wait();
+    assert.equal(repo.get(ack.taskId)?.status, MsgStatus.SYNCED);
+    assert.ok(repo.getLoopLog(ack.taskId).some((e) => /发件账号 work/.test(e.detail ?? '')));
+
+    const fallback = await svc.compose({
+      platform: Platform.MAIL,
+      conversationId: 'to@example.com',
+      text: '默认账号',
+    });
+    assert.equal(fallback.message.mailMeta?.account, 'qq');
+
+    await assert.rejects(
+      () => svc.compose({
+        platform: Platform.MAIL,
+        conversationId: 'to@example.com',
+        text: 'bad',
+        mailAccount: 'nope',
+      }),
+      /发件账号未配置：nope（可用：qq \/ work）/,
+    );
+    await wait();
+  } finally {
+    config.mail.accounts.splice(0, config.mail.accounts.length, ...saved);
+  }
 });
 
 test('compose：既无显式会话也无历史会话时显式报错，不伪造目标', async () => {

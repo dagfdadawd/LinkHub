@@ -17,6 +17,9 @@ import { dingtalkDecrypt, dingtalkSign, safeEqual } from './crypto';
 import { dingtalkAccessToken, postJson, postMultipart } from './real';
 import { decodeAttachment, describeAttachments, isOutboundComposed } from '../services/outbound';
 
+/** 媒体上传固定在 oapi 老域名（新域名只有机器人发消息/下载，没有 upload） */
+const DINGTALK_MEDIA_UPLOAD_URL = 'https://oapi.dingtalk.com/media/upload';
+
 function header(headers: Record<string, string | string[] | undefined> | undefined, name: string): string {
   const v = headers?.[name];
   return Array.isArray(v) ? (v[0] ?? '') : (v ?? '');
@@ -114,7 +117,7 @@ export function verify(
 }
 
 /**
- * 发送：文本沿用 sampleText；文件走「robot/media/upload → sampleFile(mediaId)」。
+ * 发送：文本沿用 sampleText；文件走「oapi media/upload → sampleFile(mediaId)」。
  * 群聊 / 单聊两个端点由 sendOne 统一收敛，文件与文本复用同一目标会话，
  * 保证「向指定平台/会话发送文件」也落在同一条闭环里。
  */
@@ -163,19 +166,22 @@ export async function send(msg: UnifiedMessage, attachments: OutboundAttachment[
   }
 
   for (const a of attachments) {
+    // 媒体上传在 oapi 老域名；api.dingtalk.com 没有 /v1.0/robot/media/upload（会 404 InvalidAction.NotFound）
     const uploaded = await postMultipart(
-      `${base}/v1.0/robot/media/upload`,
+      `${DINGTALK_MEDIA_UPLOAD_URL}?access_token=${encodeURIComponent(token)}`,
       [{ name: 'type', value: 'file' }],
       { field: 'media', filename: a.name, contentType: a.mimeType, content: decodeAttachment(a) },
-      headers,
     );
-    const mediaId = uploaded?.mediaId ?? uploaded?.data?.mediaId;
-    if (!mediaId) {
-      throw new Error('钉钉媒体上传失败：未返回 mediaId（检查应用是否具备机器人媒体上传权限）');
+    if (uploaded?.errcode !== 0 || !uploaded?.media_id) {
+      throw new Error(
+        `钉钉媒体上传失败（文件 ${a.name}）：${uploaded?.errcode ?? 'no-errcode'} ${uploaded?.errmsg ?? '未返回 media_id'}`,
+      );
     }
+    const mediaId = String(uploaded.media_id);
+    const ext = a.name.includes('.') ? a.name.split('.').pop()!.toLowerCase() : '';
     const data = await sendOne({
       msgKey: 'sampleFile',
-      msgParam: JSON.stringify({ mediaId }),
+      msgParam: JSON.stringify({ mediaId, fileName: a.name, ...(ext ? { fileType: ext } : {}) }),
     });
     if (data?.processQueryKey) receipts.push(String(data.processQueryKey));
   }
