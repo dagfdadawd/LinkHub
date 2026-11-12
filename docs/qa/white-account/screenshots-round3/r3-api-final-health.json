@@ -1,0 +1,44 @@
+{
+  "ok": true,
+  "ts": "2026-11-12T09:29:44.933Z",
+  "startedAt": "2026-11-12T09:22:39.472Z",
+  "envFile": {
+    "path": ".env",
+    "mtime": "2026-11-11T08:33:03.961Z"
+  },
+  "settingsFile": {
+    "path": "linkhub-config.json",
+    "present": true,
+    "mtime": "2026-11-12T09:27:54.225Z"
+  },
+  "received": 2,
+  "deduped": 0,
+  "sent": 1,
+  "sentMock": 1,
+  "failed": 0,
+  "dlq": 0,
+  "modes": {
+    "feishu": "mock",
+    "dingtalk": "mock",
+    "wecom": "mock",
+    "mail": "mock"
+  },
+  "identities": {
+    "feishu": {
+      "send": "mock",
+      "receive": "mock"
+    },
+    "dingtalk": {
+      "send": "mock",
+      "receive": "mock"
+    },
+    "wecom": {
+      "send": "mock",
+      "receive": "mock"
+    },
+    "mail": {
+      "send": "mock",
+      "receive": "mock"
+    }
+  }
+}

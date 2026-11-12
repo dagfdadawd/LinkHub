@@ -1,0 +1,18 @@
+{
+  "ok": true,
+  "data": {
+    "accounts": [],
+    "filePath": "mail-accounts.json",
+    "issues": [],
+    "providers": [
+      "qq",
+      "163",
+      "126",
+      "yeah",
+      "gmail",
+      "outlook",
+      "icloud",
+      "custom"
+    ]
+  }
+}

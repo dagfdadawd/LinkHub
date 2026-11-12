@@ -1,0 +1,252 @@
+{
+  "ok": true,
+  "data": {
+    "generatedAt": "2026-11-12T09:29:44.925Z",
+    "firstRun": true,
+    "startedAt": "2026-11-12T09:22:39.471Z",
+    "envFile": {
+      "path": ".env",
+      "mtime": "2026-11-11T08:33:03.961Z"
+    },
+    "dws": {
+      "available": true,
+      "version": "v1.0.68-beta.1",
+      "source": "tools",
+      "pathHint": "仓库 tools/（pnpm run fetch:dws 下载位置）"
+    },
+    "overall": {
+      "ready": 0,
+      "total": 4,
+      "needsAction": 4
+    },
+    "steps": [
+      {
+        "id": "mail",
+        "label": "邮箱",
+        "state": "needs_user_auth",
+        "summary": "还没有邮箱账号。个人版可直接在页面添加（需要邮箱授权码）。",
+        "hints": [
+          "先到邮箱网页版「设置 → POP3/SMTP/IMAP」开启服务并生成授权码（16 位左右，不是网页登录密码）。",
+          "添加账号并点「测试连接」验证通过后会自动启用真实收信（无需改 .env、无需重启）。",
+          "首轮只建立 UID 基线、不导入历史邮件；测试连接会真实连接一次邮箱服务器（只做 IMAP/SMTP 登录，不发信）。"
+        ],
+        "actions": [
+          {
+            "id": "mail-add-account",
+            "kind": "form",
+            "label": "添加邮箱账号"
+          },
+          {
+            "id": "mail-provider-help",
+            "kind": "link",
+            "label": "去邮箱网页版开启 IMAP/SMTP（QQ 邮箱示例）",
+            "url": "https://mail.qq.com"
+          },
+          {
+            "id": "mail-doctor",
+            "kind": "command",
+            "label": "自检 mail 配置（在 unimsg-connector/ 目录运行；pnpm 不在 PATH 时用 corepack pnpm run …）",
+            "command": "cd unimsg-connector && pnpm run doctor --platform=mail"
+          }
+        ],
+        "detail": {
+          "accounts": [],
+          "filePath": "mail-accounts.json",
+          "issues": [],
+          "mode": "mock",
+          "verifiedCount": 0,
+          "unverifiedCount": 0
+        }
+      },
+      {
+        "id": "dingtalk",
+        "label": "钉钉",
+        "state": "needs_user_auth",
+        "summary": "用钉钉本人账号登录即可，无需机器人应用（需企业已开 CLI 访问）。",
+        "hints": [
+          "点「用钉钉本人账号登录（推荐）」：登录成功后会自动启用本人身份（无需重启），个人事件接收自动启动。",
+          "未完成授权不会改变任何配置（不会出现「已启用但未登录」的状态）；若企业未开 CLI 访问，请联系管理员（清单可复制）。",
+          "登录用的是本机 dws CLI：浏览器授权/设备码确认一次即可，凭据只留在本机。"
+        ],
+        "actions": [
+          {
+            "id": "dingtalk-login",
+            "kind": "api",
+            "label": "用钉钉本人账号登录（推荐，无需机器人应用）",
+            "path": "/api/dingtalk/personal/login",
+            "method": "POST",
+            "payload": {
+              "mode": "browser"
+            }
+          },
+          {
+            "id": "dingtalk-configure",
+            "kind": "form",
+            "label": "填写钉钉应用凭据（可选，用机器人时）",
+            "path": "/api/app-config",
+            "method": "PUT"
+          },
+          {
+            "id": "dingtalk-admin",
+            "kind": "link",
+            "label": "打开钉钉开发者后台",
+            "url": "https://open-dev.dingtalk.com/"
+          },
+          {
+            "id": "dingtalk-admin-checklist",
+            "kind": "copy",
+            "label": "复制管理员开通清单（CLI 访问 + 登录命令）",
+            "text": "钉钉管理员开通清单（LinkHub 个人版需要企业管理员配合）：\n1. 打开钉钉开发者后台 https://open-dev.dingtalk.com/ ；\n2. 如用「本人账号」收发（推荐，无需机器人应用）：企业管理员在钉钉开放平台开启「CLI 访问管理」（dws 个人身份依赖）；\n3. 如用机器人：创建「企业内部应用」，记录 Client ID / Client Secret，开通机器人发消息权限并配置事件订阅；\n4. 个人登录（本机推荐）：打开 LinkHub「连接账号」→ 钉钉 →「用钉钉本人账号登录（推荐）」；\n   或在本机终端执行：tools\\dws.exe auth login --recommend（登录成功后无交互批量授权推荐权限）；\n5. 机器人凭据可写回 LinkHub「填写钉钉应用凭据」或 .env 的 DINGTALK_CLIENT_ID / DINGTALK_CLIENT_SECRET / DINGTALK_ROBOT_CODE，然后重启后端；\n6. dws 官方 CLI 与文档：https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli 。"
+          },
+          {
+            "id": "dingtalk-doctor",
+            "kind": "command",
+            "label": "自检 dingtalk 配置（在 unimsg-connector/ 目录运行；pnpm 不在 PATH 时用 corepack pnpm run …）",
+            "command": "cd unimsg-connector && pnpm run doctor --platform=dingtalk"
+          }
+        ],
+        "detail": {
+          "identity": {
+            "state": "not_linked",
+            "linked": false,
+            "hint": "尚未登录钉钉本人身份：当前用机器人收发；推荐连接本人账号（免把机器人拉进每个群），登录后自动切换为本人"
+          },
+          "dws": {
+            "available": true,
+            "version": "v1.0.68-beta.1",
+            "source": "tools",
+            "pathHint": "仓库 tools/（pnpm run fetch:dws 下载位置）"
+          },
+          "identityChannelsReal": false,
+          "botAvailable": false,
+          "runtimeMode": "mock",
+          "runtimePolicy": "auto",
+          "effectiveSend": "mock",
+          "effectiveReceive": "mock",
+          "missing": [
+            "DINGTALK_CLIENT_ID",
+            "DINGTALK_CLIENT_SECRET",
+            "DINGTALK_AES_TOKEN",
+            "DINGTALK_AES_KEY"
+          ]
+        }
+      },
+      {
+        "id": "feishu",
+        "label": "飞书",
+        "state": "needs_admin",
+        "summary": "缺少飞书应用凭据：个人用户需企业管理员创建自建应用；拿到 App ID / Secret 后在 LinkHub 填写（或写 .env）并重启。",
+        "hints": [
+          "还缺：FEISHU_APP_ID / FEISHU_APP_SECRET（填到 LinkHub 配置或 .env 后重启）",
+          "用长连接时 Verify Token 可不填（默认 FEISHU_STREAM=true，免公网回调）；只有改用 HTTP 回调模式才需要 Verification Token。",
+          "重定向 URL 必须是：http://localhost:3002/api/feishu/oauth/callback（与飞书后台逐字一致）。",
+          "个人版通常需要企业管理员操作；配好后回到本页刷新。"
+        ],
+        "actions": [
+          {
+            "id": "feishu-configure",
+            "kind": "form",
+            "label": "填写飞书应用凭据（App ID / App Secret）",
+            "path": "/api/app-config",
+            "method": "PUT"
+          },
+          {
+            "id": "feishu-admin",
+            "kind": "link",
+            "label": "打开飞书开放平台（应用后台）",
+            "url": "https://open.feishu.cn/app"
+          },
+          {
+            "id": "feishu-admin-checklist",
+            "kind": "copy",
+            "label": "复制管理员开通清单（权限 + 回调 URL + .env 键名 + 重启）",
+            "text": "飞书管理员开通清单（LinkHub 个人版需要企业管理员配合）：\n1. 打开飞书开放平台 https://open.feishu.cn/app ，创建/选择一个「企业自建应用」；\n2. 权限管理：按下面清单开通消息权限（缺权限时 OAuth 后仍读不到消息）：\n   im:message、im:message.send_as_user、im:resource、im:message.p2p_msg:get_as_user、im:message.group_msg:get_as_user、im:chat:read、offline_access\n3. 安全设置 → 重定向 URL：添加 http://localhost:3002/api/feishu/oauth/callback（照抄，含 /api/feishu/oauth/callback）；\n4. 事件订阅：默认用长连接（FEISHU_STREAM=true）可免公网回调，此时 Verify Token / Encrypt Key 都可不填；只有改用 HTTP 回调模式才必须填 Verification Token；\n5. 发布应用；\n6. 运行模式：FEISHU_MODE=auto/real（显式 mock 会一直演示，不会真实收发）。\n7. 在 LinkHub 点「填写飞书应用凭据（App ID / App Secret）」填入凭据（也可写 .env 的 FEISHU_APP_ID / FEISHU_APP_SECRET），然后重启后端（保存后界面会提示）；\n8. 回到「连接账号」页点「连接飞书本人账号」，用本人账号完成 OAuth 授权。"
+          },
+          {
+            "id": "feishu-doctor",
+            "kind": "command",
+            "label": "自检 feishu 配置（在 unimsg-connector/ 目录运行；pnpm 不在 PATH 时用 corepack pnpm run …）",
+            "command": "cd unimsg-connector && pnpm run doctor --platform=feishu"
+          }
+        ],
+        "detail": {
+          "identity": {
+            "state": "unavailable",
+            "linked": false,
+            "hint": "未配置 FEISHU_APP_ID / FEISHU_APP_SECRET，无法连接飞书本人身份；请先在 .env 填写飞书自建应用凭据，然后到「平台账号」页点飞书卡片的「连接本人账号」"
+          },
+          "redirectUri": "http://localhost:3002/api/feishu/oauth/callback",
+          "scopes": [
+            "im:message",
+            "im:message.send_as_user",
+            "im:resource",
+            "im:message.p2p_msg:get_as_user",
+            "im:message.group_msg:get_as_user",
+            "im:chat:read",
+            "offline_access"
+          ],
+          "missing": [
+            "FEISHU_APP_ID",
+            "FEISHU_APP_SECRET"
+          ],
+          "warnings": [
+            "已配置飞书长连接（FEISHU_STREAM），但当前为 Mock 模拟、不会实际连接"
+          ],
+          "identityChannelsReal": false,
+          "effectiveSend": "mock",
+          "effectiveReceive": "mock"
+        }
+      },
+      {
+        "id": "wecom",
+        "label": "企业微信",
+        "state": "needs_admin",
+        "summary": "缺少企业微信自建应用凭据：需要企业管理员创建应用并提供 Corp ID / Agent ID / Secret。",
+        "hints": [
+          "缺少变量：WECOM_CORP_ID / WECOM_SECRET / WECOM_AGENT_ID / WECOM_TOKEN / WECOM_AES_KEY",
+          "个人版无法自行开通企业微信，需要企业管理员配合；拿到凭据后在 LinkHub 填写或写 .env 并重启。"
+        ],
+        "actions": [
+          {
+            "id": "wecom-configure",
+            "kind": "form",
+            "label": "填写企业微信凭据（Corp ID / Agent ID / Secret）",
+            "path": "/api/app-config",
+            "method": "PUT"
+          },
+          {
+            "id": "wecom-admin",
+            "kind": "link",
+            "label": "打开企业微信管理后台",
+            "url": "https://work.weixin.qq.com/"
+          },
+          {
+            "id": "wecom-admin-checklist",
+            "kind": "copy",
+            "label": "复制管理员开通清单（凭据 + 可信 IP + 重启）",
+            "text": "企业微信管理员开通清单（LinkHub 个人版需要企业管理员配合）：\n1. 打开企业微信管理后台 https://work.weixin.qq.com/ → 应用管理 → 自建，创建应用并记录 AgentId / Secret / 企业 CorpID；\n2. 应用「接收消息」：设置 Token 与 EncodingAESKey，回调 URL 指向 LinkHub 的 /api/wecom/callback（需公网可达）；\n   本机演示端口：http://127.0.0.1:3002/api/wecom/callback（公网需用域名/内网穿透）\n3. 应用「企业可信 IP」：添加运行 LinkHub 的机器的公网出口 IP（否则发送会报 60020）；\n4. 把凭据写回 LinkHub：点「填写企业微信凭据」，或写入 .env 的 WECOM_CORP_ID / WECOM_AGENT_ID / WECOM_SECRET / WECOM_TOKEN / WECOM_AES_KEY，然后重启后端。"
+          },
+          {
+            "id": "wecom-doctor",
+            "kind": "command",
+            "label": "自检 wecom 配置（在 unimsg-connector/ 目录运行；pnpm 不在 PATH 时用 corepack pnpm run …）",
+            "command": "cd unimsg-connector && pnpm run doctor --platform=wecom"
+          }
+        ],
+        "detail": {
+          "missing": [
+            "WECOM_CORP_ID",
+            "WECOM_SECRET",
+            "WECOM_AGENT_ID",
+            "WECOM_TOKEN",
+            "WECOM_AES_KEY"
+          ],
+          "warnings": [],
+          "configured": false,
+          "mode": "mock",
+          "policy": "auto"
+        }
+      }
+    ]
+  }
+}
