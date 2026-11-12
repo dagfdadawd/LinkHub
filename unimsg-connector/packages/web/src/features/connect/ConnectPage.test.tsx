@@ -42,6 +42,11 @@ vi.mock('../../hooks/useAppState', () => ({
 vi.mock('../../store', () => ({ store: hoisted.store }));
 
 import { ConnectPage } from './ConnectPage';
+import {
+  FEISHU_OAUTH_UNFINISHED_TITLE,
+  markFeishuOAuthPending,
+  saveFeishuOAuthRedirectUri,
+} from '../accounts/feishuOAuthFeedback';
 
 function identityView(patch: Partial<PlatformIdentityView> = {}): PlatformIdentityView {
   return {
@@ -324,6 +329,20 @@ describe('连接账号页动作分发', () => {
     expect(tab.location.href).toBe(
       'https://accounts.feishu.cn/open-apis/authen/v1/authorize?client_id=demo',
     );
+  });
+
+  it('飞书授权未完成（20029）：飞书卡片动作里复用同一套帮助 + 本次真实回调地址', async () => {
+    const redirectUri = 'http://localhost:3901/api/feishu/oauth/callback';
+    markFeishuOAuthPending(window.sessionStorage);
+    saveFeishuOAuthRedirectUri(window.sessionStorage, redirectUri);
+    renderPage();
+
+    const feishuCard = (await screen.findByTestId('connect-step-feishu')) as HTMLElement;
+    expect(await within(feishuCard).findByText(FEISHU_OAUTH_UNFINISHED_TITLE)).toBeInTheDocument();
+    expect(within(feishuCard).getByTestId('feishu-oauth-redirect-uri')).toHaveTextContent(redirectUri);
+    expect(within(feishuCard).getByRole('button', { name: /复制地址/ })).toBeInTheDocument();
+    expect(within(feishuCard).getByRole('button', { name: /重新授权/ })).toBeInTheDocument();
+    expect(within(feishuCard).getByRole('button', { name: /我知道了/ })).toBeInTheDocument();
   });
 });
 

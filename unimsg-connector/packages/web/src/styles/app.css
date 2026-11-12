@@ -236,37 +236,37 @@ button {
   font-size: inherit;
 }
 
-/* 图标按钮（主题切换等）：细边框、小圆角、无发光 */
+/* 图标按钮（主题切换等）：无边框 ghost，只有极浅的底色反馈 */
 .icon-btn {
   width: 32px;
   height: 32px;
   display: inline-grid;
   place-items: center;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
+  border: 0;
+  border-radius: var(--r-8);
+  background: transparent;
   color: var(--text-2);
+  font-size: 0.9375rem;
   cursor: pointer;
-  transition: color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out),
-    background-color var(--dur-fast) var(--ease-out), transform 360ms var(--ease-spring),
-    box-shadow var(--dur-base) var(--ease-out);
+  transition: color var(--dur-fast) var(--ease-out),
+    background-color var(--dur-fast) var(--ease-out);
 }
 
 .icon-btn:hover {
   color: var(--text);
-  border-color: transparent;
   background: var(--surface-2);
-  transform: scale(1.08);
-  box-shadow: var(--shadow-sm);
 }
 
 .icon-btn:active {
-  transform: scale(0.9);
-  transition-duration: 90ms;
-  box-shadow: none;
+  background: var(--surface-3);
 }
 
-/* 顶栏头像按钮：点击进入个人设置 */
+.icon-btn:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+/* 个人头像按钮（侧栏顶部）：点击进入个人设置 */
 .avatar-btn {
   padding: 0;
   border: 0;
@@ -274,16 +274,15 @@ button {
   line-height: 0;
   border-radius: 50%;
   cursor: pointer;
-  transition: transform 360ms var(--ease-spring), box-shadow var(--dur-base) var(--ease-out);
+  transition: transform 280ms var(--ease-out);
 }
 
 .avatar-btn:hover {
-  transform: scale(1.09);
-  box-shadow: var(--shadow-sm);
+  transform: scale(1.05);
 }
 
 .avatar-btn:active {
-  transform: scale(0.92);
+  transform: scale(0.94);
   transition-duration: 90ms;
 }
 
@@ -298,6 +297,20 @@ button {
   user-select: none;
 }
 
+/* 侧栏顶部头像：用头像底色的柔和浅染替代高饱和实心块，安静地作身份入口 */
+.rail__brand .brand-avatar {
+  background: color-mix(in srgb, var(--avatar-tone, var(--brand)) 13%, var(--surface));
+  color: color-mix(in srgb, var(--avatar-tone, var(--brand)) 80%, var(--text));
+  font-size: 0.8125rem;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--avatar-tone, var(--brand)) 20%, transparent);
+}
+
+[data-theme='dark'] .rail__brand .brand-avatar {
+  background: color-mix(in srgb, var(--avatar-tone, var(--brand)) 26%, var(--surface));
+  color: color-mix(in srgb, var(--avatar-tone, var(--brand)) 58%, var(--text));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--avatar-tone, var(--brand)) 32%, transparent);
+}
+
 /* ---------------- App shell ---------------- */
 
 .app-shell {
@@ -309,11 +322,14 @@ button {
   overflow: hidden;
 }
 
-/* 顶栏（Apple 式工具条）：磨砂只用于这一层，不整站玻璃化 */
+/* 顶栏（Apple 式工具条）：磨砂只用于这一层，不整站玻璃化。
+   三段式网格：标题 / 居中搜索 / 右侧操作。两侧轨道等宽（1fr），
+   中间轨道定宽，搜索因此严格落在顶栏正中；「新建发送」永远在最右。 */
 .cmdbar {
   flex: 0 0 auto;
   height: var(--header-h);
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 420px) minmax(0, 1fr);
   align-items: center;
   gap: 20px;
   padding: 0 32px;
@@ -327,6 +343,7 @@ button {
 }
 
 .cmdbar__lead {
+  justify-self: start;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -359,8 +376,24 @@ button {
   text-overflow: ellipsis;
 }
 
-.cmdbar__actions {
+.cmdbar__search {
+  display: flex;
+  justify-content: center;
+  min-width: 0;
+}
+
+.cmdbar__search .search-trigger {
+  flex: 1 1 auto;
+  justify-content: flex-start;
+}
+
+/* ⌘K 提示靠右，视觉上像输入框里的快捷键角标 */
+.cmdbar__search .kbd {
   margin-left: auto;
+}
+
+.cmdbar__actions {
+  justify-self: end;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -424,33 +457,9 @@ button {
   overflow: hidden;
 }
 
-/* 品牌标记：图标轨里只留一枚方形 monogram */
-.brand__mark {
-  width: 36px;
-  height: 36px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--r-pill);
-  display: grid;
-  place-items: center;
-  cursor: pointer;
-  background: var(--text);
-  color: var(--surface);
-  font-family: var(--font-display);
-  font-weight: 600;
-  font-size: 1rem;
-  letter-spacing: -0.01em;
-  box-shadow: none;
-  transition: background-color var(--dur-base) var(--ease-out),
-    color var(--dur-base) var(--ease-out), transform var(--dur-fast) var(--ease-out);
-}
-
-.brand__mark:hover {
-  transform: translateY(-1px) scale(1.03);
-}
-
-.brand__mark:active {
-  transform: scale(0.94);
+/* 品牌位：图标轨顶部只留一枚个人头像（原 monogram 已让位给「我」） */
+.rail__brand .avatar-btn {
+  display: block;
 }
 
 .demo-btn {
@@ -4144,6 +4153,19 @@ html.vt-morph .detail {
     padding: 14px 0;
   }
 
+  /* 宽度不够时中列改为弹性：搜索仍居中，但不与右侧操作抢位 */
+  .cmdbar {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 16px;
+    padding: 0 24px;
+  }
+
+  .cmdbar__search {
+    width: 100%;
+    max-width: 420px;
+    justify-self: center;
+  }
+
   .rail-item {
     width: 42px;
     height: 42px;
@@ -4162,6 +4184,15 @@ html.vt-morph .detail {
 @media (max-width: 900px) {
   .global-search {
     display: none;
+  }
+
+  .cmdbar {
+    gap: 12px;
+    padding: 0 20px;
+  }
+
+  .cmdbar__search {
+    max-width: 360px;
   }
 
   .cmdbar__actions .ant-segmented {
@@ -4263,6 +4294,11 @@ html.vt-morph .detail {
     gap: 12px;
   }
 
+  /* 移动端中列吃满剩余宽度，搜索框不被固定 max-width 卡住 */
+  .cmdbar__search {
+    max-width: none;
+  }
+
   .cmdbar__title {
     font-size: 1.125rem;
   }
@@ -4349,6 +4385,13 @@ html.vt-morph .detail {
     padding: 0;
     justify-content: center;
     gap: 0;
+  }
+
+  /* 中列里的搜索触发器在图标态不再撑满，回到 32px 圆钮 */
+  .cmdbar__search .search-trigger {
+    flex: 0 0 auto;
+    width: 32px;
+    justify-content: center;
   }
 
   .search-trigger__label,
@@ -4924,6 +4967,67 @@ html.vt-morph .detail {
 
 .accounts-alert__steps li {
   overflow-wrap: anywhere;
+}
+
+/* 飞书 OAuth 未完成（20029 重定向 URL 有误）：结论 + 本次真实回调地址 + 复制/跳转（账号页与授权中心共用） */
+.feishu-oauth-help {
+  display: grid;
+  gap: 8px;
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.feishu-oauth-help__guide {
+  margin: 0;
+}
+
+.feishu-oauth-help__uri {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.feishu-oauth-help__label {
+  color: var(--text-2);
+}
+
+.feishu-oauth-help__uri .ant-typography {
+  margin: 0;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.feishu-oauth-help__fallback {
+  color: var(--text-2);
+}
+
+.feishu-oauth-help__reasons {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: 4px;
+  font-size: 0.75rem;
+  color: var(--text-2);
+}
+
+.feishu-oauth-help__reasons li {
+  overflow-wrap: anywhere;
+}
+
+.feishu-oauth-help__reasons strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.feishu-oauth-help__actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 /* 指标口径：发送共 N（真实 A / 模拟 B） */
