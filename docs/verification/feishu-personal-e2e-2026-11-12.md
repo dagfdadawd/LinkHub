@@ -330,7 +330,14 @@ $m = $r.data.items[0]
 | 桌面版 OAuth | ✅ 成功 | 令牌落盘 `%APPDATA%\LinkHub\data\feishu-user-token.json`；`/api/accounts` 显示 `effectiveSend=user / effectiveReceive=user`、`state=linked`、`八水合甲烷` |
 | 桌面版接收 | ✅ 单聊入库 | `receivedAs=user`、`conversation.type=p2p`、`title=LinkHub`；水位文件列出 **6 个会话**（含单聊，说明 `types=p2p,group` 生效） |
 | 桌面版发送 | ✅ 本人发出 | `compose(identity=user)` → 202 `sendIdentity=user`；飞书侧核对 `sender.sender_type=user`、`sender.id=ou_eca…`、`is_agent=false` |
-| 全链路回放 | ✅ 可追踪 | 回放页 5 条：`composed（指定身份：本人）→ processing → replied → sent（真实接口（用户身份）· om_xxx）→ synced` |
+| 全链路回放 | ✅ 可追踪 | 回放页 5 条：composed（指定身份：本人）→ processing → replied → sent（真实接口（用户身份）· om_xxx）→ synced |
+
+证据截图（桌面版实机）：
+
+| 截图 | 说明 |
+|---|---|
+| ![桌面版收件箱：本人账号接收 / 本人发送](assets/desktop-inbox-labels.png) | 桌面版收件箱：飞书消息标注 **本人账号接收**，以本人身份发出的标注 **本人发送**；左下角「服务已连接」 |
+| ![桌面版全链路回放：指定身份本人](assets/desktop-trace-identity.png) | 全链路回放：composed 明确「指定身份：本人」→ sent「真实接口（用户身份）· om_x100b6068c5e42…」 |
 
 ### 10.3 配套改动（随本次提交）
 
