@@ -10,6 +10,7 @@ import { Alert, App as AntApp, Button, Input, Modal, Select, Space, Tag } from '
 import { PaperClipOutlined, SendOutlined, UploadOutlined } from '@ant-design/icons';
 import { FILE_LIMITS, Platform } from '../../types';
 import type { ComposeRequest, SendCapabilities } from '../../types';
+import type { MailAccountInfo } from '../../services/api';
 import { PLATFORM_META } from '../../utils/format';
 import { filesToAttachments, formatBytes, validateFiles } from '../../utils/attachments';
 import { services, store } from '../../store';
@@ -42,6 +43,8 @@ export function ComposeModal({
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [platform, setPlatform] = useState<Platform>(Platform.FEISHU);
   const [conversationId, setConversationId] = useState('');
+  const [mailAccounts, setMailAccounts] = useState<MailAccountInfo[]>([]);
+  const [mailAccount, setMailAccount] = useState<string>();
   const [text, setText] = useState('');
   const [files, setFiles] = useState<File[]>([]);
   const [caps, setCaps] = useState<SendCapabilities[]>([]);
@@ -53,8 +56,22 @@ export function ComposeModal({
     services.api.capabilities()
       .then((list) => { if (alive) setCaps(list); })
       .catch(() => { /* 能力接口不可用时按全平台可发文本处理，不阻断演示 */ });
+    services.api.accounts()
+      .then((list) => {
+        if (!alive) return;
+        setMailAccounts(list.find((a) => a.platform === Platform.MAIL)?.accounts ?? []);
+      })
+      .catch(() => { /* 账号接口不可用时退回服务端默认账号，不阻断发送 */ });
     return () => { alive = false; };
   }, [open]);
+
+  // 选邮箱平台时默认第一个已配置账号；已选项被移除时同步纠正
+  useEffect(() => {
+    if (!open || platform !== Platform.MAIL || mailAccounts.length === 0) return;
+    setMailAccount((prev) =>
+      prev && mailAccounts.some((a) => a.key === prev) ? prev : mailAccounts[0].key,
+    );
+  }, [open, platform, mailAccounts]);
 
   // 切换平台时自动预填该平台最近一条已知会话，减少演示现场手填
   useEffect(() => {
@@ -88,7 +105,9 @@ export function ComposeModal({
       const req: ComposeRequest = {
         platform,
         ...(conversationId.trim() ? { conversationId: conversationId.trim() } : {}),
-        ...(platform === Platform.MAIL ? { conversationType: 'p2p' as const } : {}),
+        ...(platform === Platform.MAIL
+          ? { conversationType: 'p2p' as const, ...(mailAccount ? { mailAccount } : {}) }
+          : {}),
         text: text.trim(),
         ...(attachments.length > 0 ? { attachments } : {}),
       };
@@ -138,6 +157,30 @@ export function ComposeModal({
             aria-label="目标平台"
           />
         </div>
+
+        {platform === Platform.MAIL && (
+          <div>
+            <div className="compose-field__label">发件邮箱</div>
+            <Select
+              value={mailAccount}
+              options={mailAccounts.map((a) => ({
+                value: a.key,
+                label: `${a.label}（${a.address}）`,
+              }))}
+              onChange={setMailAccount}
+              disabled={mailAccounts.length === 0}
+              placeholder={mailAccounts.length === 0 ? '未配置邮箱账号' : undefined}
+              style={{ width: '100%' }}
+              aria-label="发件邮箱"
+              data-testid="compose-mail-account"
+            />
+            {mailAccounts.length === 0 && (
+              <div className="compose-field__hint">
+                暂无可用邮箱账号，请先在 .env 配置 MAIL_&lt;KEY&gt;_ADDRESS / MAIL_&lt;KEY&gt;_AUTH_CODE
+              </div>
+            )}
+          </div>
+        )}
 
         <div>
           <div className="compose-field__label">目标会话 ID（留空则复用该平台最近会话）</div>

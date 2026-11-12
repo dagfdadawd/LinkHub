@@ -60,7 +60,7 @@ curl -H "Authorization: Bearer linkhub-local-demo-2026-change-me" \
      http://127.0.0.1:3001/api/capabilities
 ```
 
-浏览器里验证闭环：顶栏 **新建发送** → 选平台 + 填目标会话 + 文本/附件 → 发送，
+浏览器里验证闭环：顶栏 **新建发送** → 选平台 + 填目标会话（邮箱平台可选发件账号）+ 文本/附件 → 发送，
 消息立刻进入收件箱，状态经 WebSocket 从 `replied` 推进到 `sent` / `synced`，
 在「全链路回放」里可逐条查看 `composed → processing → replied → sent → synced`。
 

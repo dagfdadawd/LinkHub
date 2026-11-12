@@ -75,6 +75,23 @@ test('normalizeCompose：文本 / 纯文件 / 文本+文件都合法，双空拒
   assert.throws(() => normalizeCompose({ platform: 'feishu', text: 'hi', attachments: 'x' }), InvalidOutboundRequest);
 });
 
+test('normalizeCompose：邮箱发件账号可选，仅限邮箱平台且字符受限', () => {
+  assert.equal(normalizeCompose({ platform: 'mail', text: 'hi', mailAccount: ' work ' }).mailAccount, 'work');
+  assert.equal(normalizeCompose({ platform: 'mail', text: 'hi' }).mailAccount, undefined);
+  assert.throws(
+    () => normalizeCompose({ platform: 'feishu', text: 'hi', mailAccount: 'work' }),
+    InvalidOutboundRequest,
+  );
+  assert.throws(
+    () => normalizeCompose({ platform: 'mail', text: 'hi', mailAccount: 'a b' }),
+    InvalidOutboundRequest,
+  );
+  assert.throws(
+    () => normalizeCompose({ platform: 'mail', text: 'hi', mailAccount: 1 }),
+    InvalidOutboundRequest,
+  );
+});
+
 test('isOutboundComposed：识别主动发送的 externalId（含邮箱账号前缀形式）', () => {
   const base = {
     traceId: 't', platform: Platform.FEISHU, externalId: '',
