@@ -31,7 +31,7 @@ Electron 生态在开启该功能的机器上普遍如此。
 
 1. 解压 `LinkHub-Lite-1.0.0-win-x64.zip`（或直接使用桌面上的 `LinkHub-App` 文件夹）；
 2. 双击 **`启动 LinkHub.vbs`**（桌面已建好 `LinkHub` 快捷方式，双击即可）；
-3. 首次启动会自动创建配置，窗口打开后即可使用：
+3. 首次启动会自动创建配置，窗口打开后先看**首次使用引导**：收件箱顶部横幅「首次使用：先连接你自己的账号」→ 点 **「去连接账号」** 进入 **「连接账号」** 页（左侧导航也有），按 **邮箱 → 钉钉 → 飞书 → 企业微信** 逐项连接（详见 [quickstart.md 路径 E](quickstart.md#path-e)）；点「稍后再说」后不再打扰，需要时可从左侧「连接账号」或「平台账号」页右上「打开「连接账号」向导」再进：
    - 不填任何凭据 = 四平台自动 Mock，可完整走通「接收 → 处理 → 回写 → 回流 → 回放」演示；
    - 接真实平台：编辑 `%APPDATA%\LinkHub\.env`（见 §3），保存后关闭 App 重新打开；
 4. **关闭应用窗口 = 退出 App**：本地服务会被一并停止（不会留后台进程/端口）。
@@ -55,6 +55,7 @@ Electron 生态在开启该功能的机器上普遍如此。
 | 数据 | `%APPDATA%\LinkHub\data`（消息快照 / 飞书用户令牌 / 邮箱水位，重装不丢） |
 | 日志 | `%APPDATA%\LinkHub\logs\`（`launcher.log` 启动器、`server.log` 服务） |
 | 浏览器专属 profile | `%APPDATA%\LinkHub\browser-profile`（App 窗口的独立配置，删掉会自动重建） |
+| 内置 dws（钉钉本人身份用） | 轻量版：`LinkHub-Lite\tools\`；Electron 版：`resources\app\tools\`（构建时若已执行 `pnpm run fetch:dws` 才会带上；dws 运行时是**一整个目录**——`dws.exe` + 同名 DLL + `skt.bin` 等配置，必须一起保留。桌面版优先用内置，其次 `%USERPROFILE%\.local\bin\dws.exe`，最后 PATH） |
 
 升级：替换整个程序目录即可，`%APPDATA%\LinkHub` 里的配置与数据保留。
 卸载：删除程序目录 + `%APPDATA%\LinkHub`（以及桌面快捷方式）。
@@ -66,8 +67,8 @@ Electron 生态在开启该功能的机器上普遍如此。
 - 飞书 / 钉钉 / 企业微信 / 邮箱：按模板填写后**关闭 App 再打开**；
 - 飞书本人身份：账号页点「连接本人账号」走 OAuth（回调默认 `http://localhost:<端口>/api/feishu/oauth/callback`，
   必要时在 `.env` 显式设置 `FEISHU_REDIRECT_URI`，端口见本次启动日志）；
-- 钉钉本人身份：需本机安装官方 `dws` CLI 并完成一次 `dws auth login`；启动器会自动探测
-  `%USERPROFILE%\.local\bin\dws.exe` 或 PATH 里的 `dws`；
+- 邮箱：**不用改 `.env`**——「连接账号」页 → 邮箱卡片「添加邮箱账号」，填地址 + 授权码（测试连接 → 保存账号，热加载无需重启）；也仍支持在 `.env` 里按 `MAIL_<KEY>_*` 配置。
+- 钉钉本人身份：桌面包**已内置官方 `dws`**（构建前置见 §4），用户不用自己装；在「连接账号」钉钉卡片点「用浏览器登录（推荐）」按弹窗完成真人授权即可。若这个包是**构建时没跑 `pnpm run fetch:dws`** 的版本，则回退为：本机安装 `dws` 到 `%USERPROFILE%\.local\bin\dws.exe`（或 PATH），或在源码里先 `pnpm run fetch:dws` 后重新构建；没有 dws 不影响邮箱/飞书/企微，钉钉卡片会显示「需安装」并给下载入口。
 - 桌面版会强制使用自己的入口令牌与数据目录（`API_TOKEN` / `DATA_DIR` 由启动器注入），
   `.env` 里这两项对本 App 不生效——这是为了避免令牌不一致导致 401、以及数据写进程序目录。
 
@@ -81,6 +82,7 @@ Electron 生态在开启该功能的机器上普遍如此。
 ```bash
 cd unimsg-connector
 pnpm install                 # 会安装 desktop 工程依赖（esbuild/resedit，很小）
+pnpm run fetch:dws           # 构建前置（重要）：下载官方 dws 运行时到 unimsg-connector/tools/，打包时整个目录进 App（约 24MB+；跳过则包内不含 dws）
 pnpm app:build:lite          # 构建轻量版（推荐；不会下载 Electron）
 # 或
 pnpm app:build               # 构建 Electron 完整版（首次会从 npmmirror 下载约 110MB 运行时）
@@ -98,7 +100,8 @@ unimsg-connector/desktop/dist/
 构建脚本做的事（`desktop/scripts/build.mjs`）：
 1. `vite build` 构建前端，注入 `VITE_API_BASE=/` 与本次随机的本机 token；
 2. `esbuild` 把 `packages/server` 打成单文件 `server.cjs`（Node 20 目标，兼容 Electron 内置 Node）；
-3. 轻量版：复制已签名 `node.exe` + 启动器 + 前端 + 服务 + 配置模板；
+3. 若 `tools/dws.exe` 存在：**整个 `tools/` 目录**（dws.exe + 运行时 DLL/配置）复制进包——轻量版到 `LinkHub-Lite\tools\`（启动器优先设 `DWS_BIN` 为它），Electron 版到 `resources\app\tools\`（主进程优先用内置）；不存在则跳过并打印提示，应用照常可用（钉钉卡片显示「需安装」）；
+   3. 轻量版：复制已签名 `node.exe` + 启动器 + 前端 + 服务 + 配置模板；
    Electron 版：从 npmmirror 下载运行时 → 组装 `resources/app` → `resedit` 写入图标与版本信息；
 4. 打包 zip，打印 SHA256。
 
@@ -116,12 +119,15 @@ unimsg-connector/desktop/dist/
 | 关闭窗口后后台还有进程？ | 正常设计是窗口关闭即停服；若任务管理器残留，看日志是否 launcher 被杀（强杀 wscript/powershell 会跳过清理） |
 | 想换端口 | 端口自动从 3901 顺延；如需固定，可在启动前设环境变量 `LINKHUB_DESKTOP_PORT`（Electron 版） |
 | Edge 窗口想全屏/记住大小 | 窗口大小记忆由 `%APPDATA%\LinkHub\browser-profile` 负责；删掉可重置 |
+| 首次打开不知道从哪开始 | 收件箱顶部横幅「首次使用…」→「去连接账号」；或左侧「连接账号」。四个平台逐项连接，带「需管理员」的项把卡片里的清单发给企业管理员 |
+| 钉钉显示「需安装 dws」/ 登录报未找到 dws | 这个包构建时没包含 dws：在源码里 `pnpm run fetch:dws` 后重新构建，或本机安装 `dws` 到 `%USERPROFILE%\.local\bin\dws.exe`；不影响其它平台 |
 
 ## 6. 限制与安全说明
 
 - **单机单实例**：一次只有一个用户/一个窗口；多人共享同一台机器请各自用不同 Windows 账户（userData 按用户隔离）。
 - **只监听回环地址**：`127.0.0.1`，局域网/外网访问不到；入口令牌随构建随机生成。
 - **不携带任何凭据**：交付 zip 里没有 `.env`/令牌/邮箱授权码；首次运行生成的是全 Mock 模板。
+- **内置 dws 是官方二进制、不含登录凭据**：首次使用钉钉本人身份仍需你本人在浏览器完成一次授权；换机/重装后需重新登录。
 - **轻量版的窗口是 Edge App 模式**：任务栏图标是 Edge 的；窗口标题与页面是 LinkHub。若企业策略禁用 Edge 可换 Chrome（脚本会自动找）。
 - **Electron 版在未开智能应用控制的机器上**才是完整原生 App 体验（自定义图标/名称）。
 - 真实平台（尤其钉钉 dws 个人身份、飞书 OAuth）需要真人授权步骤，App 内只负责引导与状态展示。

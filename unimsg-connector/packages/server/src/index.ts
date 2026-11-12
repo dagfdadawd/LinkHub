@@ -15,7 +15,8 @@ import { RateLimiter } from './services/rateLimiter';
 import { MessageService } from './services/message';
 import { startDingtalkStream } from './stream/dingtalkStream';
 import { startFeishuStream } from './stream/feishuStream';
-import { startMailPoller } from './stream/mailPoller';
+import { reloadMailPoller, startMailPoller, stopMailPoller } from './stream/mailPoller';
+import { initMailAccounts } from './services/mailAccounts';
 import {
   IDENTITY_CHANNELS_RECONCILE_MS,
   initIdentityChannels,
@@ -46,6 +47,24 @@ const svc = new MessageService(
   new RateLimiter(config.sendMaxRetry, config.retryBaseMs),
   wsBroadcast,
 );
+
+/**
+ * 邮箱账号「运行时导入」初始化：
+ *  - 启动时把本地文件（DATA_DIR/mail-accounts.json 或 .linkhub-mail-accounts.json）并入 config.mail.accounts；
+ *  - 运行期增删账号 → 热加载：已有轮询器则立刻补跑一轮；启动时因无账号没起来的话，按需拉起（仅真实模式）。
+ * 个人版用户因此不需要改 .env / 重启后端。
+ */
+const mailAccountsStore = initMailAccounts({
+  onChange: () => {
+    if (!reloadMailPoller('邮箱账号变更')) {
+      // 典型场景：启动时没有任何邮箱账号 → startMailPoller 当时直接跳过；运行中第一次添加账号后按需启动。
+      if (config.mail.accounts.length > 0 && config.runtime[Platform.MAIL].mode === 'real') {
+        startMailPoller(svc);
+      }
+    }
+  },
+});
+void mailAccountsStore;
 
 const corsOrigins = parseCorsOrigins(process.env.CORS_ORIGINS);
 const app = createApp(svc, { corsOrigins });
@@ -176,6 +195,7 @@ async function shutdown(reason: string): Promise<void> {
   shuttingDown = true;
   console.log(`[unimsg] 收到 ${reason}，正在停止本人身份接收器与子进程…`);
   try {
+    stopMailPoller();
     await identityChannels.stopAll();
     dingtalkPersonalClient().dispose();
   } catch (e) {

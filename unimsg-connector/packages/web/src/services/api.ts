@@ -178,6 +178,110 @@ export interface TraceResult {
   log: TraceEntry[];
 }
 
+// ---------------------------------------------------------------------------
+// 授权中心 / 首次使用向导（个人版）
+// 后端契约见 GET /api/onboarding；接口未就绪时页面给出「后端版本较旧」提示。
+// ---------------------------------------------------------------------------
+
+/** 平台连接状态（后端聚合，前端只渲染） */
+export type OnboardingState =
+  | 'ready'
+  | 'needs_user_auth'
+  | 'needs_install'
+  | 'needs_admin'
+  | 'mock'
+  | 'error';
+
+/** 动作类型：api=调接口/登录，form=展开邮箱表单，link=打开官方后台，copy=复制清单，command=展示可复制命令 */
+export type OnboardingActionKind = 'api' | 'form' | 'link' | 'copy' | 'command';
+
+export interface OnboardingAction {
+  id: string;
+  kind: OnboardingActionKind;
+  label: string;
+  /** kind=api 时后端建议的接口路径（前端只识别已知动作，不做任意请求） */
+  path?: string;
+  method?: string;
+  /** kind=link：官方后台 / 文档深链 */
+  url?: string;
+  /** kind=copy：要复制的管理员清单 / 说明文本 */
+  text?: string;
+  /** kind=command：要展示并可复制的命令（如 pnpm run fetch:dws） */
+  command?: string;
+}
+
+export interface OnboardingStep {
+  id: 'mail' | 'dingtalk' | 'feishu' | 'wecom';
+  label: string;
+  state: OnboardingState;
+  summary: string;
+  hints: string[];
+  actions: OnboardingAction[];
+  /** 平台明细（脱敏）：identity / 邮箱账号列表 / 缺失配置项等，后端结构因平台而异 */
+  detail?: Record<string, unknown>;
+}
+
+/** dws 可执行文件来源：内置 tools / 显式 .env / 用户目录 / PATH / 未找到 */
+export type DwsSource = 'env' | 'tools' | 'user_profile' | 'path' | 'missing';
+
+export interface OnboardingDwsInfo {
+  available: boolean;
+  version?: string;
+  source: DwsSource;
+  pathHint?: string;
+}
+
+export interface OnboardingView {
+  generatedAt?: string;
+  /** 后端判定是否「首次使用」：环境仍是模板 / 没有可用账号 */
+  firstRun: boolean;
+  startedAt?: string;
+  envFile?: { path: string; mtime: string } | null;
+  dws: OnboardingDwsInfo;
+  overall: { ready: number; total: number; needsAction: number };
+  /** 平台卡片；前端按邮箱 → 钉钉 → 飞书 → 企微 排序 */
+  steps: OnboardingStep[];
+}
+
+/** 运行时邮箱账号（GET /api/mail/accounts）：地址脱敏，授权码永不下发 */
+export interface MailAccountView {
+  key: string;
+  label?: string;
+  /** 后端可能直接给脱敏地址（address 已打码），也可能另给 maskedAddress */
+  address?: string;
+  maskedAddress?: string;
+  addressMasked?: string;
+  provider?: string;
+  /** env=.env 配置；file=LinkHub 本地账号文件（可删除） */
+  source: 'env' | 'file';
+  /** 后端标记是否可在本地删除（file=true；旧后端可能缺失，页面按 source 兜底） */
+  removable?: boolean;
+  folders?: string[];
+  mode?: DeliveryMode;
+}
+
+/** 邮箱测试 / 保存请求体（POST /api/mail/accounts*） */
+export interface MailAccountInput {
+  provider: string;
+  address: string;
+  /** 邮箱授权码（不是登录密码）；只随请求发送，前端不回显、不落 localStorage */
+  authCode: string;
+  label?: string;
+  imapHost?: string;
+  imapPort?: number;
+  smtpHost?: string;
+  smtpPort?: number;
+}
+
+/** 邮箱连接测试结果（IMAP + SMTP 登录自检） */
+export interface MailAccountTestResult {
+  ok: boolean;
+  /** 中文结论（失败时可操作） */
+  message?: string;
+  /** 逐项明细（可选；后端不提供时页面只显示 message） */
+  details?: string[];
+}
+
 export interface MessageApi {
   list(filter?: MessageFilter): Promise<UnifiedMessage[]>;
   get(id: string): Promise<UnifiedMessage | undefined>;
@@ -200,6 +304,16 @@ export interface MessageApi {
   dingtalkPersonalStatus(): Promise<DingtalkPersonalStatus>;
   /** 注销钉钉本人身份（退回机器人 / Mock 通道） */
   dingtalkPersonalLogout(): Promise<void>;
+  /** 授权中心聚合状态（个人版首启向导；均不含 token / 授权码） */
+  onboarding(): Promise<OnboardingView>;
+  /** 运行时邮箱账号（脱敏列表，含 env / file 来源） */
+  mailAccounts(): Promise<MailAccountView[]>;
+  /** 测试邮箱 IMAP / SMTP 登录（只读自检，不落盘） */
+  mailAccountTest(input: MailAccountInput): Promise<MailAccountTestResult>;
+  /** 保存邮箱账号（服务端落盘并热加载，不需要重启） */
+  mailAccountCreate(input: MailAccountInput): Promise<void>;
+  /** 删除本地保存的邮箱账号（.env 来源不可删） */
+  mailAccountDelete(key: string): Promise<void>;
   markDone(id: string): Promise<UnifiedMessage>;
   /** 标记已读 / 未读（阅读状态独立于业务状态） */
   markRead(id: string, read: boolean): Promise<UnifiedMessage>;

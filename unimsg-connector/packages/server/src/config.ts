@@ -18,6 +18,7 @@ import { statSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Platform, type DeliveryMode } from '@unimsg/shared';
+import { resolveDwsBin } from './connectors/dwsBin';
 import {
   buildPlatformRuntime,
   DEFAULT_FEISHU_ACCOUNTS_BASE_URL,
@@ -45,6 +46,13 @@ loadEnv({ path: resolve(process.cwd(), '.env') });
 
 /** monorepo 根（unimsg-connector/）：.env、水位、doctor 工作目录等统一按它定位 */
 export const monorepoRoot = resolve(here, '../../..');
+
+/**
+ * dws 可执行文件统一解析（个人版内置/自动发现）：
+ * DWS_BIN → LINKHUB_TOOLS_DIR → 仓库 tools/ → ~/.local/bin → PATH。
+ * 解析只定位、不探测登录态；身份探测/启动直接用 config.identity.dingtalk.bin。
+ */
+const dwsResolution = resolveDwsBin(process.env, { monorepoRoot });
 
 /**
  * 磁盘上 .env 的快照（只返回路径与修改时间，绝不返回内容）：
@@ -237,6 +245,10 @@ export const config = {
     },
     dingtalk: {
       ...identityConfig.dingtalk,
+      // 覆盖 resolveIdentityConfig 里的「仅 env/PATH」默认值：统一自动发现（tools/ 内置优先）
+      bin: dwsResolution.bin,
+      binSource: dwsResolution.source,
+      ...(dwsResolution.pathHint ? { binPathHint: dwsResolution.pathHint } : {}),
     },
   },
 

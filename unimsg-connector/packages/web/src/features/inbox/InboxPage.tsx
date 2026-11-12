@@ -13,7 +13,13 @@ import { navigateWithMorph } from '../../utils/morph';
 import { injectSample, type InjectPlatform } from '../../services/demoSamples';
 import { EmptyState } from '../../components/EmptyState';
 import { FirstRunGuide, isEmptyFirstRun } from '../../components/FirstRunGuide';
+import { OnboardingBanner } from '../../components/OnboardingBanner';
 import { QuickStart } from '../../components/QuickStart';
+import {
+  isOnboarded,
+  markOnboarded,
+  shouldShowOnboardingBanner,
+} from '../../utils/onboarding';
 import { MessageCard } from './MessageCard';
 import { DetailPanel } from './DetailPanel';
 import { ChannelTabs, CHANNEL_DEFS, type ChannelOption } from './ChannelTabs';
@@ -48,6 +54,33 @@ export function InboxPage() {
   const [listCollapsed, setListCollapsed] = useState(false);
   const toast = AntApp.useApp().message;
   const injectSeq = useRef(0);
+  /** 首启横幅：本地标记 + 后端 firstRun 任一触发；点过「去连接 / 稍后」后不再打扰 */
+  const [onboarded, setOnboarded] = useState(() => isOnboarded());
+
+  useEffect(() => {
+    // 纯前端演示模式不需要拉授权中心（Mock 会如实返回演示状态，但横幅不显示）
+    if (!state.demoMode) void store.refreshOnboarding();
+  }, [state.demoMode]);
+
+  const onboarding = state.onboarding;
+  const showOnboarding = shouldShowOnboardingBanner({
+    demoMode: state.demoMode,
+    onboarded,
+    firstRun: onboarding?.firstRun,
+    ready: onboarding?.overall.ready,
+    total: onboarding?.overall.total,
+  });
+
+  const dismissOnboarding = (): void => {
+    markOnboarded();
+    setOnboarded(true);
+  };
+
+  const openConnect = (): void => {
+    markOnboarded();
+    setOnboarded(true);
+    navigate('/connect');
+  };
 
   const visible = useMemo(() => filterMessages(state.messages, state.filters), [state.messages, state.filters]);
   const selected = traceId ? state.messages.find((m) => m.traceId === traceId) : undefined;
@@ -250,6 +283,10 @@ export function InboxPage() {
 
   return (
     <div className="inbox-page">
+      {/* 个人版首启：先去「连接账号」把邮箱/钉钉/飞书/企微连上（点过即不再打扰） */}
+      {showOnboarding && (
+        <OnboardingBanner onOpen={openConnect} onDismiss={dismissOnboarding} />
+      )}
       {/* 首启 3 步引导：真实后端 + 无消息时显示（组件内部含「知道了」记忆与严格显示条件） */}
       <FirstRunGuide
         demoMode={state.demoMode}

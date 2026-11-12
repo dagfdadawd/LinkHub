@@ -9,6 +9,7 @@ import {
   DownOutlined,
   HistoryOutlined,
   InboxOutlined,
+  LinkOutlined,
   MoonOutlined,
   ReloadOutlined,
   SearchOutlined,
@@ -39,6 +40,7 @@ function pageMeta(pathname: string): { eyebrow: string; title: string } {
   if (pathname.startsWith('/todos')) return { eyebrow: 'TASKS', title: '待办' };
   if (pathname.startsWith('/trace')) return { eyebrow: 'TRACE', title: '全链路回放' };
   if (pathname.startsWith('/accounts')) return { eyebrow: 'ACCOUNTS', title: '平台账号' };
+  if (pathname.startsWith('/connect')) return { eyebrow: 'CONNECT', title: '连接账号' };
   return { eyebrow: 'INBOX', title: '收件箱' };
 }
 
@@ -260,6 +262,7 @@ export function AppShell() {
           <span className="rail__sep" role="presentation" />
 
           <div className="rail__group">
+            <RailLink to="/connect" icon={<LinkOutlined />} label="连接账号" />
             <RailLink to="/accounts" icon={<ApiOutlined />} label="平台账号" />
           </div>
         </nav>
@@ -405,6 +408,13 @@ export function AppShell() {
           >
             <InboxOutlined />
             <span>收件箱</span>
+          </NavLink>
+          <NavLink
+            to="/connect"
+            className={({ isActive }) => `mobile-nav__item${isActive ? ' is-active' : ''}`}
+          >
+            <LinkOutlined />
+            <span>连接</span>
           </NavLink>
           <NavLink
             to="/todos"

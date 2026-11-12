@@ -7,6 +7,7 @@
     "dev": "pnpm --filter @unimsg/server dev",
     "start": "pnpm --filter @unimsg/server start",
     "doctor": "pnpm --filter @unimsg/server run doctor",
+    "fetch:dws": "node scripts/fetch-dws.mjs",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm --filter @unimsg/server test",
     "test:web": "pnpm --filter @unimsg/web test",

@@ -181,6 +181,28 @@ if (!zipOnly) {
   fs.mkdirSync(path.join(appDir, 'config'), { recursive: true });
   fs.copyFileSync(path.join(unimsgRoot, '.env.example'), path.join(appDir, 'config', '.env.example'));
 
+  // 可选：内置钉钉官方 CLI dws（个人版开箱即用；构建前先 `pnpm run fetch:dws`）。
+  // dws 运行时是一个 payload：dws.exe + 同名 DLL + skt.bin 配置，必须一起带上。
+  // 只复制已知 payload 文件（忽略运行期产生的锁文件 / PS 目录等），未内置时回退系统安装的 dws。
+  const bundledDwsDir = path.join(unimsgRoot, 'tools');
+  const bundledDwsExe = path.join(bundledDwsDir, 'dws.exe');
+  fs.mkdirSync(path.join(appDir, 'tools'), { recursive: true });
+  if (fs.existsSync(bundledDwsExe)) {
+    const payloadFiles = fs
+      .readdirSync(bundledDwsDir, { withFileTypes: true })
+      .filter((e) => e.isFile() && e.name !== '.dws-runtime.lock')
+      .map((e) => e.name);
+    for (const name of payloadFiles) {
+      fs.copyFileSync(path.join(bundledDwsDir, name), path.join(appDir, 'tools', name));
+    }
+    log(
+      'app',
+      `内置 dws 运行时：tools/（${payloadFiles.length} 个文件，dws.exe ${(fs.statSync(bundledDwsExe).size / 1024 / 1024).toFixed(1)} MB）`,
+    );
+  } else {
+    log('app', '提示：tools/dws.exe 不存在，未内置 dws；需要钉钉本人身份开箱即用时，构建前先运行 pnpm run fetch:dws');
+  }
+
   fs.writeFileSync(
     path.join(appDir, 'package.json'),
     JSON.stringify(
@@ -324,8 +346,8 @@ if (!zipOnly) {
     `  · 日志文件：%APPDATA%\\LinkHub\\logs\\server.log`,
     '',
     '不填任何账号也能用：四平台自动 Mock，可完整走通「接收 → 处理 → 回写 → 回流 → 回放」演示。',
-    '接真实平台：飞书 / 钉钉 / 企业微信 / 邮箱按 .env 模板或 docs/personal-identity.md 填写；',
-    '钉钉本人身份需要本机安装官方 dws CLI 并在终端执行 dws auth login（App 会自动探测）。',
+    '接真实平台：打开「连接账号」页按向导逐项连接（邮箱 → 钉钉 → 飞书 → 企微）；也可按 .env 模板或 docs/personal-identity.md 填写。',
+    '钉钉本人身份：包内已内置官方 dws CLI（tools/dws.exe，构建时通过 pnpm run fetch:dws 放入）；未内置时自动探测本机安装。',
     '',
     '安全：本地服务只监听 127.0.0.1，使用每次构建随机生成的入口令牌；数据不上传任何服务器。',
     '本包不含任何真实凭据；升级时直接替换程序目录即可，%APPDATA%\\LinkHub 配置与数据保留。',
@@ -386,8 +408,8 @@ function liteReadme(version) {
     '  · 日志：%APPDATA%\\LinkHub\\logs（启动器 launcher.log + 服务 server.log）。',
     '',
     '不填任何账号也能用：四平台自动 Mock，可完整走通「接收 → 处理 → 回写 → 回流 → 回放」演示。',
-    '接真实平台：按 .env 模板或 docs/personal-identity.md 填写；',
-    '钉钉本人身份需要本机安装官方 dws CLI 并在终端执行 dws auth login（App 会自动探测）。',
+    '接真实平台：打开「连接账号」页按向导逐项连接（邮箱 → 钉钉 → 飞书 → 企微）；也可按 .env 模板或 docs/personal-identity.md 填写。',
+    '钉钉本人身份：包内已内置官方 dws CLI（tools/dws.exe）；若构建时未执行 pnpm run fetch:dws，则自动探测本机安装。',
     '',
     '安全：本地服务只监听 127.0.0.1，入口令牌在构建时随机生成；数据不上传任何服务器；',
     '本包不含任何真实凭据。',
@@ -414,7 +436,9 @@ function buildLite(appDirPath, buildToken, version) {
   fs.copyFileSync(nodeSrc, path.join(runtimeLite, 'node.exe'));
   log('lite', `内置运行时：${nodeSrc}（${(fs.statSync(path.join(runtimeLite, 'node.exe')).size / 1024 / 1024).toFixed(0)} MB，已签名）`);
 
-  for (const part of ['server', 'web', 'config']) {
+  const liteParts = ['server', 'web', 'config'];
+  if (fs.existsSync(path.join(appDirPath, 'tools'))) liteParts.push('tools');
+  for (const part of liteParts) {
     copyDir(path.join(appDirPath, part), path.join(liteRoot, part));
   }
   fs.mkdirSync(path.join(liteRoot, 'assets'), { recursive: true });

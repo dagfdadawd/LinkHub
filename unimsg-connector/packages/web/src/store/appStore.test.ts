@@ -91,6 +91,16 @@ describe('AppStore', () => {
       trace: async () => ({ data: [], log: [] }),
       accounts: async () => [],
       health: async () => ({ received: 0, deduped: 0, sent: 0, failed: 0, dlq: 0 }),
+      onboarding: async () => ({
+        firstRun: false,
+        dws: { available: false, source: 'missing' },
+        overall: { ready: 0, total: 4, needsAction: 4 },
+        steps: [],
+      }),
+      mailAccounts: async () => [],
+      mailAccountTest: async () => ({ ok: false, message: 'unused' }),
+      mailAccountCreate: async () => Promise.resolve(),
+      mailAccountDelete: async () => Promise.resolve(),
     };
     const realStore = new AppStore(httpLikeApi, realtime);
     await realStore.init();

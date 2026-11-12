@@ -24,6 +24,8 @@ import {
   pollMailFolder,
   type MailFetchBatch,
   type MailFetchFn,
+  reloadMailPoller,
+  stopMailPoller,
 } from './mailPoller';
 import type { MailAccount } from '../config';
 import type { MailRaw } from '../connectors/mail/mail';
@@ -398,4 +400,10 @@ test('状态文件路径：默认落在 unimsg-connector 根（不受 cwd 影响
   assert.equal(resolveStateFile({ [STATE_FILE_ENV]: custom }), custom);
   assert.equal(resolveStateFile({ [STATE_FILE_ENV]: 'relative-mail-state.json' }), resolve('relative-mail-state.json'));
   assert.equal(resolveStateFile({ [STATE_FILE_ENV]: '   ' }), def, '空白的 MAIL_STATE_FILE 视为未设置');
+});
+
+test('reloadMailPoller / stopMailPoller：未启动轮询时安全 no-op（个人版运行期增删账号不崩）', () => {
+  stopMailPoller();
+  assert.equal(reloadMailPoller('单测-未启动'), false);
+  stopMailPoller(); // 幂等
 });
