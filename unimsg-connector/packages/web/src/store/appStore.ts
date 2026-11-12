@@ -9,7 +9,7 @@ import type {
   ComposeRequest, MsgType, OutboundAttachment, Platform, UnifiedMessage,
 } from '../types';
 import type {
-  AccountInfo, DingtalkLoginStart, DingtalkPersonalStatus, FeishuOAuthStart, HealthInfo, MessageApi,
+  AccountInfo, DingtalkLoginOptions, DingtalkLoginStart, DingtalkPersonalStatus, FeishuOAuthStart, HealthInfo, MessageApi,
 } from '../services/api';
 import { isDemoApi } from '../services/api';
 import type { RealtimeClient, RealtimeStatus } from '../services/realtime';
@@ -236,9 +236,12 @@ export class AppStore {
     return this.api.feishuOAuthStart();
   }
 
-  /** 拉起钉钉本人身份登录（本机 dws）：返回操作指引，完成后前端轮询状态判断 */
-  async dingtalkPersonalLogin(): Promise<DingtalkLoginStart> {
-    return this.api.dingtalkPersonalLogin();
+  /**
+   * 拉起钉钉本人身份登录（本机 dws）：返回操作指引，完成后前端轮询状态判断。
+   * mode=browser 走本机 loopback OAuth（推荐）；device 用于远程 / 无浏览器。
+   */
+  async dingtalkPersonalLogin(options?: DingtalkLoginOptions): Promise<DingtalkLoginStart> {
+    return this.api.dingtalkPersonalLogin(options);
   }
 
   /** 轮询钉钉本人身份登录状态（只读，不打断当前消息视图） */

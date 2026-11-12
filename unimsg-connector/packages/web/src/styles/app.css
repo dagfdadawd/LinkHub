@@ -4986,3 +4986,108 @@ html.vt-morph .detail {
     max-width: 78vw;
   }
 }
+
+/* ---------------- 钉钉登录方式选择（浏览器推荐 / 设备码远程） ---------------- */
+
+.personal-modal__methods {
+  display: grid;
+  gap: 14px;
+}
+
+.personal-modal__method {
+  display: grid;
+  gap: 6px;
+}
+
+.personal-modal__method-hint {
+  font-size: 0.75rem;
+  line-height: 1.6;
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+
+.personal-modal__method-hint strong {
+  color: var(--text-2);
+}
+
+.personal-modal__details {
+  font-size: 0.75rem;
+  line-height: 1.6;
+  color: var(--text-3);
+}
+
+.personal-modal__details summary {
+  cursor: pointer;
+  color: var(--brand-ink);
+}
+
+.personal-modal__details .personal-modal__line {
+  margin-top: 8px;
+}
+
+/* 设备码块：大号等宽 + 倒计时；过期时置灰划掉，避免继续输入旧码 */
+.personal-modal__code-block {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-10);
+  background: var(--surface-2);
+  min-width: 0;
+}
+
+.personal-modal__code-label {
+  font-size: 0.75rem;
+  color: var(--text-3);
+}
+
+.personal-modal__code-block .personal-modal__code.ant-typography {
+  justify-self: start;
+  font-size: 1.375rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.personal-modal__code--expired.ant-typography {
+  opacity: 0.45;
+  text-decoration: line-through;
+}
+
+.personal-modal__countdown {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--brand-ink);
+}
+
+.personal-modal__countdown--expired {
+  font-family: var(--font-sans);
+  font-weight: 600;
+  color: var(--danger);
+}
+
+/* 授权链接行：按钮 + 可复制 URL + 兜底原生链接（弹窗被拦截时仍可点） */
+.personal-modal__url-block {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.personal-modal__line--url {
+  align-items: flex-start;
+}
+
+.personal-modal__raw-link {
+  font-size: 0.75rem;
+  color: var(--brand-ink);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 640px) {
+  .personal-modal__code-block .personal-modal__code.ant-typography {
+    font-size: 1.125rem;
+    letter-spacing: 0.08em;
+  }
+}

@@ -252,7 +252,7 @@ describe('HttpApi', () => {
     expect((init.headers as Record<string, string>).Authorization).toBe(`Bearer ${TOKEN}`);
   });
 
-  it('dingtalkPersonalLogin：POST login 并返回登录操作指引', async () => {
+  it('dingtalkPersonalLogin：POST login（透传 mode/force）并返回登录操作指引', async () => {
     const fn = mockFetch(jsonResponse({
       ok: true,
       data: {
@@ -262,21 +262,43 @@ describe('HttpApi', () => {
         instructions: '在浏览器打开链接并输入设备码',
         url: 'https://login.dingtalk.com/device',
         code: 'ABCD-1234',
+        expiresInSec: 900,
+        expiresAt: '2026-11-12T10:15:00.000Z',
+        loginId: 'login-1',
       },
     }));
     const api = new HttpApi(BASE, TOKEN);
 
-    const start = await api.dingtalkPersonalLogin();
+    const start = await api.dingtalkPersonalLogin({ mode: 'device', force: true });
 
     expect(start.mode).toBe('device');
     expect(start.code).toBe('ABCD-1234');
+    expect(start.expiresInSec).toBe(900);
+    expect(start.loginId).toBe('login-1');
     const [url, init] = callArgs(fn);
     expect(url).toBe(`${BASE}/api/dingtalk/personal/login`);
     expect(init.method).toBe('POST');
+    expect(JSON.parse(String(init.body))).toEqual({ mode: 'device', force: true });
     expect((init.headers as Record<string, string>).Authorization).toBe(`Bearer ${TOKEN}`);
   });
 
-  it('dingtalkPersonalStatus：GET status，返回 authenticated 与 hint（不触发登录）', async () => {
+  it('dingtalkPersonalLogin：不传参数时 body 为 {}，后端走 auto（优先浏览器 loopback）', async () => {
+    const fn = mockFetch(jsonResponse({
+      ok: true,
+      data: {
+        started: true,
+        mode: 'browser',
+        command: 'dws auth login',
+        instructions: '浏览器已打开授权页',
+      },
+    }));
+    const api = new HttpApi(BASE, TOKEN);
+
+    await api.dingtalkPersonalLogin();
+    expect(JSON.parse(String(callArgs(fn)[1].body))).toEqual({});
+  });
+
+  it('dingtalkPersonalStatus：GET status，返回 authenticated 与登录中状态（可恢复弹窗）', async () => {
     const fn = mockFetch(jsonResponse({
       ok: true,
       data: {
@@ -286,6 +308,12 @@ describe('HttpApi', () => {
         state: 'not_linked',
         hint: '未登录，请执行 dws auth login',
         loginCommand: 'dws auth login',
+        loginInProgress: true,
+        loginMode: 'device',
+        loginUrl: 'https://login.dingtalk.com/oauth2/device',
+        loginCode: 'REST-0001',
+        loginExpiresAt: '2026-11-12T10:15:00.000Z',
+        loginInstructions: '请继续完成上一次设备码登录。',
       },
     }));
     const api = new HttpApi(BASE, TOKEN);
@@ -294,6 +322,10 @@ describe('HttpApi', () => {
 
     expect(status.authenticated).toBe(false);
     expect(status.loginCommand).toBe('dws auth login');
+    expect(status.loginInProgress).toBe(true);
+    expect(status.loginMode).toBe('device');
+    expect(status.loginCode).toBe('REST-0001');
+    expect(status.loginExpiresAt).toBe('2026-11-12T10:15:00.000Z');
     expect(callArgs(fn)[0]).toBe(`${BASE}/api/dingtalk/personal/status`);
   });
 

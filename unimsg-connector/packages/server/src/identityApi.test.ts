@@ -360,3 +360,91 @@ test('reply identity=user 但 dws 未登录 → 400 中文（不产生假成功�
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });
+
+test('钉钉登录：device 模式返回 900s 有效期，/status 可恢复弹窗状态；重复同模式复用、force 换新', async () => {
+  const dir = tempDir();
+  process.env.FAKE_DWS_STATE_FILE = join(dir, 'state.json');
+  process.env.FAKE_DWS_AUTHENTICATED = 'false';
+  process.env.FAKE_DWS_LOGIN_DELAY_MS = '60000';
+  config.identity.dingtalk.bin = `node ${FAKE_DWS}`;
+  config.identity.dingtalk.policy = 'auto';
+  setRuntime(Platform.DINGTALK, { mode: 'real', policy: 'real', canSend: true, canReceive: true });
+  resetDingtalkPersonalClientCache();
+  resetIdentityCaches();
+  await withApp(async (base) => {
+    const login = await call(base, 'POST', '/api/dingtalk/personal/login', { mode: 'device' });
+    assert.equal(login.status, 200);
+    const data = login.json.data;
+    assert.equal(data.started, true);
+    assert.equal(data.mode, 'device');
+    assert.equal(data.requestedMode, 'device');
+    assert.equal(data.code, 'FAKE-1234');
+    assert.equal(data.expiresInSec, 900, 'device 默认 900s 有效期');
+    assert.ok(data.expiresAt);
+    assert.ok(data.loginId);
+    assert.ok(data.url?.includes('device/verify') || data.url?.includes('login.dingtalk.com'));
+    assert.ok(data.instructions);
+    assert.ok(!/token/i.test(JSON.stringify(data)), '不得下发令牌');
+
+    const status = await call(base, 'GET', '/api/dingtalk/personal/status');
+    assert.equal(status.json.data.loginInProgress, true);
+    assert.equal(status.json.data.loginMode, 'device');
+    assert.equal(status.json.data.loginCode, 'FAKE-1234');
+    assert.ok(status.json.data.loginUrl);
+    assert.ok(status.json.data.loginExpiresAt);
+    assert.ok(status.json.data.loginInstructions);
+    assert.equal(status.json.data.loginId, data.loginId, '弹窗可按 loginId 恢复同一次登录');
+    assert.ok((status.json.data.loginExpiresInSec ?? 0) > 0);
+
+    // 同模式再次发起 → 复用现有会话（不把用户手里的设备码作废）
+    const again = await call(base, 'POST', '/api/dingtalk/personal/login', { mode: 'device' });
+    assert.equal(again.json.data.loginId, data.loginId);
+
+    // force 强制刷新 → 新会话/新设备码
+    const forced = await call(base, 'POST', '/api/dingtalk/personal/login', { mode: 'device', force: true });
+    assert.notEqual(forced.json.data.loginId, data.loginId);
+
+    await call(base, 'POST', '/api/dingtalk/personal/logout');
+    const after = await call(base, 'GET', '/api/dingtalk/personal/status');
+    assert.equal(after.json.data.loginInProgress, false);
+    assert.equal(after.json.data.loginId, undefined);
+  });
+});
+
+test('钉钉登录：browser 模式返回 127.0.0.1 回调 OAuth URL 与 600s 窗口；非法 mode/force → 400 中文', async () => {
+  const dir = tempDir();
+  process.env.FAKE_DWS_STATE_FILE = join(dir, 'state.json');
+  process.env.FAKE_DWS_AUTHENTICATED = 'false';
+  process.env.FAKE_DWS_LOGIN_DELAY_MS = '60000';
+  config.identity.dingtalk.bin = `node ${FAKE_DWS}`;
+  config.identity.dingtalk.policy = 'auto';
+  setRuntime(Platform.DINGTALK, { mode: 'real', policy: 'real', canSend: true, canReceive: true });
+  resetDingtalkPersonalClientCache();
+  resetIdentityCaches();
+  await withApp(async (base) => {
+    const login = await call(base, 'POST', '/api/dingtalk/personal/login', { mode: 'browser' });
+    assert.equal(login.status, 200);
+    const data = login.json.data;
+    assert.equal(data.mode, 'browser');
+    assert.equal(data.requestedMode, 'browser');
+    assert.match(data.url, /oauth2\/auth/);
+    assert.match(data.url, /127\.0\.0\.1/);
+    assert.equal(data.expiresInSec, 600, 'browser 默认 600s 操作窗口');
+    assert.ok(!data.code, 'browser 模式不应有设备码');
+
+    const status = await call(base, 'GET', '/api/dingtalk/personal/status');
+    assert.equal(status.json.data.loginInProgress, true);
+    assert.equal(status.json.data.loginMode, 'browser');
+    assert.match(status.json.data.loginUrl, /oauth2\/auth/);
+
+    const badMode = await call(base, 'POST', '/api/dingtalk/personal/login', { mode: 'robot' });
+    assert.equal(badMode.status, 400);
+    assert.match(badMode.json.error, /mode 只能是 auto/);
+
+    const badForce = await call(base, 'POST', '/api/dingtalk/personal/login', { mode: 'browser', force: 'yes' });
+    assert.equal(badForce.status, 400);
+    assert.match(badForce.json.error, /force 必须是布尔值/);
+
+    await call(base, 'POST', '/api/dingtalk/personal/logout');
+  });
+});
