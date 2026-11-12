@@ -22,7 +22,11 @@ const hoisted = vi.hoisted(() => {
   const store = {
     refreshAccounts: vi.fn(async () => {}),
     refreshHealth: vi.fn(async () => {}),
-    feishuOAuthStart: vi.fn(async () => ({ url: 'https://accounts.feishu.cn/open-apis/authen/v1/authorize?client_id=demo' })),
+    feishuOAuthStart: vi.fn(
+      async (): Promise<{ url: string; redirectUri?: string }> => ({
+        url: 'https://accounts.feishu.cn/open-apis/authen/v1/authorize?client_id=demo',
+      }),
+    ),
     dingtalkPersonalLogin: vi.fn(),
     dingtalkPersonalStatus: vi.fn(),
     dingtalkPersonalLogout: vi.fn(async () => {}),
@@ -40,10 +44,14 @@ vi.mock('../../store', () => ({ store: hoisted.store }));
 import { AccountsPage } from './AccountsPage';
 import {
   FEISHU_OAUTH_PENDING_KEY,
+  FEISHU_OAUTH_REDIRECT_URI_FALLBACK,
+  FEISHU_OAUTH_UNFINISHED_TITLE,
   markFeishuOAuthPending,
 } from './feishuOAuthFeedback';
 
 const FEISHU_ACCOUNT = ACCOUNTS.find((a) => a.platform === Platform.FEISHU)!;
+/** 桌面版后端跑在随机端口 3901–3930：与飞书后台登记的 3001 不一致，正是 20029 的来源 */
+const DESKTOP_REDIRECT_URI = 'http://localhost:3901/api/feishu/oauth/callback';
 
 function identityView(
   patch: Partial<PlatformIdentityView> = {},
@@ -97,6 +105,7 @@ beforeEach(() => {
   makeState();
   hoisted.store.feishuOAuthStart.mockResolvedValue({
     url: 'https://accounts.feishu.cn/open-apis/authen/v1/authorize?client_id=demo',
+    redirectUri: DESKTOP_REDIRECT_URI,
   });
 });
 
@@ -164,20 +173,54 @@ describe('账号页 P1-6：飞书 OAuth 失败/被拦截的反馈', () => {
     expect(window.sessionStorage.getItem(FEISHU_OAUTH_PENDING_KEY)).toBeTruthy();
   });
 
-  it('授权回来仍未连接：展示中文原因 + 配置清单，可关闭提示', async () => {
+  it('授权回来仍未连接、且拿不到回调地址：仍给 20029 自解释 + 兜底文案，可关闭提示', async () => {
     markFeishuOAuthPending(window.sessionStorage);
-    vi.spyOn(window, 'open').mockReturnValue(null);
     renderPage();
 
-    expect(await screen.findByText('飞书授权未完成')).toBeInTheDocument();
-    // 中文解释里就有常见原因，不再让用户对着裸错误码猜
-    expect(screen.getAllByText(/重定向 URL/).length).toBeGreaterThan(0);
-    fireEvent.click(screen.getByText('查看配置步骤（常见失败原因）'));
-    expect(screen.getByText(/personal-identity\.md「飞书」一节/)).toBeInTheDocument();
+    expect(await screen.findByText(FEISHU_OAUTH_UNFINISHED_TITLE)).toBeInTheDocument();
+    // 刷新 / state 丢失：不空白、不编造地址，告诉用户点哪里会得到真实地址
+    expect(screen.getByTestId('feishu-oauth-redirect-uri-fallback')).toHaveTextContent(
+      FEISHU_OAUTH_REDIRECT_URI_FALLBACK,
+    );
+    expect(screen.queryByRole('button', { name: /复制地址/ })).not.toBeInTheDocument();
+    // 其余常见原因逐条给出可操作动作，不再让用户对着裸错误码猜
+    const panel = screen.getByTestId('feishu-oauth-unfinished');
+    expect(panel.textContent).toContain('20027');
+    expect(panel.textContent).toContain('offline_access');
+    expect(panel.textContent).toContain('20010');
+    expect(panel.textContent).toContain('可用范围');
 
     fireEvent.click(screen.getByRole('button', { name: /我知道了/ }));
-    await waitFor(() => expect(screen.queryByText('飞书授权未完成')).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText(FEISHU_OAUTH_UNFINISHED_TITLE)).not.toBeInTheDocument());
     expect(window.sessionStorage.getItem(FEISHU_OAUTH_PENDING_KEY)).toBeNull();
+  });
+
+  it('有本次真实回调地址：展示地址 + 复制按钮 + 飞书开放平台入口，可重新授权', async () => {
+    markFeishuOAuthPending(window.sessionStorage);
+    const tab = { opener: null as unknown, location: { href: '' } };
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(tab as unknown as Window);
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    renderPage();
+
+    expect(await screen.findByText(FEISHU_OAUTH_UNFINISHED_TITLE)).toBeInTheDocument();
+    expect(screen.getByTestId('feishu-oauth-redirect-uri-fallback')).toBeInTheDocument();
+
+    // 点「重新授权」拿到本次真实回调地址（桌面版随机端口），面板从兜底切成真实地址
+    fireEvent.click(screen.getByRole('button', { name: /重新授权/ }));
+    await waitFor(() => expect(hoisted.store.feishuOAuthStart).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(screen.getByTestId('feishu-oauth-redirect-uri')).toHaveTextContent(DESKTOP_REDIRECT_URI),
+    );
+    expect(screen.queryByTestId('feishu-oauth-redirect-uri-fallback')).not.toBeInTheDocument();
+
+    // 复制地址：剪贴板写入的必须是飞书后台要登记的那一条
+    fireEvent.click(screen.getByRole('button', { name: /复制地址/ }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(DESKTOP_REDIRECT_URI));
+
+    // 打开飞书开放平台：通用应用列表，不编造 appId deep link
+    fireEvent.click(screen.getByRole('button', { name: /打开飞书开放平台/ }));
+    expect(openSpy).toHaveBeenCalledWith('https://open.feishu.cn/app', '_blank', 'noopener');
   });
 
   it('授权回来已连接本人：清标记并提示成功', async () => {

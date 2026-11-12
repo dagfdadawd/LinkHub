@@ -85,10 +85,25 @@ try {
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 } catch { }
 
-# 选一个空闲端口（优先 3901，被占用则顺延）
+# 选一个空闲端口 —— 只能从「已登记端口池」里挑。
+#
+# 为什么要固定端口池：飞书 OAuth 要求「安全设置 → 重定向 URL」与回调地址**逐字符一致**，
+# 而 localhost 是每台机器各自的地址（同一个 http://localhost:3901/... 在每台员工机器上都成立）。
+# 因此应用级一次登记 3901–3910 这组回调地址后，全公司所有员工机器都能直接授权，
+# 不需要每台机器单独去飞书后台加 URL。反过来说：**端口一旦落到登记范围之外，授权就会报
+# 「20029 重定向 URL 有误」**，所以这里不再任意顺延到 3930，只在这 10 个端口里挑。
+# 管理员要用别的端口：先在飞书后台登记同一组地址，再用 LINKHUB_DESKTOP_PORTS 覆盖（逗号分隔）。
+$portPool = @()
+$poolEnv = [string]$env:LINKHUB_DESKTOP_PORTS
+if ($poolEnv.Trim()) {
+  foreach ($item in ($poolEnv -split '[,\s]+')) {
+    $n = 0
+    if ([int]::TryParse($item, [ref]$n) -and $n -gt 0 -and $n -lt 65536) { $portPool += $n }
+  }
+}
+if ($portPool.Count -eq 0) { $portPool = @(3901, 3902, 3903, 3904, 3905, 3906, 3907, 3908, 3909, 3910) }
 $port = 0
-for ($i = 0; $i -lt 30; $i++) {
-  $candidate = 3901 + $i
+foreach ($candidate in $portPool) {
   $listener = $null
   try {
     $listener = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Loopback, $candidate)
@@ -101,7 +116,8 @@ for ($i = 0; $i -lt 30; $i++) {
   }
 }
 if ($port -eq 0) {
-  Show-Error 'LinkHub 启动失败' '端口 3901–3930 全部被占用，无法启动本地服务。'
+  $poolText = ($portPool -join ' / ')
+  Show-Error 'LinkHub 启动失败' ("端口 $poolText 全部被占用，无法启动本地服务。`n`n这些端口是飞书 OAuth 回调的预登记端口（不能随意换，否则飞书授权会报「20029 重定向 URL 有误」）。`n请先关闭占用它们的程序后重试；排查命令：`n  netstat -ano | findstr :3901")
   exit 1
 }
 

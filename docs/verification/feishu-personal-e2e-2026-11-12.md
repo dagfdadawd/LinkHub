@@ -306,3 +306,35 @@ $m = $r.data.items[0]
 - 本文**不含**任何 `access_token` / `refresh_token` / App Secret / 邮箱授权码；`open_id`、`tenant_key`、App ID 是标识符，不是凭据。
 - 令牌文件 `unimsg-connector/.data/feishu-user-token.json` 已被 gitignore，**不提交、不截图、不发群**。
 - 平台策略 / 权限名以后台当时展示为准；平台侧变化时以新的实测结果更新本文与 [docs/personal-identity.md](../personal-identity.md)。
+
+---
+
+## 10. 桌面版（LinkHub-Lite 分发包）补充验证（2026-11-12 晚）
+
+**背景**：把桌面版分发给员工时，每台机器的本地服务端口可能不同，而飞书要求重定向地址**逐字符一致** →
+用户点「连接本人账号」直接卡在飞书 `20029 重定向 URL 有误`，且回到 App 只看到泛泛的失败清单，**不知道该填哪个地址**。
+
+### 10.1 设计结论：固定端口池 + 应用级一次登记（全公司通用）
+
+- 桌面启动器只在 **3901–3910** 里挑空闲端口（`LINKHUB_DESKTOP_PORTS` 可覆盖），回调因此固定为
+  `http://localhost:3901/api/feishu/oauth/callback` … `…:3910/…`。
+- `localhost` 是**每台机器各自的地址**：同一组登记值在所有员工机器上都成立 → **管理员一次性登记，员工零操作**，不需要逐机/逐人登记。
+- 已实测排除的两条「更自动」的路：① 飞书**不做端口通配**——登记 `http://127.0.0.1/api/feishu/oauth/callback`（无端口）后请求带端口回调仍报 `20029`；② 飞书后台只接受 http/https，**不支持自定义协议**（`linkhub://`）。
+- 本机 3901–3910 全被占用时启动器**明确报错**，不会偷换到未登记端口（否则授权必挂）。
+
+### 10.2 实测结果（真机、真飞书租户）
+
+| 项 | 结果 | 证据 |
+|---|---|---|
+| 飞书后台登记 | ✅ 11 条（`3001` + `3901–3910`，官网「批量修改」一次录入） | 控制台「重定向 URL」列表 11 条 |
+| 桌面版 OAuth | ✅ 成功 | 令牌落盘 `%APPDATA%\LinkHub\data\feishu-user-token.json`；`/api/accounts` 显示 `effectiveSend=user / effectiveReceive=user`、`state=linked`、`八水合甲烷` |
+| 桌面版接收 | ✅ 单聊入库 | `receivedAs=user`、`conversation.type=p2p`、`title=LinkHub`；水位文件列出 **6 个会话**（含单聊，说明 `types=p2p,group` 生效） |
+| 桌面版发送 | ✅ 本人发出 | `compose(identity=user)` → 202 `sendIdentity=user`；飞书侧核对 `sender.sender_type=user`、`sender.id=ou_eca…`、`is_agent=false` |
+| 全链路回放 | ✅ 可追踪 | 回放页 5 条：`composed（指定身份：本人）→ processing → replied → sent（真实接口（用户身份）· om_xxx）→ synced` |
+
+### 10.3 配套改动（随本次提交）
+
+1. `desktop/launcher/launcher.ps1`：端口选择改为**已登记端口池**（3901–3910，`LINKHUB_DESKTOP_PORTS` 覆盖），全被占用时弹窗说明「这些是飞书 OAuth 预登记端口」并给排查命令。
+2. Web（账号页 / 授权中心）：新增 `FeishuOAuthHelp` 面板——标题直指 **`20029 重定向 URL 有误`**，显示**本次真实回调地址** + 「复制地址」 + 「打开飞书开放平台」，并列出 20027 / 20010 / 未发布 / 授权码过期等原因与动作；无地址时给兜底文案（不编造）。
+3. 文档：`docs/desktop-app.md` §3/§5、`docs/personal-identity.md` §4.1、包内 `README.txt` 模板均说明「固定端口池 + 管理员一次登记、全公司通用」。
+4. 重新构建轻量版并替换桌面分发包（旧包备份为 `LinkHub-App.bak-20261112-2210`）；交付 zip 见 `桌面/LinkHub-Lite-1.0.0-win-x64.zip`。

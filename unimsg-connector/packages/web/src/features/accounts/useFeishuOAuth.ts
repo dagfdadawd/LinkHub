@@ -2,7 +2,7 @@
  * 飞书本人身份 OAuth 的共享流程（账号页 / 授权中心共用）。
  *
  * 为什么抽出来：OAuth 回跳反馈（P1-6）不是一句 toast，而是一整套状态：
- *  - 授权前落 pending 标记；
+ *  - 授权前落 pending 标记，并记住本次真实回调地址（桌面版端口随机，20029 高发）；
  *  - 同步开空白页，避免 await 后被浏览器当作弹窗拦截；
  *  - 被拦截时给可点击链接，而不是整页跳走；
  *  - 回到页面 / 重新载入时判定是否真的连上，未连上给中文原因与清单。
@@ -17,12 +17,15 @@ import {
   defaultOAuthStorage,
   markFeishuOAuthPending,
   readFeishuOAuthPending,
+  saveFeishuOAuthRedirectUri,
 } from './feishuOAuthFeedback';
 
 export interface FeishuOAuthController {
   connecting: boolean;
   /** 弹窗被拦截时的可点击授权 URL */
   fallbackUrl?: string;
+  /** 本次授权实际使用的回调地址（后端下发；刷新丢失后为空，面板会展示兜底文案） */
+  redirectUri?: string;
   /** 授权回跳后仍未连接（用于展示原因 + 配置清单） */
   unfinished: boolean;
   connect: () => Promise<void>;
@@ -34,6 +37,7 @@ export function useFeishuOAuth(options: { onLinked?: () => void } = {}): FeishuO
   const storage = useMemo(() => defaultOAuthStorage(), []);
   const [connecting, setConnecting] = useState(false);
   const [fallbackUrl, setFallbackUrl] = useState<string>();
+  const [redirectUri, setRedirectUri] = useState<string>();
   const [unfinished, setUnfinished] = useState(false);
   const connectingRef = useRef(false);
   const onLinkedRef = useRef(options.onLinked);
@@ -41,13 +45,17 @@ export function useFeishuOAuth(options: { onLinked?: () => void } = {}): FeishuO
 
   /**
    * 授权回跳反馈：授权页在另一个标签，回到本页/页面重载时刷新账号；
-   * 若仍是未连接，展示中文原因 + 配置清单。
+   * 若仍是未连接，展示中文原因 + 配置清单（含本次真实回调地址）。
    */
   useEffect(() => {
     let timer: number | undefined;
     let alive = true;
     const pending = readFeishuOAuthPending(storage);
-    if (pending) setUnfinished(true);
+    if (pending) {
+      setUnfinished(true);
+      // 刷新 / 从授权中心切到账号页后仍能显示「该填哪个地址」，不退回兜底文案
+      if (pending.redirectUri) setRedirectUri(pending.redirectUri);
+    }
 
     const evaluateReturn = async (): Promise<void> => {
       if (!readFeishuOAuthPending(storage)) return;
@@ -57,6 +65,7 @@ export function useFeishuOAuth(options: { onLinked?: () => void } = {}): FeishuO
       if (feishu?.identity?.user.linked) {
         clearFeishuOAuthPending(storage);
         setUnfinished(false);
+        setRedirectUri(undefined);
         message.success('飞书本人身份已连接');
         onLinkedRef.current?.();
       } else {
@@ -96,7 +105,12 @@ export function useFeishuOAuth(options: { onLinked?: () => void } = {}): FeishuO
       try { tab.opener = null; } catch { /* 跨域前设置失败不影响授权 */ }
     }
     try {
-      const { url } = await store.feishuOAuthStart();
+      const { url, redirectUri: startedRedirectUri } = await store.feishuOAuthStart();
+      // 20029 自解释的关键：记住本次真实回调地址（桌面版端口 3901–3930 与飞书后台登记的不一致）
+      if (startedRedirectUri) {
+        setRedirectUri(startedRedirectUri);
+        saveFeishuOAuthRedirectUri(storage, startedRedirectUri);
+      }
       if (tab) {
         tab.location.href = url;
       } else {
@@ -119,7 +133,8 @@ export function useFeishuOAuth(options: { onLinked?: () => void } = {}): FeishuO
     clearFeishuOAuthPending(storage);
     setUnfinished(false);
     setFallbackUrl(undefined);
+    setRedirectUri(undefined);
   };
 
-  return { connecting, fallbackUrl, unfinished, connect, dismiss };
+  return { connecting, fallbackUrl, redirectUri, unfinished, connect, dismiss };
 }

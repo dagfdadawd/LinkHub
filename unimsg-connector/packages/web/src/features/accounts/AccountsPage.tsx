@@ -29,7 +29,7 @@ import { Sparkline } from '../../components/Sparkline';
 import { useHealthSeries } from '../../hooks/useHealthSeries';
 import { PersonalIdentityModal } from './PersonalIdentityModal';
 import { AppConfigModal } from '../connect/AppConfigModal';
-import { FEISHU_OAUTH_CHECKLIST, FEISHU_OAUTH_UNFINISHED_HINT } from './feishuOAuthFeedback';
+import { FeishuOAuthHelp } from './FeishuOAuthHelp';
 import { useFeishuOAuth } from './useFeishuOAuth';
 
 /** 本次实际通道：真实接口=绿，Mock 模拟=橙（Mock 结果绝不伪装成真实成功） */
@@ -579,63 +579,16 @@ export function AccountsPage() {
         />
       )}
 
-      {/* P1-6：飞书 OAuth 失败/被拦截的回跳反馈——不再静默，也不再整页跳走 */}
-      {(feishu.unfinished || feishu.fallbackUrl) && (
-        <Alert
-          className="accounts-alert"
-          type="warning"
-          showIcon
-          message={feishu.fallbackUrl ? '浏览器拦截了飞书授权窗口' : '飞书授权未完成'}
-          description={
-            <div className="accounts-alert__detail">
-              <div>
-                {feishu.fallbackUrl
-                  ? '授权页没能自动打开。点下面的按钮或复制链接，在新标签里完成授权；完成后回到本页会自动刷新状态。'
-                  : FEISHU_OAUTH_UNFINISHED_HINT}
-              </div>
-              {feishu.fallbackUrl && (
-                <div className="accounts-alert__row">
-                  <Button
-                    type="primary"
-                    size="small"
-                    href={feishu.fallbackUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    打开飞书授权页
-                  </Button>
-                  <Typography.Text
-                    className="accounts-alert__copy"
-                    copyable={{ text: feishu.fallbackUrl, tooltips: ['复制授权链接', '已复制'] }}
-                  >
-                    复制授权链接
-                  </Typography.Text>
-                </div>
-              )}
-              <details className="accounts-alert__steps">
-                <summary>查看配置步骤（常见失败原因）</summary>
-                <ul>
-                  {FEISHU_OAUTH_CHECKLIST.map((item) => (
-                    <li key={item}>{item}</li>
-                  ))}
-                </ul>
-              </details>
-              <div className="accounts-alert__row">
-                <Button
-                  size="small"
-                  loading={feishu.connecting}
-                  onClick={() => void feishu.connect()}
-                >
-                  重新发起授权
-                </Button>
-                <Button size="small" type="text" onClick={feishu.dismiss}>
-                  我知道了
-                </Button>
-              </div>
-            </div>
-          }
-        />
-      )}
+      {/* P1-6 + 20029：飞书 OAuth 失败/被拦截的回跳反馈——不再静默，也不再整页跳走 */}
+      <FeishuOAuthHelp
+        className="accounts-alert"
+        unfinished={feishu.unfinished}
+        fallbackUrl={feishu.fallbackUrl}
+        redirectUri={feishu.redirectUri}
+        connecting={feishu.connecting}
+        onReconnect={() => void feishu.connect()}
+        onDismiss={feishu.dismiss}
+      />
 
       <Row gutter={[16, 16]} className="account-grid">
         {state.accounts.map((account) => (

@@ -48,6 +48,7 @@ import {
   sortOnboardingSteps,
 } from '../../utils/onboarding';
 import { PersonalIdentityModal } from '../accounts/PersonalIdentityModal';
+import { FeishuOAuthHelp } from '../accounts/FeishuOAuthHelp';
 import { useFeishuOAuth } from '../accounts/useFeishuOAuth';
 import { MailAccountForm } from './MailAccountForm';
 import { mailProviderLabel } from './mailProviders';
@@ -790,6 +791,19 @@ export function ConnectPage() {
 
             {renderActions(step)}
 
+            {/* 飞书授权未完成（常见 20029 重定向 URL 有误）：在卡片动作旁就地给修复步骤与真实回调地址 */}
+            {step.id === 'feishu' && (
+              <FeishuOAuthHelp
+                className="connect-alert"
+                unfinished={feishu.unfinished}
+                fallbackUrl={feishu.fallbackUrl}
+                redirectUri={feishu.redirectUri}
+                connecting={feishu.connecting}
+                onReconnect={() => void feishu.connect()}
+                onDismiss={feishu.dismiss}
+              />
+            )}
+
             {ready && step.hints.length === 0 && step.actions.length === 0 && (
               <div className="connect-card__empty">已连接，无需额外操作。</div>
             )}
@@ -907,41 +921,6 @@ export function ConnectPage() {
           action={
             <Button size="small" type="text" onClick={() => setBlockedLink(null)}>
               知道了
-            </Button>
-          }
-        />
-      )}
-
-      {(feishu.unfinished || feishu.fallbackUrl) && (
-        <Alert
-          className="connect-alert"
-          type="warning"
-          showIcon
-          message={feishu.fallbackUrl ? '浏览器拦截了飞书授权窗口' : '飞书授权未完成'}
-          description={
-            <div className="connect-alert__detail">
-              <span>
-                {feishu.fallbackUrl
-                  ? '授权页没能自动打开，点下面的按钮继续；完成后回到本页会自动刷新。'
-                  : '返回 LinkHub 时还没检测到飞书授权成功，请重试或把配置清单发给管理员。'}
-              </span>
-              {feishu.fallbackUrl && (
-                <span className="connect-alert__row">
-                  <Button size="small" type="primary" href={feishu.fallbackUrl} target="_blank" rel="noreferrer">
-                    打开飞书授权页
-                  </Button>
-                  <Typography.Text
-                    copyable={{ text: feishu.fallbackUrl, tooltips: ['复制授权链接', '已复制'] }}
-                  >
-                    复制授权链接
-                  </Typography.Text>
-                </span>
-              )}
-            </div>
-          }
-          action={
-            <Button size="small" type="text" onClick={feishu.dismiss}>
-              我知道了
             </Button>
           }
         />
