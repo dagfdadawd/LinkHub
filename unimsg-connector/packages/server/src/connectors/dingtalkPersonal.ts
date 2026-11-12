@@ -11,10 +11,12 @@
  *  - `dws auth status --readonly --format json`
  *      → `{"success":true,"authenticated":false,"message":"未登录", "version_check":{...}}`
  *  - `dws profile list --format json` → `{"success":true,"profiles":[]}`
- *  - `dws event +listen-im --kind <at-me|sender|group|all-direct|all-group> --events message -f ndjson`
- *      默认输出 transport envelope（type/event_type/data/headers）；加 `--flatten` 后业务字段在 payload：
- *      message_id / conversation_id / content / create_time / event_time / sender /
- *      sender_open_dingtalk_id / type(event_key) / event_id / timestamp
+ *  - `dws event +listen-im --kind <at-me|sender|group|all-direct|all-group> --events message -f ndjson -y`
+ *      默认输出 **transport envelope**：`{type:"event", event_type:"user_im_message_receive_o2o_all",
+ *      event_id, data:<JSON 字符串>, headers, ...}`——注意 **data 是字符串**，需要再 JSON.parse。
+ *      `--flatten` 只属于 event consume/schema，`+listen-im` 不支持（真实 dws 会 exit 3 unknown flag）。
+ *      data 内业务字段：message_id / conversation_id / content / create_time / event_time / sender /
+ *      sender_open_dingtalk_id / event_id；event_type 在 envelope 根或 data.type。
  *  - `dws chat message send --conversation-id <id> --content <text> --idempotency-key <key> -f json`
  *      成功 `{"ok":true,"outcome":"success","data":{...}}`
  *      失败 `{"ok":false,"outcome":"failure","error":{"type","subtype","exit_code","message","hint"}}`
@@ -502,27 +504,47 @@ export function parseProfileListJson(stdout: string): DwsProfile[] {
 
 /**
  * 解析 `dws contact user get-self -f json`（本人身份信息）。
- * 用于过滤「自己发出的消息」，避免个人事件里把自己发的消息再当入站（自环噪音）。
- * 字段名在 dws 版本间可能变化，这里按多个候选容错。
+ *
+ * 真实 v1.0.68 输出（实测）：
+ *   {"result":[{"isAdmin":true,"orgEmployeeModel":{"corpId":"...","orgUserName":"陈",
+ *     "userId":"0415...","depts":[...]}}]}
+ * **注意：真实 CLI 不返回 openDingTalkId**（只有 orgEmployeeModel/userId/userName）。
+ * 因此「过滤自己发出的消息」最多 best-effort：拿不到 openDingTalkId 时不过滤，绝不阻断接收。
+ * 字段名在 dws 版本间可能变化，这里按多个候选容错（含旧版 data.openDingTalkId 格式）。
  */
 export function parseSelfProfileJson(stdout: string): { openDingtalkId?: string; displayName?: string; userId?: string } {
   const json = tryParseJson(stdout.trim());
   if (!json || typeof json !== 'object') return {};
-  const candidates: Record<string, unknown>[] = [];
   const root = json as Record<string, unknown>;
-  if (root.data && typeof root.data === 'object') candidates.push(root.data as Record<string, unknown>);
-  candidates.push(root);
-  for (const obj of candidates) {
-    const openDingtalkId = pickString(obj, 'openDingTalkId', 'openDingtalkId', 'open_dingtalk_id', 'openId');
-    if (openDingtalkId) {
-      return {
-        openDingtalkId,
-        ...(pickString(obj, 'displayName', 'name', 'nickName') ? { displayName: pickString(obj, 'displayName', 'name', 'nickName')! } : {}),
-        ...(pickString(obj, 'userId', 'user_id', 'staffId') ? { userId: pickString(obj, 'userId', 'user_id', 'staffId')! } : {}),
-      };
+  const candidates: Record<string, unknown>[] = [];
+  // 真实格式：{result:[{orgEmployeeModel:{...}}]}；旧版/模拟：{data:{openDingTalkId,...}}
+  const result = root.result;
+  if (Array.isArray(result)) {
+    for (const item of result) {
+      if (item && typeof item === 'object' && !Array.isArray(item)) {
+        const obj = item as Record<string, unknown>;
+        if (obj.orgEmployeeModel && typeof obj.orgEmployeeModel === 'object') {
+          candidates.push(obj.orgEmployeeModel as Record<string, unknown>);
+        }
+        candidates.push(obj);
+      }
     }
   }
-  return {};
+  if (root.data && typeof root.data === 'object') candidates.push(root.data as Record<string, unknown>);
+  candidates.push(root);
+  let openDingtalkId: string | undefined;
+  let displayName: string | undefined;
+  let userId: string | undefined;
+  for (const obj of candidates) {
+    openDingtalkId ??= pickString(obj, 'openDingTalkId', 'openDingtalkId', 'open_dingtalk_id', 'openId');
+    displayName ??= pickString(obj, 'displayName', 'orgUserName', 'userName', 'name', 'nickName');
+    userId ??= pickString(obj, 'userId', 'user_id', 'staffId');
+  }
+  return {
+    ...(openDingtalkId ? { openDingtalkId } : {}),
+    ...(displayName ? { displayName } : {}),
+    ...(userId ? { userId } : {}),
+  };
 }
 
 /** 一个个人事件（已归一化的业务字段） */
@@ -541,28 +563,45 @@ export interface DingtalkPersonalEvent {
   raw: Record<string, unknown>;
 }
 
-/** 从 transport envelope / --flatten payload 里取出业务字段所在对象 */
+/** 把 envelope 的 data（可能是 JSON 字符串）解析成对象；解析失败返回 undefined */
+function resolvePayloadObject(value: unknown): Record<string, unknown> | undefined {
+  if (value === null || value === undefined) return undefined;
+  if (typeof value === 'string') {
+    const text = value.trim();
+    if (!text) return undefined;
+    const parsed = tryParseJson(text);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : undefined;
+  }
+  if (typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
+  return undefined;
+}
+
+/**
+ * 从一行事件里取出业务字段所在对象。兼容两种真实格式：
+ *  1) transport envelope（默认，实测）：{type:"event", event_type, data:"<JSON 字符串>", headers}
+ *     → 先 JSON.parse(data) 再取业务字段；
+ *  2) --flatten / 旧版 fake 格式：业务字段直接在 payload / data 对象里。
+ */
 export function extractEventPayload(line: unknown): Record<string, unknown> | undefined {
   if (!line || typeof line !== 'object' || Array.isArray(line)) return undefined;
   const root = line as Record<string, unknown>;
-  const candidates = [
-    root.payload,
-    root.data,
-    (root.data as Record<string, unknown> | undefined)?.payload,
-    (root.body as Record<string, unknown> | undefined),
-    root,
-  ];
-  for (const c of candidates) {
-    if (c && typeof c === 'object' && !Array.isArray(c)) {
-      const obj = c as Record<string, unknown>;
-      if (pickString(obj, 'message_id', 'messageId', 'msgId', 'openMessageId') !== undefined) return obj;
-    }
+  const candidates: Record<string, unknown>[] = [];
+  const push = (value: unknown): void => {
+    const obj = resolvePayloadObject(value);
+    if (obj && !candidates.includes(obj)) candidates.push(obj);
+  };
+  push(root.payload);                 // --flatten / 旧版 fake-dws 格式
+  push(root.data);                    // 真实 envelope：data 是 JSON 字符串
+  push((root.data as Record<string, unknown> | undefined)?.payload); // 对象型 data 里再套 payload
+  push(root.body);
+  push(root);                         // 最后兜底看根字段
+  for (const obj of candidates) {
+    if (pickString(obj, 'message_id', 'messageId', 'msgId', 'openMessageId') !== undefined) return obj;
   }
-  // 没有 message_id 的事件（审批/待办/撤回等）：返回最可能的对象，交由映射层判定为「非消息事件」
-  for (const c of candidates) {
-    if (c && typeof c === 'object' && !Array.isArray(c)) return c as Record<string, unknown>;
-  }
-  return undefined;
+  // 没有 message_id 的事件（审批/待办/撤回等）：返回 data 解出的对象；解不出则返回根
+  return candidates.find((obj) => obj !== root) ?? root;
 }
 
 function pickString(obj: Record<string, unknown>, ...keys: string[]): string | undefined {
@@ -587,6 +626,59 @@ function pickNumber(obj: Record<string, unknown>, ...keys: string[]): number | u
 }
 
 /**
+ * 取时间字段：优先毫秒数字/数字字符串（event_time），
+ * 其次 create_time 的字符串时间（如 "2026-11-12 14:05:00" / ISO），最后 envelope 的接收时间。
+ */
+function pickTimeMs(
+  payload: Record<string, unknown>,
+  root: Record<string, unknown>,
+): number | undefined {
+  const direct = pickNumber(payload, 'event_time', 'timestamp', 'createTime');
+  if (direct !== undefined) return direct;
+  for (const key of ['create_time', 'createTime', 'msg_time', 'send_time']) {
+    const v = payload[key];
+    if (typeof v === 'number' && Number.isFinite(v) && v > 0) return Math.floor(v);
+    if (typeof v === 'string' && v.trim()) {
+      const text = v.trim();
+      const n = Number(text);
+      if (Number.isFinite(n) && n > 0) return Math.floor(text.length <= 10 ? n * 1000 : n);
+      const parsed = Date.parse(text) || Date.parse(text.replace(' ', 'T'));
+      if (Number.isFinite(parsed) && parsed > 0) return Math.floor(parsed);
+    }
+  }
+  const envelope = pickNumber(root, 'received_at_unix_ms', 'event_born_time');
+  if (envelope !== undefined) return envelope;
+  const born = root.event_born_time;
+  if (typeof born === 'string') {
+    const parsed = Date.parse(born);
+    if (Number.isFinite(parsed) && parsed > 0) return Math.floor(parsed);
+  }
+  return undefined;
+}
+
+/** content 在真实事件里是字符串；容错对象/数组（JSON.stringify），避免整条事件被丢弃 */
+function pickContent(payload: Record<string, unknown>): string {
+  const text = pickString(payload, 'content', 'text', 'body');
+  if (text !== undefined) return text;
+  const raw = payload.content ?? payload.text ?? payload.body;
+  if (raw && typeof raw === 'object') {
+    try { return JSON.stringify(raw); } catch { return ''; }
+  }
+  return '';
+}
+
+/** sender 可能是字符串，也可能是对象（{nick/name/sender}） */
+function pickSenderName(payload: Record<string, unknown>): string | undefined {
+  const direct = pickString(payload, 'sender', 'sender_nick', 'senderNick');
+  if (direct !== undefined) return direct;
+  const sender = payload.sender;
+  if (sender && typeof sender === 'object' && !Array.isArray(sender)) {
+    return pickString(sender as Record<string, unknown>, 'nick', 'name', 'sender', 'nickName');
+  }
+  return undefined;
+}
+
+/**
  * 解析一行 NDJSON → 归一化事件。
  * 容错要求（契约 §3.3）：多行 JSON / 非 JSON 日志行一律返回 null，由调用方计数，绝不崩溃。
  */
@@ -595,14 +687,22 @@ export function parseEventLine(line: string): DingtalkPersonalEvent | null {
   if (!text || !text.startsWith('{')) return null;
   const json = tryParseJson(text);
   if (!json) return null;
+  const root = json as Record<string, unknown>;
   const payload = extractEventPayload(json);
   if (!payload) return null;
 
+  const headers = (root.headers && typeof root.headers === 'object' && !Array.isArray(root.headers))
+    ? root.headers as Record<string, unknown>
+    : undefined;
   const messageId = pickString(payload, 'message_id', 'messageId', 'msgId', 'openMessageId');
-  const eventType = pickString(payload, 'event_type', 'eventType', 'type')
-    ?? pickString(json as Record<string, unknown>, 'event_type', 'type');
+  // event_type：envelope 根最可靠（type 根字段固定是 "event"，不能拿来当事件类型）
+  const eventType = pickString(payload, 'event_type', 'eventType')
+    ?? (typeof payload.type === 'string' && payload.type !== 'event' ? payload.type : undefined)
+    ?? pickString(root, 'event_type', 'eventType')
+    ?? (typeof root.type === 'string' && root.type !== 'event' ? root.type : undefined)
+    ?? (headers ? pickString(headers, 'event_type', 'eventType', 'event_type_key') : undefined);
   const eventId = pickString(payload, 'event_id', 'eventId')
-    ?? pickString(json as Record<string, unknown>, 'event_id', 'eventId');
+    ?? pickString(root, 'event_id', 'eventId');
   if (!messageId) {
     // 非消息事件（审批/待办/撤回/已读回执…）：带出类型即可，映射层会忽略
     return {
@@ -613,9 +713,9 @@ export function parseEventLine(line: string): DingtalkPersonalEvent | null {
       raw: payload,
     };
   }
-  const content = pickString(payload, 'content', 'text', 'body') ?? '';
-  const createTimeMs = pickNumber(payload, 'event_time', 'timestamp', 'create_time', 'createTime');
-  const senderName = pickString(payload, 'sender', 'sender_nick', 'senderNick');
+  const content = pickContent(payload);
+  const createTimeMs = pickTimeMs(payload, root);
+  const senderName = pickSenderName(payload);
   const senderOpenDingtalkId = pickString(payload, 'sender_open_dingtalk_id', 'senderOpenDingtalkId');
   const conversationId = pickString(payload, 'conversation_id', 'conversationId', 'openConversationId');
 

@@ -294,16 +294,16 @@ DWS_SEND_TIMEOUT_MS=30000
 > LinkHub 的登录按钮只负责**展示 / 引导 / 拉起** `dws auth login`，后端不会、也无法代你登录；容器 / 无浏览器环境请在 LinkHub 运行环境内用设备码方式（或直接执行 `dws auth login --device`，见 [deploy.md](deploy.md)）。
 
 ### 5.6 接收机制（看到什么范围）
-### 5.6 接收机制（看到什么范围）
 
-- LinkHub 为 `DINGTALK_USER_EVENT_KINDS` 里的每个范围拉起一个 `dws event +listen-im --kind <kind> --events message --flatten -f ndjson -y` 子进程（Stream 长连接），逐行解析事件并入库；
+- LinkHub 为 `DINGTALK_USER_EVENT_KINDS` 里的每个范围拉起一个 `dws event +listen-im --kind <kind> --events message -f ndjson -y` 子进程（Stream 长连接），逐行解析 transport envelope（业务字段在 `data` JSON 字符串里）并入库；
 - 默认 `all-direct,at-me`：本人收到的**全部单聊**消息 + **@我**的群消息；`all-group`（本人所在全部群的消息）可以直接配置但量大、按需开启；
 - **`group` / `sender` 暂不支持**：它们需要 dws 的群 / 人目标参数（`--chat-id` / `--user`），本期不做；配置了会被**忽略并在启动日志告警**，回退到 `all-direct,at-me`，**不会**导致子进程反复重启；
 - 事件流带平台消息 ID，入库走幂等键，dws 重放 / 重连不会重复入库；
-- **自环过滤依赖 `dws contact user get-self`**：取不到本人 `openDingTalkId` 时只少一层过滤（不会阻断接收，可能偶尔看到自己发出的消息回显），日志会提示；
+- **自环过滤是 best-effort**：真实 `dws contact user get-self` 只返回 `result[0].orgEmployeeModel`（orgUserName / userId），**不返回 openDingTalkId**；个人事件本身只推送「本人收到的消息」，一般不会回显本人已发送的消息，因此拿不到 openDingTalkId 时只少一层兜底过滤，不会阻断接收；
 - **平台整体 Mock 时**：本人身份通道不启动，身份统一显示「模拟」而不是「机器人」（`effectiveReceive/effectiveSend=mock`），不会冒充真实接收；
 - **钉钉双通道重复（已知限制）**：机器人 Stream 与本人事件同时开启时，同一条群 / 单聊消息可能各入库一次（两套消息 ID 体系），建议二选一（见 §3.3）；
 - **登录 / 注销后自动启停接收通道**：无需重启后端——登录成功或注销后，后端会自动启动 / 停止本人身份接收通道；如果是在外部终端完成的登录（没有弹窗回调），最多约 1 分钟自动对齐。
+- **停止服务请用 `Ctrl+C` 或 `start.bat stop`**：LinkHub 会先关闭 dws 子进程的 stdin（dws 官方优雅停机方式）注销事件订阅，再回收进程；用任务管理器/直接关控制台**硬杀**后端时，订阅可能残留到 dws 的空闲超时（约 300 秒）才释放。
 - LinkHub 启动时若 dws 未登录 / 不存在，**不会崩溃**：auto 下回退机器人并在账号页给出中文修复提示；显式 `user` 时启动报错并提示；
 - 子进程崩溃会指数退避重启（1s → 2s → 4s … 上限 60s），日志说明第几次重启；后端退出时一并清理，不残留子进程。
 
@@ -403,7 +403,7 @@ DINGTALK_IDENTITY=user
 ```
 
 - fake-dws 是**有状态的本地桩**：默认视为**已登录**（展示名 `张三（模拟）`）；`FAKE_DWS_AUTHENTICATED=false` 或先执行 `node scripts/fake-dws.mjs auth logout` 可演示「未登录 → auto 回退机器人」；`node scripts/fake-dws.mjs auth login` 可模拟登录成功；可用 `FAKE_DWS_STATE_FILE=<路径>` 指定隔离的登录状态文件，避免上一次演示的登录态残留；
-- 它支持 `version` / `auth status --readonly --format json` / `profile list --format json` / `contact user get-self -f json`（返回本人 `openDingTalkId`，真实 dws 用它做「过滤自己发的消息」；fake 下返回模拟本人）/ `event +listen-im --kind <k> --events message --flatten -f ndjson`（长驻输出模拟事件，收到 SIGTERM 退出；**默认只推 5 条示例事件后停止推流、进程保持存活**，避免离线演示把收件箱灌成重复消息；可用 `--max-events N` 或 `FAKE_DWS_MAX_EVENTS=N` 显式控制，`0`=不限；每隔 5 条混入一行非 JSON 诊断，验证容错）/ `chat message send` / `chat message reply`（返回与真实 dws 同形状的成功 JSON，并把发送记录写到本地 NDJSON）；`FAKE_DWS_FAIL=not-logged-in|permission|validation` 可复现失败分支；退出码与真实 dws 对齐（0 成功 / 2 用法 / 3 校验 / 5 未登录）；
+- 它支持 `version` / `auth status --readonly --format json` / `profile list --format json` / `contact user get-self -f json`（真实形状：`result[0].orgEmployeeModel`，无 `openDingTalkId`）/ `event +listen-im --kind <k> --events message -f ndjson`（输出**真实 transport envelope**，业务字段在 `data` JSON 字符串里；长驻输出模拟事件，**默认只推 5 条示例事件后停止推流、进程保持存活**，避免离线演示把收件箱灌成重复消息；可用 `--max-events N` 或 `FAKE_DWS_MAX_EVENTS=N` 显式控制，`0`=不限；对不支持的 flag（如 `--flatten`）与真 CLI 一样报 `unknown flag` 并 exit 3；stdin 关闭 / SIGTERM 退出）/ `chat message send` / `chat message reply`（返回与真实 dws 同形状的成功 JSON，并把发送记录写到本地 NDJSON）；`FAKE_DWS_FAIL=not-logged-in|permission|validation` 可复现失败分支；退出码与真实 dws 对齐（0 成功 / 2 用法 / 3 校验 / 5 未登录）；
 - `auth login` 在 fake-dws 下也会模拟登录：`browser` 模式输出模拟的 loopback 授权链接、`device` 模式输出模拟授权码与「授权码将在 900 秒后过期」，并在 `FAKE_DWS_LOGIN_DELAY_MS`（默认 1200ms）后自动变为已登录——可离线走通「账号页弹窗登录 → 已连接 → 接收通道自动启动」的完整演示，不需要真实钉钉。
 - **fake 下能跑不代表真实可用**：fake-dws 对 `group` / `sender` 不做目标参数校验；而 LinkHub 的配置解析会**忽略这两个范围并告警**（本期不支持按群 / 按人订阅）——不要用 fake 的现象推断真实通道行为。
 
