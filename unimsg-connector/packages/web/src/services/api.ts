@@ -121,6 +121,10 @@ export interface MessageApi {
   /** 发起飞书用户身份授权，返回需要打开的飞书授权页 URL */
   feishuOAuthStart(): Promise<FeishuOAuthStart>;
   markDone(id: string): Promise<UnifiedMessage>;
+  /** 标记已读 / 未读（阅读状态独立于业务状态） */
+  markRead(id: string, read: boolean): Promise<UnifiedMessage>;
+  /** 全部标为已读（可只标当前筛选范围），返回实际改动条数 */
+  markAllRead(ids?: string[]): Promise<number>;
   trace(id: string): Promise<TraceResult>;
   accounts(): Promise<AccountInfo[]>;
   health(): Promise<HealthInfo>;

@@ -211,6 +211,29 @@ export class MockApi implements DemoApi {
     return this.patch(id, { done: true }, 'done');
   }
 
+  async markRead(id: string, read: boolean): Promise<UnifiedMessage> {
+    await this.wait();
+    const cur = this.messages.get(id);
+    if (!cur) throw new Error(`message not found: ${id}`);
+    // 与后端一致：已读时间只记第一次，重复标记不刷新
+    const readAt = read ? (cur.readAt ?? new Date().toISOString()) : undefined;
+    if (cur.readAt === readAt) return cur;
+    return this.patch(id, { readAt }, read ? 'read' : 'unread');
+  }
+
+  async markAllRead(ids?: string[]): Promise<number> {
+    await this.wait();
+    const now = new Date().toISOString();
+    let changed = 0;
+    for (const m of this.messages.values()) {
+      if (m.readAt) continue;
+      if (ids && !ids.includes(m.traceId)) continue;
+      this.messages.set(m.traceId, { ...m, readAt: now, updatedAt: now });
+      changed += 1;
+    }
+    return changed;
+  }
+
   async trace(id: string): Promise<TraceResult> {
     await this.wait();
     const message = this.messages.get(id);

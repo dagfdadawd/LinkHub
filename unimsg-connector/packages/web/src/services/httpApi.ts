@@ -126,6 +126,27 @@ export class HttpApi implements MessageApi {
     return updated;
   }
 
+  async markRead(id: string, read: boolean): Promise<UnifiedMessage> {
+    const action = read ? 'read' : 'unread';
+    const body = await this.request<{ data?: UnifiedMessage }>(
+      `/api/messages/${encodeURIComponent(id)}/${action}`,
+      { method: 'POST', body: '{}' },
+    );
+    if (body.data) return body.data;
+    // 后端未回消息体时重取一次（与 markDone 同样的兜底策略）
+    const updated = await this.get(id);
+    if (!updated) throw new ApiError('资源不存在', 404);
+    return updated;
+  }
+
+  async markAllRead(ids?: string[]): Promise<number> {
+    const body = await this.request<{ changed?: number }>('/api/messages/read-all', {
+      method: 'POST',
+      body: JSON.stringify(ids && ids.length > 0 ? { ids } : {}),
+    });
+    return body.changed ?? 0;
+  }
+
   async trace(id: string): Promise<TraceResult> {
     const body = await this.request<{ data?: UnifiedMessage[]; log?: TraceEntry[] }>(
       `/api/messages/trace/${encodeURIComponent(id)}`,
