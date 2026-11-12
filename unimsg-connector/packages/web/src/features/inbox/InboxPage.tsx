@@ -12,8 +12,8 @@ import { PLATFORM_META, STATUS_META, TYPE_LABEL } from '../../utils/format';
 import { navigateWithMorph } from '../../utils/morph';
 import { injectSample, type InjectPlatform } from '../../services/demoSamples';
 import { EmptyState } from '../../components/EmptyState';
+import { FirstRunGuide, isEmptyFirstRun } from '../../components/FirstRunGuide';
 import { QuickStart } from '../../components/QuickStart';
-import { isEmptyFirstRun } from '../../components/FirstRunGuide';
 import { MessageCard } from './MessageCard';
 import { DetailPanel } from './DetailPanel';
 import { ChannelTabs, CHANNEL_DEFS, type ChannelOption } from './ChannelTabs';
@@ -250,6 +250,18 @@ export function InboxPage() {
 
   return (
     <div className="inbox-page">
+      {/* 首启 3 步引导：真实后端 + 无消息时显示（组件内部含「知道了」记忆与严格显示条件） */}
+      <FirstRunGuide
+        demoMode={state.demoMode}
+        messageCount={state.messages.length}
+        received={state.health?.received ?? 0}
+        accounts={state.accounts}
+        connection={state.connection}
+        apiBase={import.meta.env.VITE_API_BASE}
+        loading={state.loading}
+        error={state.error}
+        onOpenAccounts={() => navigate('/accounts')}
+      />
       <div
         className={`inbox${traceId ? ' inbox--detail' : ' inbox--list'}${
           traceId && listCollapsed ? ' is-collapsed' : ''

@@ -261,7 +261,15 @@ export async function pollMailFolder(args: PollMailFolderArgs): Promise<PollMail
 
 export function startMailPoller(svc: MessageService): void {
   if (!config.mail.enabled) {
-    console.log('[mail] 轮询已关闭（MAIL_ENABLED=false），跳过邮箱轮询');
+    // 区分「用户显式 MAIL_ENABLED=false」与「没有配置任何邮箱账号」：
+    // 旧文案在后者也会说「MAIL_ENABLED=false」，用户根本没设过这个变量，会误以为配置被改了（P3-5）。
+    if (config.mail.enabledExplicit) {
+      console.log('[mail] 轮询已关闭（MAIL_ENABLED=false，用户显式关闭），跳过邮箱轮询');
+    } else if (config.mail.accounts.length === 0) {
+      console.log('[mail] 未配置邮箱账号，跳过邮箱轮询（填 MAIL_<KEY>_ADDRESS / MAIL_<KEY>_AUTH_CODE 后自动开启）');
+    } else {
+      console.log('[mail] 邮箱轮询未启用，跳过（检查 MAIL_ENABLED / MAIL_MODE 配置）');
+    }
     return;
   }
   // 强制 Mock / 凭据不足时绝不连真实 IMAP（e2e 与本地演示都可安全开 MAIL_ENABLED）

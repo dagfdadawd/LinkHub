@@ -108,6 +108,31 @@ describe('MockApi', () => {
     expect(again.find((a) => a.platform === Platform.MAIL)?.accounts?.[0]?.folders).not.toContain('Spam');
   });
 
+  it('演示身份的账号视图如实标「模拟」，不假装已连接本人账号', async () => {
+    const accounts = await api.accounts();
+    const feishu = accounts.find((a) => a.platform === Platform.FEISHU);
+    const dingtalk = accounts.find((a) => a.platform === Platform.DINGTALK);
+
+    expect(feishu?.identity?.effectiveSend).toBe('mock');
+    expect(feishu?.identity?.effectiveReceive).toBe('mock');
+    expect(feishu?.identity?.user.linked).toBe(false);
+    expect(feishu?.identity?.user.linkMethod).toBe('oauth');
+    expect(dingtalk?.identity?.effectiveSend).toBe('mock');
+    expect(dingtalk?.identity?.user.linkMethod).toBe('cli');
+    // 身份视图是深拷贝：改返回值不影响下一次读取
+    if (feishu?.identity) feishu.identity.user.hint = '被调用方改掉';
+    expect((await api.accounts())[0]?.identity?.user.hint).not.toBe('被调用方改掉');
+  });
+
+  it('演示模式不支持连接真实钉钉账号：login/logout 显式报错，status 如实返回未连接', async () => {
+    await expect(api.dingtalkPersonalLogin()).rejects.toThrow(/演示模式/);
+    await expect(api.dingtalkPersonalLogout()).rejects.toThrow(/演示模式/);
+    const status = await api.dingtalkPersonalStatus();
+    expect(status.available).toBe(false);
+    expect(status.authenticated).toBe(false);
+    expect(status.hint).toContain('演示模式');
+  });
+
   it('Mock 模拟发送单独累计 sentMock', async () => {
     const before = (await api.health()).sentMock ?? 0;
     const [first] = await api.list();

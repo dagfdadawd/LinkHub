@@ -98,15 +98,46 @@ export interface DeliveryLabel {
   kind: 'real' | 'mock' | 'none';
 }
 
+/** 身份角色的人话标签（「本人」/「机器人」；模拟单独处理） */
+export const IDENTITY_ROLE_LABEL: Record<'bot' | 'user', string> = {
+  user: '本人',
+  bot: '机器人',
+};
+
 /**
  * 回写投递方式文案（收件箱详情与账号页复用）。
- * 契约要求：Mock 结果必须明确标注「未调用真实平台」，绝不伪装成真实平台已收到。
+ * 契约要求：Mock 结果必须明确标注「未调用真实平台」，绝不伪装成真实平台已收到；
+ * 真实回写如果带了身份，还要如实说明是「本人发送」还是「机器人发送」。
  */
 export function deliveryLabel(delivery?: DeliveryInfo): DeliveryLabel {
   if (!delivery) return { text: '—', kind: 'none' };
   if (delivery.mode === 'mock') return { text: '模拟发送（未调用真实平台）', kind: 'mock' };
   const platformReply = delivery.platformReply?.trim();
-  return { text: platformReply ? `真实接口（${platformReply}）` : '真实接口', kind: 'real' };
+  const identity = delivery.identity ? `${IDENTITY_ROLE_LABEL[delivery.identity]}发送` : '';
+  const channel = platformReply ? `真实接口（${platformReply}）` : '真实接口';
+  return { text: identity ? `${identity} · ${channel}` : channel, kind: 'real' };
+}
+
+/**
+ * 「接收身份」文案：只有真实接收通道才会带 receivedAs；
+ * Mock 演示消息不写该字段（如实标注，绝不冒充真实接收）。
+ */
+export function receivedIdentityLabel(receivedAs?: 'bot' | 'user'): string | undefined {
+  if (receivedAs === 'user') return '本人账号接收';
+  if (receivedAs === 'bot') return '机器人接收';
+  return undefined;
+}
+
+/**
+ * 「发送身份」文案：优先看真实回写的 delivery.identity；
+ * Mock 回写一律明确写「模拟发送」，绝不声称是本人/机器人真实发出。
+ */
+export function sendIdentityLabel(delivery?: DeliveryInfo): string | undefined {
+  if (!delivery) return undefined;
+  if (delivery.mode === 'mock') return '模拟发送';
+  if (delivery.identity === 'user') return '本人发送';
+  if (delivery.identity === 'bot') return '机器人发送';
+  return undefined;
 }
 
 /**

@@ -17,7 +17,12 @@ const message: UnifiedMessage = {
 };
 
 function setup(
-  overrides: { value?: string; sending?: boolean; message?: Partial<UnifiedMessage> } = {},
+  overrides: {
+    value?: string;
+    sending?: boolean;
+    sendDisabled?: boolean;
+    message?: Partial<UnifiedMessage>;
+  } = {},
 ) {
   const onSend = vi.fn();
   const onChange = vi.fn();
@@ -26,6 +31,7 @@ function setup(
       message={{ ...message, ...overrides.message }}
       value={overrides.value ?? ''}
       sending={overrides.sending ?? false}
+      sendDisabled={overrides.sendDisabled ?? false}
       onChange={onChange}
       onSend={onSend}
     />,
@@ -55,6 +61,13 @@ describe('ReplyComposer', () => {
 
   it('sending 中禁用发送，防止重复提交', () => {
     const { onSend, textarea } = setup({ value: '收到', sending: true });
+    expect(screen.getByTestId('send-reply')).toBeDisabled();
+    fireEvent.keyDown(textarea, { key: 'Enter', ctrlKey: true });
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it('发送成功后的冷却期（sendDisabled）禁止再次发送，防止手滑重复（P2-2）', () => {
+    const { onSend, textarea } = setup({ value: '收到', sendDisabled: true });
     expect(screen.getByTestId('send-reply')).toBeDisabled();
     fireEvent.keyDown(textarea, { key: 'Enter', ctrlKey: true });
     expect(onSend).not.toHaveBeenCalled();

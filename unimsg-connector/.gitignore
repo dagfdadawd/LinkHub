@@ -7,8 +7,12 @@ dist/
 .DS_Store
 # 邮箱 UID 水位状态文件（运行期原子写，重启续传用，不进仓库）
 .mail-watermarks.json
+# 闭环数据快照（DATA_DIR 落盘目录，运行期产物，不进仓库）
+.data/
 # 飞书用户身份令牌（user_access_token / refresh_token，运行期授权产物）
 .feishu-user-token.json
+# 飞书本人身份接收水位（按会话记录最后一条消息时间，运行期原子写，不进仓库）
+.feishu-user-receive.json
 *.tmp
 
 # 视觉走查截图（本地临时产物）

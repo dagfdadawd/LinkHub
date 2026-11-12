@@ -4,7 +4,7 @@
  */
 import { test, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { Platform, MsgStatus } from '@unimsg/shared';
+import { Platform, MsgStatus, type OutboundAttachment } from '@unimsg/shared';
 import { config, forceAllModes } from '../config';
 import { feishuConnector } from './feishu';
 import { dingtalkConnector, describeInbound } from './dingtalk';
@@ -17,14 +17,22 @@ interface Call {
   url: string;
   init: RequestInit;
   body: any;
+  /** multipart 等非 JSON 请求体的原始文本（JSON 请求体时与 body 等价） */
+  raw?: string;
 }
 
 function stubFetch(replies: unknown[]): Call[] {
   const calls: Call[] = [];
   let i = 0;
   globalThis.fetch = (async (url: any, init: any) => {
-    const body = init?.body ? JSON.parse(String(init.body)) : undefined;
-    calls.push({ url: String(url), init, body });
+    const raw = init?.body ? String(init.body) : undefined;
+    let body: any;
+    try {
+      body = raw ? JSON.parse(raw) : undefined;
+    } catch {
+      body = undefined;
+    }
+    calls.push({ url: String(url), init, body, raw });
     const reply = replies[Math.min(i++, replies.length - 1)];
     return new Response(JSON.stringify(reply), { status: 200, headers: { 'content-type': 'application/json' } });
   }) as typeof fetch;
@@ -91,6 +99,26 @@ test('飞书 receive：v2 事件带出 conversation', () => {
   assert.equal(msg.type, 'todo');
 });
 
+test('飞书 receive：真实事件 sender 在 event 层（与 message 平级）也能解析出 open_id', () => {
+  const msg = feishuConnector.receive({
+    schema: '2.0',
+    header: { event_type: 'im.message.receive_v1' },
+    event: {
+      sender: { sender_id: { open_id: 'ou_abc', user_id: 'u_9' }, sender_type: 'user' },
+      message: {
+        message_id: 'om_2',
+        chat_id: 'oc_2',
+        chat_type: 'group',
+        message_type: 'text',
+        content: JSON.stringify({ text: '你好' }),
+      },
+    },
+  });
+  assert.equal(msg.sender.id, 'ou_abc');
+  assert.equal(msg.conversation?.id, 'oc_2');
+  assert.equal(msg.externalId, 'om_2');
+});
+
 test('飞书真实发送：换取 tenant_access_token 并调用 im/v1/messages', async () => {
   const calls = stubFetch([
     { code: 0, tenant_access_token: 't-123', expire: 7200 },
@@ -119,6 +147,52 @@ test('飞书真实发送：换取 tenant_access_token 并调用 im/v1/messages',
   assert.equal(calls[1].body.msg_type, 'text');
   assert.deepEqual(JSON.parse(calls[1].body.content), { text: '回写内容' });
   assert.equal((calls[1].init.headers as any).Authorization, 'Bearer t-123');
+});
+
+test('飞书真实发送：单聊会话的 chat_id 仍按 chat_id 投递（不再误用 open_id）', async () => {
+  const calls = stubFetch([
+    { code: 0, tenant_access_token: 't-123', expire: 7200 },
+    { code: 0, data: { message_id: 'om_sent_2' } },
+  ]);
+  const msg = {
+    traceId: 't5',
+    platform: Platform.FEISHU,
+    externalId: 'om_3',
+    sender: { id: 'ou_1', name: 'ou_1' },
+    conversation: { id: 'oc_p2p', type: 'p2p' as const },
+    type: 'text' as const,
+    body: '原文',
+    reply: '回写',
+    status: MsgStatus.REPLIED,
+    createdAt: '',
+    updatedAt: '',
+  };
+  await feishuConnector.send(msg);
+  assert.match(calls[1].url, /im\/v1\/messages\?receive_id_type=chat_id$/);
+  assert.equal(calls[1].body.receive_id, 'oc_p2p');
+});
+
+test('飞书真实发送：显式 open_id 会话按 open_id 投递', async () => {
+  const calls = stubFetch([
+    { code: 0, tenant_access_token: 't-123', expire: 7200 },
+    { code: 0, data: { message_id: 'om_sent_3' } },
+  ]);
+  const msg = {
+    traceId: 't6',
+    platform: Platform.FEISHU,
+    externalId: 'om_4',
+    sender: { id: 'linkhub', name: 'linkhub' },
+    conversation: { id: 'ou_target', type: 'p2p' as const },
+    type: 'text' as const,
+    body: '原文',
+    reply: '回写',
+    status: MsgStatus.REPLIED,
+    createdAt: '',
+    updatedAt: '',
+  };
+  await feishuConnector.send(msg);
+  assert.match(calls[1].url, /im\/v1\/messages\?receive_id_type=open_id$/);
+  assert.equal(calls[1].body.receive_id, 'ou_target');
 });
 
 test('飞书真实发送：没有会话时抛错而不是静默失败', async () => {
@@ -228,4 +302,61 @@ test('钉钉真实发送：单聊走 oToMessages/batchSend', async () => {
   assert.match(calls[1].url, /robot\/oToMessages\/batchSend$/);
   assert.deepEqual(calls[1].body.userIds, ['staff1']);
   assert.equal(calls[1].body.openConversationId, undefined);
+});
+
+const ATTACHMENT_BUF = Buffer.from('fake-png-bytes');
+const ATTACHMENT: OutboundAttachment = {
+  name: '屏幕截图 2026-11-05 215616.png',
+  mimeType: 'image/png',
+  size: ATTACHMENT_BUF.length,
+  contentBase64: ATTACHMENT_BUF.toString('base64'),
+};
+
+function attachMsg(): any {
+  return {
+    traceId: 't5', platform: Platform.DINGTALK, externalId: 'm3',
+    sender: { id: 'staff1', name: '小王' },
+    conversation: { id: 'cid3', type: 'group' },
+    type: 'text', body: '原文', reply: '回写内容', status: MsgStatus.REPLIED,
+    createdAt: '', updatedAt: '',
+  };
+}
+
+test('钉钉真实发送附件：先上传到 oapi 媒体库，再用返回的 media_id 发 sampleFile', async () => {
+  const calls = stubFetch([
+    { accessToken: 'd-123', expireIn: 7200 },
+    { processQueryKey: 'pqk_text' },
+    { errcode: 0, errmsg: 'ok', media_id: '@lA_test_media' },
+    { processQueryKey: 'pqk_file' },
+  ]);
+  const r = await dingtalkConnector.send(attachMsg(), [ATTACHMENT]);
+
+  assert.equal(r.mode, 'real');
+  assert.equal(r.platformReply, 'pqk_text,pqk_file');
+
+  // 上传接口在 oapi.dingtalk.com，不是 api.dingtalk.com/v1.0/robot/media/upload（后者 404）
+  assert.equal(calls[2].url, 'https://oapi.dingtalk.com/media/upload?access_token=d-123');
+  assert.match(String((calls[2].init.headers as any)['Content-Type']), /^multipart\/form-data; boundary=/);
+  assert.match(calls[2].raw ?? '', /name="type"\r\n\r\nfile/);
+  assert.match(calls[2].raw ?? '', new RegExp(`name="media"; filename="${ATTACHMENT.name}"`));
+  assert.ok((calls[2].raw ?? '').includes(ATTACHMENT_BUF.toString()));
+
+  assert.equal(calls[3].body.msgKey, 'sampleFile');
+  assert.deepEqual(JSON.parse(calls[3].body.msgParam), {
+    mediaId: '@lA_test_media',
+    fileName: ATTACHMENT.name,
+    fileType: 'png',
+  });
+});
+
+test('钉钉媒体上传失败：把平台 errcode/errmsg 带进错误，进死信队列的原因可读', async () => {
+  stubFetch([
+    { accessToken: 'd-123', expireIn: 7200 },
+    { processQueryKey: 'pqk_text' },
+    { errcode: 40004, errmsg: '不合法的媒体文件类型' },
+  ]);
+  await assert.rejects(
+    () => dingtalkConnector.send(attachMsg(), [ATTACHMENT]),
+    (e: Error) => /40004/.test(e.message) && /不合法的媒体文件类型/.test(e.message),
+  );
 });

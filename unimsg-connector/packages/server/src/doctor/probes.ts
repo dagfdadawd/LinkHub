@@ -8,7 +8,7 @@
  *    SMTP 用 verifySmtpAuth 只登录 + QUIT（不投递）；地址一律 maskAddress 脱敏；
  *  - 单测通过 stub globalThis.fetch / 注入假实现，绝不联网。
  */
-import { Platform, type DeliveryMode } from '@unimsg/shared';
+import { Platform, type DeliveryMode, type IdentityPolicy } from '@unimsg/shared';
 import type { MailAccount } from '../config';
 import {
   DEFAULT_DINGTALK_BASE_URL,
@@ -20,6 +20,15 @@ import {
 } from '../config/runtime';
 import { fetchNewMails } from '../connectors/mail/imapClient';
 import { verifySmtpAuth } from '../connectors/mail/smtpClient';
+import { feishuUserAuth } from '../connectors/feishuUserAuth';
+import {
+  FEISHU_USER_RECEIVE_SCOPES,
+  describeFeishuError,
+} from '../connectors/feishuUserReceive';
+import {
+  dingtalkPersonalClient,
+  type DwsAuthStatus,
+} from '../connectors/dingtalkPersonal';
 import { maskAddress } from '../services/account';
 import { LlmService } from '../services/llm';
 import { MsgStatus } from '@unimsg/shared';
@@ -101,6 +110,30 @@ export interface ProbeInput {
   mail: MailProbeInput;
   llm: LlmProbeInput;
   runtime: Record<Platform, PlatformProbeRuntime>;
+  /** 本人身份策略（不传则不跑身份探针，保持旧调用方兼容） */
+  identity?: IdentityProbeInput;
+}
+
+/** 身份探针输入：只含策略与开关，不含任何凭据/令牌 */
+export interface IdentityProbeInput {
+  feishu: { policy: IdentityPolicy; receiveEnabled: boolean };
+  dingtalk: { policy: IdentityPolicy; receiveEnabled: boolean };
+}
+
+/** 身份探针注入点（单测用；生产不传，走真实只读实现） */
+export interface IdentityProbeDeps {
+  feishu?: {
+    status?: () => { state: 'none' | 'active' | 'refreshable' | 'expired' | 'invalid'; accessExpiresAt?: string; refreshExpiresAt?: string };
+    canAuthorize?: () => boolean;
+    accessToken?: () => Promise<string>;
+    fetchImpl?: typeof fetch;
+  };
+  dingtalk?: {
+    version?: () => Promise<{ version?: string; error?: string }>;
+    authStatus?: () => Promise<DwsAuthStatus>;
+    eventListAvailable?: () => Promise<{ ok: boolean; detail: string }>;
+    loginCommand?: () => string;
+  };
 }
 
 export interface RunProbesOptions {
@@ -120,6 +153,8 @@ export interface RunProbesOptions {
   alwaysFetchEgressIp?: boolean;
   /** 邮箱探针的注入点：单测传假实现，生产不传（走真实客户端，只读） */
   deps?: MailProbeDeps;
+  /** 本人身份探针注入点（单测用） */
+  identityDeps?: IdentityProbeDeps;
 }
 
 export interface RunProbesResult {
@@ -992,6 +1027,241 @@ export async function probeLlm(input: LlmProbeInput, timeoutMs = LLM_PROBE_TIMEO
   return { ...base, status: 'FAIL', detail: `真实调用失败：${reason}`, hint: llmFailureHint(reason) };
 }
 
+// ---------------------------------------------------------------------------
+// 本人身份探针（飞书 user_access_token / 钉钉 dws）
+// ---------------------------------------------------------------------------
+//
+// 约定（契约 §7）：全部只读。未配置/未安装/未连接一律 SKIP（增强项缺失不判失败，
+// 不能因为没连本人身份就把整轮 doctor 打成失败）；显式固定本人身份却不可用、
+// 或已连接但探测失败时才 FAIL（此时发送/接收确实会失败，必须让用户看到并修复）。
+
+const USER_IDENTITY_TIMEOUT_MS = 8_000;
+
+function feishuIdentityBase() {
+  return { group: Platform.FEISHU as const, id: 'feishu:user-identity', title: '飞书本人身份（user_access_token）' };
+}
+
+/**
+ * 飞书本人身份探针：
+ *  1. 令牌状态（未授权 / 有效 / 需续期 / 过期 / 损坏）；
+ *  2. 已连接时用 user token 只读拉一次 `im/v1/chats?page_size=1`，验证「用户身份读消息」权限。
+ */
+export async function probeFeishuIdentity(
+  input: { mode: DeliveryMode; policy: IdentityPolicy; receiveEnabled: boolean; baseUrl: string },
+  deps: IdentityProbeDeps = {},
+  timeoutMs = USER_IDENTITY_TIMEOUT_MS,
+): Promise<CheckResult[]> {
+  const base = feishuIdentityBase();
+  const connectHint = '在 LinkHub「平台账号」页点飞书卡片的「连接本人账号」完成 OAuth 授权（需在飞书开放平台配置重定向 URL 并开启「刷新 user_access_token」）。';
+  const statusFn = deps.feishu?.status ?? (() => feishuUserAuth().status());
+  const canAuthorize = deps.feishu?.canAuthorize ?? (() => feishuUserAuth().canAuthorize());
+
+  if (input.mode === 'mock') {
+    return [{
+      ...base,
+      status: 'SKIP',
+      detail: '飞书当前为模拟模式：本人身份通道不启动，也不探测（切到 real 后才连接）。',
+      hint: '把 FEISHU_MODE 设为 real（或配齐飞书应用凭据让 auto 自动切真实）后再运行 doctor。',
+    }];
+  }
+
+  const status = statusFn();
+  if (status.state === 'none') {
+    if (!canAuthorize()) {
+      return [{
+        ...base,
+        status: 'SKIP',
+        detail: '未配置 FEISHU_APP_ID / FEISHU_APP_SECRET，无法连接飞书本人身份。',
+        hint: '在 .env 填写飞书自建应用的 App ID / App Secret 后重试；当前机器人链路不受影响。',
+      }];
+    }
+    return [{
+      ...base,
+      status: input.policy === 'user' ? 'FAIL' : 'SKIP',
+      detail: input.policy === 'user'
+        ? 'FEISHU_IDENTITY=user 但尚未连接本人身份：发送会显式失败（绝不悄悄回退机器人）。'
+        : '尚未连接飞书本人身份：当前用机器人收发（连接后自动切换为本人，免把机器人拉进每个群）。',
+      hint: connectHint,
+    }];
+  }
+  if (status.state === 'expired' || status.state === 'invalid') {
+    return [{
+      ...base,
+      status: 'FAIL',
+      detail: status.state === 'expired'
+        ? '飞书本人身份授权已过期：发送会显式失败，本人接收不会启动。'
+        : '飞书本人身份令牌状态异常（文件损坏或属于其他应用）：需要重新授权。',
+      hint: `到 LinkHub「平台账号」页点「重新连接」或「重新授权」。${connectHint}`,
+    }];
+  }
+
+  const tokenHint = status.accessExpiresAt ? `access_token 有效至 ${status.accessExpiresAt}` : '令牌有效';
+  const checks: CheckResult[] = [{
+    ...base,
+    status: 'PASS',
+    detail: status.state === 'refreshable'
+      ? `已连接本人身份（access_token 已过期，将用 refresh_token 自动续期）。${tokenHint}`
+      : `已连接本人身份，发送将以本人身份发出。${tokenHint}`,
+  }];
+
+  // 2) 用户身份读消息连通性（只读）
+  if (!input.receiveEnabled || input.policy === 'bot') {
+    checks.push({
+      group: Platform.FEISHU,
+      id: 'feishu:user-receive',
+      title: '飞书本人身份接收（用户轮询）',
+      status: 'SKIP',
+      detail: input.policy === 'bot'
+        ? 'FEISHU_IDENTITY=bot：固定机器人身份，本人接收未启用。'
+        : 'FEISHU_USER_RECEIVE=false：本人接收已关闭。',
+      hint: '需要以本人身份收消息时，把 FEISHU_IDENTITY 设为 auto/user 且 FEISHU_USER_RECEIVE 设为 auto/true。',
+    });
+    return checks;
+  }
+
+  try {
+    const token = deps.feishu?.accessToken
+      ? await deps.feishu.accessToken()
+      : await feishuUserAuth().accessToken();
+    const fetchImpl = deps.feishu?.fetchImpl ?? globalThis.fetch;
+    const url = `${input.baseUrl.replace(/\/+$/, '')}/open-apis/im/v1/chats?user_id_type=open_id&page_size=1`;
+    const res = await fetchImpl(url, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    const text = await res.text();
+    let json: any = {};
+    try { json = text ? JSON.parse(text) : {}; } catch { json = {}; }
+    const code = typeof json?.code === 'number' ? json.code : undefined;
+    if (!res.ok || (code !== undefined && code !== 0)) {
+      const info = describeFeishuError(code ?? res.status, json?.msg);
+      checks.push({
+        group: Platform.FEISHU,
+        id: 'feishu:user-receive',
+        title: '飞书本人身份接收（用户轮询）',
+        status: 'FAIL',
+        detail: `读取会话列表失败（HTTP ${res.status}，code=${code ?? 'n/a'}）：${String(json?.msg ?? '').slice(0, 160)}`,
+        hint: info.hint,
+      });
+      return checks;
+    }
+    const count = Array.isArray(json?.data?.items) ? json.data.items.length : 0;
+    checks.push({
+      group: Platform.FEISHU,
+      id: 'feishu:user-receive',
+      title: '飞书本人身份接收（用户轮询）',
+      status: 'PASS',
+      detail: `用户身份读消息可用（chats 返回 ${count} 条，page_size=1 仅验证连通性）；`
+        + '轮询延迟 5–30s，且只能读到本人可见的会话。',
+      hint: `如后续报权限错误，需在开放平台「权限管理 → 用户身份权限」开通：${FEISHU_USER_RECEIVE_SCOPES.join('、')}。`,
+    });
+  } catch (e) {
+    checks.push({
+      group: Platform.FEISHU,
+      id: 'feishu:user-receive',
+      title: '飞书本人身份接收（用户轮询）',
+      status: 'FAIL',
+      detail: `用户身份读消息探测失败：${errorMessage(e)}`,
+      hint: `检查网络/代理；权限需开通 ${FEISHU_USER_RECEIVE_SCOPES.join('、')}，并确认令牌未过期（过期请重新授权）。`,
+    });
+  }
+  return checks;
+}
+
+function dingtalkIdentityBase() {
+  return { group: Platform.DINGTALK as const, id: 'dingtalk:user-identity', title: '钉钉本人身份（dws CLI）' };
+}
+
+/**
+ * 钉钉本人身份探针：dws 版本 → 登录状态 → 个人事件目录可用性。
+ * dws 未安装/未登录：auto 下 SKIP，显式 user 下 FAIL（发送会失败必须暴露），并给出安装/登录命令。
+ */
+export async function probeDingtalkIdentity(
+  input: { mode: DeliveryMode; policy: IdentityPolicy; receiveEnabled: boolean },
+  deps: IdentityProbeDeps = {},
+  timeoutMs = USER_IDENTITY_TIMEOUT_MS,
+): Promise<CheckResult[]> {
+  const base = dingtalkIdentityBase();
+  const client = dingtalkPersonalClient();
+  const versionFn = deps.dingtalk?.version ?? (() => client.version());
+  const statusFn = deps.dingtalk?.authStatus ?? (() => client.authStatus({ force: true }));
+  const eventListFn = deps.dingtalk?.eventListAvailable ?? (() => client.eventListAvailable());
+  const loginCommand = deps.dingtalk?.loginCommand ?? (() => client.loginCommand());
+  const installHint = '安装钉钉官方 CLI：下载 release 的 dws 可执行文件放到 PATH（https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli），'
+    + '或在 .env 把 DWS_BIN 指向可执行文件完整路径；离线演示可设 DWS_BIN=node scripts/fake-dws.mjs。';
+
+  if (input.mode === 'mock') {
+    return [{
+      ...base,
+      status: 'SKIP',
+      detail: '钉钉当前为模拟模式：本人身份通道不启动，也不探测（显式 DINGTALK_IDENTITY=user + 仅本人身份部署除外）。',
+      hint: '如需仅用本人身份（不配机器人），设 DINGTALK_MODE=real 或 DINGTALK_IDENTITY=user；详见 docs/personal-identity.md。',
+    }];
+  }
+
+  const checks: CheckResult[] = [];
+  const version: { version?: string; error?: string } = await versionFn().catch((e) => ({ error: errorMessage(e) }));
+  if (!version.version) {
+    checks.push({
+      ...base,
+      status: input.policy === 'user' ? 'FAIL' : 'SKIP',
+      detail: `未找到可用的 dws CLI${version.error ? `：${version.error}` : ''}。`,
+      hint: installHint,
+    });
+    return checks;
+  }
+
+  const status = await statusFn().catch((e): DwsAuthStatus => ({
+    available: false,
+    authenticated: false,
+    checkedAt: Date.now(),
+    error: errorMessage(e),
+  }));
+
+  if (!status.authenticated) {
+    checks.push({
+      ...base,
+      status: input.policy === 'user' ? 'FAIL' : 'SKIP',
+      detail: `dws ${version.version} 已安装，但本人身份未登录${status.message ? `（${status.message}）` : ''}：`
+        + (input.policy === 'user' ? '发送会显式失败，本人接收不会启动。' : '当前用机器人收发，登录后自动切换为本人。'),
+      hint: `在终端执行 \`${loginCommand()}\` 完成设备码/浏览器授权，或到 LinkHub「平台账号」页点「连接本人账号」（未安装 dws 时点「查看连接步骤」）。`,
+    });
+  } else {
+    checks.push({
+      ...base,
+      status: 'PASS',
+      detail: `dws ${version.version}：本人身份已登录，发送将以本人身份发出`
+        + (input.receiveEnabled ? '，接收走 dws 个人事件。' : '（本人接收已关闭）。'),
+      hint: '以本人身份发送的消息会带平台 AI 发送角标（--ai-tag 默认开启），这是平台的透明标注。',
+    });
+  }
+
+  if (status.authenticated && input.receiveEnabled && input.policy !== 'bot') {
+    try {
+      const r = await withTimeout(eventListFn(), timeoutMs, 'dws event list');
+      checks.push({
+        group: Platform.DINGTALK,
+        id: 'dingtalk:dws-event-list',
+        title: '钉钉个人事件目录（dws event list）',
+        status: r.ok ? 'PASS' : 'FAIL',
+        detail: r.detail,
+        ...(r.ok ? {} : { hint: '确认 dws 版本（pnpm exec dws version）与企业「CLI 访问管理」已开启；离线演示可用 fake-dws。' }),
+      });
+    } catch (e) {
+      checks.push({
+        group: Platform.DINGTALK,
+        id: 'dingtalk:dws-event-list',
+        title: '钉钉个人事件目录（dws event list）',
+        status: 'FAIL',
+        detail: `探测失败：${errorMessage(e)}`,
+        hint: 'dws 事件目录需要登录且网络可达；不影响发送，仅影响本人身份接收。',
+      });
+    }
+  }
+
+  return checks;
+}
+
 export async function runProbes(input: ProbeInput, options: RunProbesOptions = {}): Promise<RunProbesResult> {
   const checks: CheckResult[] = [];
   let egressIp: string | undefined;
@@ -1009,6 +1279,18 @@ export async function runProbes(input: ProbeInput, options: RunProbesOptions = {
     const runtime = runtimeOf(Platform.FEISHU);
     if (shouldProbe(runtime)) checks.push(await probeFeishuToken(input.feishu, timeoutMs));
     else checks.push(skipProbe(Platform.FEISHU, runtime));
+    if (input.identity) {
+      checks.push(...await probeFeishuIdentity(
+        {
+          mode: runtime.mode,
+          policy: input.identity.feishu.policy,
+          receiveEnabled: input.identity.feishu.receiveEnabled,
+          baseUrl: input.feishu.baseUrl,
+        },
+        options.identityDeps,
+        timeoutMs,
+      ));
+    }
   }
 
   if (want(Platform.DINGTALK)) {
@@ -1018,6 +1300,20 @@ export async function runProbes(input: ProbeInput, options: RunProbesOptions = {
       checks.push(...dingtalkConfigChecks(input.dingtalk));
     } else {
       checks.push(skipProbe(Platform.DINGTALK, runtime));
+    }
+    if (input.identity) {
+      // 与运行时同一套判定：显式 mock 不探测；auto 因缺机器人凭据降级但显式固定本人时仍算真实（仅本人身份部署）
+      const channelsReal = runtime.mode === 'real'
+        || (runtime.policy === 'auto' && input.identity.dingtalk.policy === 'user' && !runtime.canSend && !runtime.canReceive);
+      checks.push(...await probeDingtalkIdentity(
+        {
+          mode: channelsReal ? 'real' : 'mock',
+          policy: input.identity.dingtalk.policy,
+          receiveEnabled: input.identity.dingtalk.receiveEnabled,
+        },
+        options.identityDeps,
+        timeoutMs,
+      ));
     }
   }
 

@@ -6,4 +6,7 @@ export { Platform, MsgStatus, FILE_LIMITS } from '@unimsg/shared';
 export type {
   UnifiedMessage, TraceEntry, MsgType, Sender,
   OutboundAttachment, AttachmentInfo, ComposeRequest, ComposeAck, SendCapabilities,
+  DeliveryInfo, DeliveryMode,
+  // 本人身份能力（本人账号接收 / 本人账号发送）
+  IdentityRole, IdentityPolicy, UserIdentityStatus, PlatformIdentityView,
 } from '@unimsg/shared';

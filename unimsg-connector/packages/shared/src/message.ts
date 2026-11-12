@@ -46,6 +46,8 @@ export interface DeliveryInfo {
   /** 真实平台返回的凭证（飞书 message_id / 钉钉 processQueryKey / 企微 msgid / SMTP 回执） */
   platformReply?: string;
   at: string;
+  /** 本次真实发送实际使用的身份（本人 / 机器人）；Mock 模式不写（如实标注） */
+  identity?: IdentityRole;
 }
 
 /** 连接器发送结果：mode 必须如实反映本次是真实接口还是本地模拟 */
@@ -54,7 +56,7 @@ export interface SendResult {
   platformReply?: string;
   mode: DeliveryMode;
   /** 真实发送时实际使用的身份（机器人 / 用户本人）；Mock 不填 */
-  identity?: 'bot' | 'user';
+  identity?: IdentityRole;
 }
 
 /**
@@ -118,6 +120,11 @@ export interface ComposeRequest {
   conversationType?: 'group' | 'p2p';
   /** 邮箱平台专用：从哪个邮箱账号发出（MAIL_<KEY> 的 key）；不填则用首个已配置账号 */
   mailAccount?: string;
+  /**
+   * 指定本次发送身份（本人 / 机器人）。不填 = 用该平台的 `effectiveSend`。
+   * 服务端会校验：请求的身份当前不可用时回 400 中文错误，绝不悄悄换身份。
+   */
+  identity?: IdentityRole;
   text: string;
   attachments?: OutboundAttachment[];
 }
@@ -126,6 +133,79 @@ export interface ComposeRequest {
 export interface ComposeAck {
   message: UnifiedMessage;
   taskId: string;
+}
+
+// ---------------------------------------------------------------------------
+// 身份能力（本人账号接收 / 本人账号发送）—— 见 docs/personal-identity.md
+//
+// 背景：机器人方案要求「每个人把自己的机器人拉进每个群」，不可接受。
+// 本项目因此支持以员工【本人账号】收发；机器人身份保留为兼容/兜底，绝不删除。
+// 任何状态下都必须如实标注当前是「本人 / 机器人 / Mock」，不允许含糊。
+// ---------------------------------------------------------------------------
+
+/** 一次收发实际使用的身份：机器人 / 用户本人 */
+export type IdentityRole = 'bot' | 'user';
+
+/**
+ * 身份策略（每个平台独立配置）：
+ *  - auto：已连接本人身份就用本人，否则用机器人；
+ *  - bot ：固定机器人（即使已连接本人身份）；
+ *  - user：固定本人，未连接/失效时显式报错，绝不悄悄回退机器人。
+ */
+export type IdentityPolicy = 'auto' | 'bot' | 'user';
+
+/**
+ * 本人身份连接状态（不含任何令牌值，可安全下发前端 / 写入日志）。
+ *
+ * 状态语义：
+ *  - unavailable：本机/本环境不具备连接条件（飞书缺 App 凭据、钉钉没装 dws）；
+ *  - not_linked ：具备条件但用户尚未授权；
+ *  - linked     ：已连接且当前可用；
+ *  - expired    ：授权过期（可用 refresh 自动续期，或需重新授权）；
+ *  - error      ：探测/读取失败（令牌文件损坏、dws 异常等），hint 给修复方式。
+ */
+export interface UserIdentityStatus {
+  state: 'unavailable' | 'not_linked' | 'linked' | 'expired' | 'error';
+  /** 已连接且当前可用（state === 'linked'） */
+  linked: boolean;
+  /** 展示名：飞书授权用户名 / dws 档案显示名；可脱敏 */
+  displayName?: string;
+  /** 附加说明：dws 版本、档案 corp:user（脱敏）、令牌到期时间等 */
+  detail?: string;
+  /** 授权/令牌到期时间（ISO，仅本人身份通道有） */
+  expiresAt?: string;
+  /** 人类可读：当前状态 + 下一步怎么修（中文、可操作） */
+  hint: string;
+  /** 现在是否可以发起连接（飞书 App 凭据齐全 / dws 已安装） */
+  canLink: boolean;
+  /** 连接方式：飞书=oauth（浏览器授权页）；钉钉=cli（dws auth login） */
+  linkMethod: 'oauth' | 'cli';
+  /** 钉钉：用户需要在终端执行的命令（无浏览器/容器部署时展示） */
+  loginCommand?: string;
+}
+
+/**
+ * 一个平台的完整身份视图（`GET /api/accounts` 下发，前端直接渲染）。
+ *
+ * `effectiveSend/effectiveReceive` 是**本次实际生效**的身份：平台整体为 Mock 时
+ * 统一给 'mock'，绝不把模拟通道说成本人或机器人。
+ */
+export interface PlatformIdentityView {
+  /** 用户配置的策略（FEISHU_IDENTITY / DINGTALK_IDENTITY） */
+  policy: IdentityPolicy;
+  /** 本次发送实际身份；'mock' = 平台整体走本地模拟 */
+  effectiveSend: IdentityRole | 'mock';
+  /** 本次接收实际身份；'mock' = 平台整体走本地模拟 */
+  effectiveReceive: IdentityRole | 'mock';
+  user: UserIdentityStatus;
+  /** 机器人通道是否可用（凭据齐全） */
+  botAvailable: boolean;
+  /** 机器人通道的人话说明（含不可用原因与修复方式） */
+  botHint: string;
+  /** 本次接收走什么通道的人话说明，例如「本人身份：飞书用户轮询（20s）」「机器人长连接」 */
+  receiveHint: string;
+  /** 本次发送走什么通道的人话说明 */
+  sendHint: string;
 }
 
 /** 会话（真实回写必须知道发回哪里） */
@@ -158,6 +238,11 @@ export interface UnifiedMessage {
   reply?: string; // 用户最终回写的文本（回写时发送此内容）
   done?: boolean; // 是否已标记完成（待办类）
   /**
+   * 本条消息是通过哪种身份收到的：本人账号接收 / 机器人接收。
+   * 真实接收通道必填；Mock 演示消息不写（如实标注，绝不冒充真实接收）。
+   */
+  receivedAs?: IdentityRole;
+  /**
    * 阅读状态：用户第一次在统一入口打开这条消息的时间（ISO）。
    * 未设置 = 未读。与 status（业务流转）正交——「已同步」不代表「我看过」。
    */
@@ -177,6 +262,17 @@ export interface UnifiedMessage {
   mailMeta?: { account: string; inReplyTo: string; subject: string };
   /** 回写投递方式（成功后写入；Mock 模式也如实记录，便于前端标注"模拟发送"） */
   delivery?: DeliveryInfo;
+  /**
+   * 发送失败原因（人话摘要，最长约 300 字）：
+   * 前端详情页 / toast 直接展示，用户不用去回放里翻。完整原因仍写入闭环日志与死信队列。
+   */
+  failureReason?: string;
+  /**
+   * 本次发送期望使用的身份（由统一入口显式指定时写入，随消息传给 connector.send）。
+   * 不写 = 按平台的 `effectiveSend` 策略解析。connector 必须遵守：
+   * 显式 user 时强制本人（不可用则中文报错），显式 bot 时强制机器人，绝不默默换身份。
+   */
+  sendIdentity?: IdentityRole;
   /**
    * 本次发送/接收携带的附件元数据（只有文件名、类型、大小，绝不含文件内容）。
    * 让「发送文件」这一步在统一入口与全链路回放里同样可追踪。

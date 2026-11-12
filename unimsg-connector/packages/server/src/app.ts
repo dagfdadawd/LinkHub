@@ -13,6 +13,7 @@ import { healthRouter } from './routes/health';
 import { webhookRouter } from './routes/webhook';
 import { messagesRouter } from './routes/messages';
 import { feishuOAuthCallbackRouter, feishuOAuthRouter } from './routes/feishuOAuth';
+import { dingtalkPersonalRouter } from './routes/dingtalkPersonal';
 import { apiAuth } from './middlewares/auth';
 import { config } from './config';
 
@@ -91,6 +92,7 @@ export function createApp(svc: MessageService, options: CreateAppOptions = {}) {
   app.use('/api', feishuOAuthCallbackRouter()); // 公共 OAuth 回调（浏览器跳转，无 Bearer）
   app.use('/api', apiAuth, messagesRouter(svc)); // Bearer 鉴权
   app.use('/api', apiAuth, feishuOAuthRouter()); // Bearer 鉴权：发起飞书用户授权
+  app.use('/api', apiAuth, dingtalkPersonalRouter()); // Bearer 鉴权：钉钉本人身份（dws 登录/状态/注销）
 
   // 同源部署（Docker 单容器）：server 直接托管前端构建产物 + SPA 回退。
   // 只在 WEB_DIST 指向真实 index.html 时启用，本地 dev 走 Vite 5173 不受影响。

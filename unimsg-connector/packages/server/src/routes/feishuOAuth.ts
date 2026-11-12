@@ -111,7 +111,7 @@ function hintForError(message: string): string {
     return `回调地址与飞书后台登记不一致：请把 ${config.feishuAuth.redirectUri} 原样填入「安全设置 → 重定向 URL」。`;
   }
   if (/invalid_grant|code expired|authorization code|授权码/i.test(message)) {
-    return '授权码已过期或已被使用：请回到 LinkHub 账号页，重新点击「连接飞书用户身份」。';
+    return '授权码已过期或已被使用：请回到 LinkHub「平台账号」页，重新点击「连接本人账号」。';
   }
   return '请检查飞书后台的权限、重定向 URL 与「刷新 user_access_token」开关，然后重新授权。';
 }
@@ -141,7 +141,7 @@ export function feishuOAuthCallbackRouter(): Router {
       const message = oauthError === 'access_denied'
         ? '你取消了飞书授权。'
         : `飞书返回授权错误：${oauthError}${description ? `（${description}）` : ''}`;
-      sendHtml(res, 400, failurePage('授权未完成', message, '需要发送身份时再点一次「连接飞书用户身份」即可。'));
+      sendHtml(res, 400, failurePage('授权未完成', message, '需要发送身份时再点一次「连接本人账号」即可。'));
       return;
     }
 
@@ -150,7 +150,7 @@ export function feishuOAuthCallbackRouter(): Router {
       sendHtml(res, 400, failurePage(
         '授权状态无效或已过期',
         '本次授权链接已失效（有效期 10 分钟，且只能使用一次）。',
-        '请回到 LinkHub 账号页，重新点击「连接飞书用户身份」。',
+        '请回到 LinkHub「平台账号」页，重新点击「连接本人账号」。',
       ));
       return;
     }

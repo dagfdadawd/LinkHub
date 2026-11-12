@@ -37,7 +37,9 @@ const TEXTAREA_STYLE_DEFAULTS: Record<string, string> = {
   'line-height': '22px',
 };
 window.getComputedStyle = ((el: Element, pseudo?: string | null) => {
-  const style = nativeGetComputedStyle(el, pseudo);
+  // jsdom 对伪元素 getComputedStyle 直接抛 not-implemented（rc-util 的滚动条测量会传
+  // 伪元素参数）——测试环境忽略伪元素参数即可，不影响任何断言。
+  const style = pseudo ? nativeGetComputedStyle(el) : nativeGetComputedStyle(el, pseudo);
   if (!(el instanceof HTMLTextAreaElement)) return style;
   const original = style.getPropertyValue.bind(style);
   Object.defineProperty(style, 'getPropertyValue', {

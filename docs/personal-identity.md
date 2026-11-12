@@ -1,0 +1,554 @@
+# 本人账号收发（本人身份模式）
+
+> **一句话**：飞书、钉钉从「机器人收发」改为「用员工**本人账号**收、用本人账号发」——同事不需要再把自己的机器人拉进每个群；机器人身份保留为兼容 / 兜底，任何状态下界面和接口都会如实标注当前是「本人 / 机器人 / 模拟」。
+>
+> 本文是**平台配置 + LinkHub 操作**的完整说明。想先看离线效果，直接跳 [§7 离线演示](#7-离线演示用-fake-dws-模拟已登录不碰真实钉钉)。
+>
+> 相关文档：[README 身份模式](../README.md) · [quickstart.md](quickstart.md) · [swap-accounts.md](swap-accounts.md) · [demo-script.md](demo-script.md) · [deploy.md](deploy.md)
+
+---
+
+## 0. 先对号入座
+
+| 你想做什么 | 读哪几节 | 平台前提 |
+|---|---|---|
+| 只想离线看「本人身份」长什么样 | [§2](#2-能力总览)、[§7](#7-离线演示用-fake-dws-模拟已登录不碰真实钉钉) | 无（本地桩） |
+| 用**飞书**本人身份收发 | [§3 边界](#3-平台边界先读避免踩空)、[§4 配置](#4-飞书本人身份配置)、[§6 LinkHub 操作](#6-linkhub-内操作与状态标注) | 飞书自建应用 + 管理员开用户身份权限 |
+| 用**钉钉**本人身份收发 | [§3 边界](#3-平台边界先读避免踩空)、[§5 配置](#5-钉钉本人身份配置dws-cli)、[§6 LinkHub 操作](#6-linkhub-内操作与状态标注) | 本机装 dws + 企业管理员开启 CLI 访问 + 首次真人授权 |
+| 连接失败 / 收不到消息 | [§10 故障排查](#10-故障排查总表) | — |
+| 想退回机器人模式 | [§9 回退](#9-回退到机器人身份) | — |
+
+---
+
+## 1. 为什么要从机器人改成本人身份
+
+机器人方案在真实企业里跑不通，不是因为技术难，而是**使用成本不可接受**：
+
+| 维度 | 机器人身份（旧方案） | 本人身份（本方案） |
+|---|---|---|
+| 同事用之前要做什么 | **每个人**把自己的机器人拉进自己所在的每个群；群主 / 管理员逐群添加 | 不需要拉机器人进群；在 LinkHub 账号页连接本人账号一次（单实例场景） |
+| 群里能收什么 | 平台只推「@机器人」的消息，普通群消息收不到 | 飞书：用户可见的会话（单聊 + 群聊）可读；钉钉：按订阅范围收本人事件（单聊 / @我 / 指定群等） |
+| 发出去显示谁 | 显示为机器人应用 | 显示为**你本人** |
+| 权限前提 | 应用 + 机器人能力发布 | 应用 + **用户身份权限**（飞书）；本机 CLI + 企业管理员开启 CLI 访问（钉钉） |
+| 平台限制 | 群消息必须 @ 机器人；消息与会话受机器人可见范围限制 | 只覆盖**本人可见 / 本人被推送**的消息；飞书轮询有延迟；钉钉需本机 CLI 在线 |
+| 如实标注 | Mock / 真实模式分开标注 | **本人 / 机器人 / 模拟**三态分开标注，绝不混淆 |
+
+**为什么不能承诺「全公司零配置」**：LinkHub 目前是**单实例单身份**设计——一次授权对应一个飞书账号 / 一个 dws 登录用户，每个员工各自部署 / 各自连接自己的实例。它解决的是「不用逐群拉机器人」，不是「一套服务接管全公司所有人的个人消息」；多租户共享实例不在本期范围。
+
+---
+
+## 2. 能力总览
+
+| 平台 | 本人身份**发送** | 本人身份**接收** | LinkHub 实现方式 | 当前状态 |
+|---|---|---|---|---|
+| 飞书 | ✅ 官方支持（`user_access_token` + `im/v1/messages`） | ⚠️ 官方无「个人消息推送事件」，用用户 token **轮询**本人所在会话的增量消息 | 用户 OAuth 授权 → 轮询器 + 水位持久化 | 代码 / 单测就绪；真实租户端到端受 `21001` 限制（见 §3.1） |
+| 钉钉 | ✅ 官方开源 CLI [`dws`](https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli) 的 `dws chat message send`（以当前登录用户身份发） | ✅ 同上，`dws event +listen-im` 个人事件订阅（Stream 长连接，NDJSON） | 子进程调用本机 `dws`，LinkHub 管理登录态 / 事件流 / 重启 | 代码 / 单测 / fake-dws 桩就绪；真实登录需企业开启 CLI 访问（见 §3.2） |
+| 企业微信 / 邮箱 | — | — | 不适用本人身份（平台无对应能力），保持现有机器人 / IMAP 通道 | 不变 |
+
+机器人身份**保留**：飞书长连接 / Webhook、钉钉 Stream 机器人都还在，配置一个不删。任何平台都可以随时切回机器人（见 §9）。
+
+---
+
+## 3. 平台边界（先读，避免踩空）
+
+这一节是**平台侧的客观限制**，不是 LinkHub 的 bug，也不承诺能绕过。写文档 / 答辩 / 演示时请如实说明。
+
+### 3.1 飞书：轮询、用户可见范围、租户策略
+
+- **接收是轮询，不是实时**：飞书官方没有面向"个人消息"的推送事件，本项目用用户身份 token 轮询本人所在会话，**默认 20 秒一轮**（`FEISHU_USER_RECEIVE_SECONDS`，最小 5），新消息通常 **5–30 秒**内出现，取决于轮询间隔与平台接口耗时。不要承诺"秒级实时"。
+- **只能读本人可见的会话**：列会话 / 读消息都用授权用户的身份，**读不到你本人不所在的群、也读不到别人视角的消息**。这是"本人身份"的语义边界，不是缺陷。
+- **首轮默认不灌历史**：`FEISHU_USER_BACKFILL_HOURS=0` 时首轮只记录每个会话的水位基线，只入库之后的新消息；需要回看最近 N 小时可设 `24` 等。
+- **需要用户身份权限**：除发送所需的用户身份权限外，接收还需要「以用户身份获取单聊消息 / 群聊消息」等权限（见 §4.1），由应用管理员开通并发布版本。
+- **企业认证 / 租户策略 `21001`**：部分租户（常见于未完成企业认证）换应用 `tenant_access_token` 会被平台策略直接拒绝，报 `21001 Access denied due to platform policy`。换 Secret、改代码、加 IP 白名单都无效，只能企业认证或换合规租户。本人身份走 **user_access_token**，是否同样被租户策略拦截取决于平台侧策略，本项目未能在该租户做真实端到端验证（见 §11）；遇到时同按平台策略处理。
+- **单实例单账号**：一次授权绑定一个飞书账号；换账号需重新授权（令牌文件按 App ID 校验，换 App 会要求重新授权）。
+
+### 3.2 钉钉：dws 共创阶段 + 企业 CLI 访问 + 首次真人授权 + 凭据绑定设备
+
+钉钉本人身份走官方开源 CLI `dws`，它负责 OAuth 登录、token 刷新、个人事件 Stream 长连接，LinkHub 只做子进程编排。代价是**多了几道平台前置条件**：
+
+1. **这是个"共创阶段"的官方工具**：项目文档明确说明涉及企业数据访问，**需企业管理员授权后方可使用**；默认需要管理员在钉钉开发者平台开启「CLI 访问管理」。未开启时，`dws auth login` 会引导你向管理员发起申请，审批通过后才能登录。这不是改 `.env` 能解决的。
+2. **替代路径：Custom App（自有应用）模式**：企业可在钉钉开放平台创建自建应用、配置重定向 URL（`http://127.0.0.1`、`https://login.dingtalk.com`）、发布后，用该应用的 Client ID / Secret 登录（命令见 §5.2）。适合企业统一管控，但仍需应用管理员操作。
+3. **首次登录必须真人授权**：`dws auth login` 会打开浏览器（或二维码 / device flow），需要账号本人在钉钉授权页点同意。**没有任何"服务端代登录"的捷径**；CI / 容器 / 无头环境用 `--device`，在另一台有浏览器的设备上完成授权。
+4. **凭据与设备绑定，不能跨机复制**：dws 的 token 在 Windows 上用系统凭据保护（DPAPI）、并以设备信息派生密钥加密，官方文档明确「跨设备无法解密」。**不要**把一台机器的 `~/.dws` / 凭据目录拷到另一台机器，**换机器 / 重建容器 = 重新登录**。（Linux 沙箱间官方提供 `dws auth export/import`；Windows 跨机迁移未验证，不写进操作步骤。）
+5. **容器部署需在容器内登录**：dws 必须运行在 LinkHub 进程所在环境；容器里没有 dws / 没登录时，LinkHub 会按策略回退机器人或显式报错（见 §9），不会假装本人身份可用。
+6. **接收范围按订阅事件**：默认订阅「全部单聊 + @我」（`DINGTALK_USER_EVENT_KINDS=all-direct,at-me`）；全量群消息（`all-group`）量大、按需开启。**`group`（指定群）/ `sender`（指定发送人）暂不支持**——它们需要 dws 的群 / 人目标参数（`--chat-id` / `--user`），本期不做；配置了会被**忽略并在启动日志告警**，回退到 `all-direct,at-me`，不会导致子进程反复重启。
+7. **dws 进程需保持运行**：LinkHub 会拉起并监管 `dws event +listen-im` 子进程；进程崩溃会自动退避重启。dws 未登录 / 被卸载时，收发都会如实降级并在账号页给出修复命令。
+8. **以本人身份发出的消息会带「AI 发送角标」**：dws 发送默认带钉钉平台的 AI 发送角标（`--ai-tag` 默认 `true`），LinkHub **保留这个默认**、不关闭也不伪造——对方能看出这条消息是由自动化工具以你本人身份发出的。这是透明标注，不是缺陷；若企业要求去掉，需要改 dws 调用参数（属于产品策略决定，不在本文范围）。
+
+### 3.3 两者共同的边界
+
+- **真实凭据只在本机 / 服务端**：飞书 token 存服务端令牌文件，钉钉 token 存本机 dws 凭据存储；都不下发前端、不写日志、不进 git（见 §8）。
+- **钉钉双通道同时开启会重复入库**：机器人 Stream（`DINGTALK_STREAM=true`）与本人身份个人事件同时开启时，同一条钉钉消息可能**各入库一次**——机器人通道与个人事件的平台消息 ID 体系不同，跨通道幂等键不通用。**建议二选一**：要用本人身份就关掉机器人 Stream（`DINGTALK_STREAM=false`），或反过来；这是已知限制，不是 bug。
+- **Mock 永远是 Mock**：平台 `*_MODE=mock` 时本人身份通道不启动，界面统一显示「模拟」，不会显示成"本人已连接"。
+- **多员工共享一个实例不支持**：单身份模型；需要多人使用请各自部署（或等后续多租户能力）。
+- **平台策略会变**：飞书权限名、钉钉 CLI 访问策略以官方后台当时展示为准；本文写作时已做只读探测，但平台侧可能调整。
+
+---
+
+## 4. 飞书本人身份配置
+
+### 4.1 后台一次性配置（应用管理员 / 所有者操作）
+
+在[飞书开放平台](https://open.feishu.cn/)开发者后台，基于**已有的自建应用**补充配置（机器人通道的配置保留不动）：
+
+1. **权限管理 → 用户身份权限**开通：
+   - `im:message`（获取与发送单聊、群组消息）
+   - `im:message.send_as_user`（以用户身份发消息）——**本人发送必需**
+   - `im:resource`（上传图片 / 文件；只发文本也建议一起开）
+   - 本人接收另需：`im:message`、`im:message.p2p_msg:get_as_user`（以用户身份获取单聊消息）、`im:message.group_msg:get_as_user`（以用户身份获取群聊消息）、`im:resource`（附件资源）；缺权限时日志会给出 `99991672` 与所需权限清单（见 §4.6）。
+   - 注意：权限变更后必须**重新发布应用版本并重新授权**，旧 token 不带新权限。
+  - **授权 scope 由 LinkHub 自动申请**：OAuth 时带 `im:message`、`im:message.send_as_user`、`im:resource`、`offline_access`；**本人接收开启时会额外申请** `im:message.p2p_msg:get_as_user`、`im:message.group_msg:get_as_user`（`FEISHU_USER_RECEIVE=false` 或 `FEISHU_IDENTITY=bot` 时不申请）。后台仍需把这些权限在应用侧开通。
+  - **从旧版本升级后必须「重新授权」一次**：旧 token 不含读消息权限，直接轮询会报 `99991672`（不会自己恢复）。
+2. **安全设置 → 重定向 URL**：添加与 LinkHub 完全一致的地址，默认
+   `http://localhost:<SERVER_PORT>/api/feishu/oauth/callback`
+   （默认端口 3001 即 `http://localhost:3001/api/feishu/oauth/callback`）。协议、域名、端口、路径、结尾斜杠**全部要一致**；端口不是 3001 时先设 `FEISHU_REDIRECT_URI`，再把**同一个值**原样填进后台。
+3. **安全设置 → 打开「刷新 user_access_token」**：否则 refresh_token 无法自动续期。
+4. **版本管理与发布**：重新发布版本并等权限生效；要授权的飞书账号必须在该应用的**可用范围**内（否则授权会报 `20010`）。
+5. 如租户被 `21001` 拦截，先按 [§3.1](#31-飞书轮询用户可见范围租户策略) 处理租户策略，否则后面步骤都会失败。
+
+### 4.2 `.env` 配置
+
+```dotenv
+# ---- 飞书：本人身份（发送 + 接收）----
+# 身份策略：auto（默认，已连接本人就用本人，否则机器人）| bot（固定机器人）| user（固定本人，未授权/失效显式报错）
+FEISHU_IDENTITY=auto
+# 旧变量 FEISHU_SEND_AS 仍兼容（仅在未写 FEISHU_IDENTITY 时生效，会打印废弃提示）；新配置请只用 FEISHU_IDENTITY
+# FEISHU_SEND_AS=auto
+
+# 本人身份接收：auto（默认，身份=本人时自动开启）| true（强制开）| false（只发不收）
+FEISHU_USER_RECEIVE=auto
+# 轮询间隔秒（最小 5、最大 86400，默认 20）
+FEISHU_USER_RECEIVE_SECONDS=20
+# 每轮最多检查的会话数（1–100，默认 20；会话很多时按需调大）
+FEISHU_USER_CHAT_LIMIT=20
+# 首轮回溯小时数（0–720）：0（默认，只立基线不灌历史）| 24（回溯最近 24h）
+FEISHU_USER_BACKFILL_HOURS=0
+# 接收水位文件（默认：未设 DATA_DIR → unimsg-connector/.feishu-user-receive.json；
+# 设了 DATA_DIR（Docker 为 /app/data）→ ${DATA_DIR}/feishu-user-receive.json，随数据卷持久化）
+# FEISHU_USER_STATE_FILE=
+```
+
+其余既有变量不变：`FEISHU_APP_ID` / `FEISHU_APP_SECRET`（应用凭据）、`FEISHU_REDIRECT_URI`（自定义回调地址）、`FEISHU_USER_TOKEN_FILE`（令牌文件路径，默认 `unimsg-connector/.feishu-user-token.json`，Docker 为 `DATA_DIR/feishu-user-token.json`）、`FEISHU_STREAM`（机器人长连接，保留）。
+
+> 改完 `.env` **必须重启后端**（配置只在启动时读取）；改前端 `.env` 必须重启 Vite。
+
+### 4.3 在 LinkHub 里完成授权
+
+1. 启动后端 → 打开 LinkHub → **平台账号**页 → 飞书卡片；
+2. 点 **「连接本人账号」**（已授权过则显示「重新授权」；授权过期 / 异常时显示「重新连接」）；
+3. 浏览器打开飞书授权页 → 用**要绑定的本人账号**点同意；
+4. 授权成功后回到页面，飞书卡片的「身份 · 谁在收、谁在发」块显示 **接收 = 本人、发送 = 本人**，并显示「已连接：<账号展示名>」与有效期；若授权失败 / 弹窗被拦截，账号页会显示中文提示（「飞书授权未完成」或「浏览器拦截了飞书授权窗口」+ 常见原因清单 +「重新发起授权」/「我知道了」），不再整页跳走、也不会静默。
+
+授权信息只存在服务端令牌文件里；前端 / 接口只拿得到"已连接 / 未连接 / 过期"等状态与脱敏后的展示名。
+
+### 4.4 接收机制（看到什么、多久看到）
+
+- 启动后日志出现身份行与轮询启动说明，例如：`[unimsg] 身份: 飞书=本人(收:用户轮询/发:本人)`（具体文案以实际日志为准）；
+- 每轮先列本人会话，再对每个会话按时间水位拉增量（每轮最多 `FEISHU_USER_CHAT_LIMIT` 个会话）；
+- 首轮默认只立基线，**不会把历史消息灌进收件箱**；设 `FEISHU_USER_BACKFILL_HOURS=24` 才会回溯；
+- 自己发出的消息会被**尽可能**过滤（自环保护），不会在自己的收件箱里再出现一条；**飞书拿不到本人 open_id 时会跳过过滤并告警**；
+- 权限不足时不会静默：账号页身份块 / 日志会给出所需权限与"重新授权"提示；
+- 水位文件损坏 / 丢失时会安全回退并**重建基线**，重启后从水位续传；但**断档期间的消息不会自动补回**——需要回填就把 `FEISHU_USER_BACKFILL_HOURS` 设为 `24` 等值后重启（会把该时段消息重新入库）。
+
+### 4.5 验证命令
+
+```bash
+# 在 unimsg-connector/ 下
+pnpm run doctor --platform=feishu     # 应用凭据 + 用户身份探针（只读，不发送业务消息）
+curl http://127.0.0.1:3001/api/health              # identities 摘要（发送/接收身份）
+curl -H "Authorization: Bearer dev-token" http://127.0.0.1:3001/api/accounts
+# 看飞书平台 identity 字段：policy / effectiveSend / effectiveReceive / user.hint
+```
+
+### 4.6 飞书本人身份常见报错
+
+| 现象 | 原因 | 处理 |
+|---|---|---|
+| 账号页身份为「未连接」，发送走机器人 | 还没点「连接本人账号」，或令牌文件被删 | 点「连接本人账号」/「重新授权」 |
+| 发送失败「飞书用户授权已过期 / 请重新授权」 | refresh_token 失效、后台没开「刷新 user_access_token」、令牌文件损坏 | 点「重新授权」；核对后台刷新开关；`FEISHU_IDENTITY=auto` 下不会悄悄换回机器人 |
+| 授权页报 `20027` / 权限不足 | 用户身份权限未开通，或版本未发布 | 按 §4.1 开通权限并重新发布版本，再重新授权 |
+| 授权页报 `20010` | 当前飞书账号不在应用可用范围 | 让管理员把账号加入应用可用范围 |
+| 授权页报 `20029` / redirect_uri 不合法 | 回调地址与后台登记不一致 | `FEISHU_REDIRECT_URI` 与后台**逐字符**一致（含端口、斜杠） |
+| 点「连接本人账号」后飞书页报错、回到 LinkHub 没反应 | 旧版本缺陷（已修复）：现在回跳会提示「飞书授权未完成」/「浏览器拦截了飞书授权窗口」并给常见原因与「重新发起授权」 | 按提示检查：应用未发布/不在可用范围、重定向 URL 不一致、用户身份权限未开通；改完**重启后端**再重新授权 |
+| 接收不到消息、日志提示权限错误（如 `99991672` / `99991679` / `20027` / `230027`） | 缺用户身份读消息权限 / 未重新授权 | 按提示补齐 §4.1 的读消息权限，**重新发布版本并重新授权**（权限变化后旧 token 不带新权限）。后端 hint 原文：`飞书用户身份缺少「读消息」权限（错误码 99991672）：请在飞书开放平台「权限管理 → 用户身份权限」开通 im:message、im:message.p2p_msg:get_as_user、im:message.group_msg:get_as_user、im:resource，发布应用版本后到 LinkHub 账号页点「重新授权」。` |
+| 能收但很慢（5–30s） | 轮询机制的固有延迟 | 正常现象；需要更快就减小 `FEISHU_USER_RECEIVE_SECONDS`（最小 5），但会增大接口调用量 |
+| 收件箱只有部分会话的消息 | 只读本人可见会话；本人不在的群读不到 | 平台边界，无法绕过 |
+| 首轮启动后历史消息没出现 | `FEISHU_USER_BACKFILL_HOURS=0` 默认只立基线 | 需要历史就设 `24` 等值后重启（注意会把该时段消息入库） |
+| `21001` | 租户策略 / 企业认证 | 见 §3.1，改配置无解 |
+
+---
+
+## 5. 钉钉本人身份配置（dws CLI）
+
+### 5.1 安装 dws（`dws` 已在 PATH 可跳过）
+
+官方仓库：[`DingTalk-Real-AI/dingtalk-workspace-cli`](https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli)（Apache-2.0）。官方提供两种安装方式（二选一）：
+
+```powershell
+# Windows（PowerShell，官方安装脚本，推荐）
+irm https://raw.githubusercontent.com/DingTalk-Real-AI/dingtalk-workspace-cli/main/scripts/install.ps1 | iex
+
+# 或：从官方 Releases 页面下载对应平台的 dws 可执行文件，放到 PATH 目录
+#   下载页：https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli/releases
+#   例如放到 C:\Users\<你的用户名>\.local\bin\dws.exe，或改 .env 的 DWS_BIN 指向绝对路径
+```
+
+```bash
+# 验证（任何平台）
+dws version     # 输出形如 Version: v1.0.x
+```
+
+本项目验证过的版本为 **v1.0.68-beta.1**；`event +listen-im`、`auth status --readonly` 等命令在较老版本可能不存在，遇到「命令不存在」先 `dws upgrade`。
+
+### 5.2 让组织允许 CLI 访问（企业管理员操作）
+
+两种方式任选，**都需要管理员**：
+
+**方式 A：开启组织 CLI 访问（推荐）**
+
+1. 企业管理员进入钉钉**开发者平台** → 「**CLI 访问管理**」→ 开启；
+2. 成员执行 `dws auth login`；若组织未开启，CLI 会引导向管理员发起申请，管理员收到申请卡片后一键审批；
+3. 审批通过后，重新执行 `dws auth login`。
+
+**方式 B：Custom App（自有应用）模式**（企业统一管控 / 无法开 CLI 访问时）
+
+1. 钉钉开放平台 → 应用开发后台 → 创建应用；
+2. 应用**安全设置** → 添加重定向 URL：`http://127.0.0.1`、`https://login.dingtalk.com`；
+3. 发布应用；
+4. 登录时用该应用凭据：
+
+```bash
+dws auth login --client-id <AppKey> --client-secret <AppSecret>
+```
+
+> `--client-id` / `--client-secret` 是**应用级**凭据，不是个人账号密码；不要写进仓库（可以放在本机环境变量里由你手动执行，不要交给 LinkHub 存）。
+
+### 5.3 首次登录（真人授权，只需一次）
+
+```bash
+# 有浏览器（Windows 桌面 / 本机）
+dws auth login
+
+# 无浏览器 / 容器 / SSH 远程：device flow，在另一台设备上完成授权
+dws auth login --device
+
+# 多组织 / 多账号时可用 --profile 指定
+```
+
+登录成功后验证（只读，不触发刷新）：
+
+```bash
+dws auth status --readonly --format json
+# 期望 authenticated: true；未登录时为 false + "未登录"
+
+dws profile list --format json
+# 期望能看到当前组织 / 账号档案（profile 形如 corpId:userId）
+```
+
+> **安全提醒**：`dws auth login --client-secret` 会出现在命令历史里；在共享电脑上操作后清理 shell 历史，或按企业规范使用。登录凭据由 dws 加密保存在本机（Windows DPAPI + 设备绑定），**不要复制到别的机器**。
+
+### 5.4 `.env` 配置
+
+```dotenv
+# ---- 钉钉：本人身份（收 + 发，走本机 dws）----
+# 身份策略：auto（默认，已登录就用本人，否则机器人）| bot（固定机器人）| user（固定本人，未登录显式报错）
+DINGTALK_IDENTITY=auto
+# 本人身份接收：auto（默认，身份=本人时自动开启）| true | false
+DINGTALK_USER_RECEIVE=auto
+# 个人事件订阅范围（逗号分隔）：
+#   all-direct = 全部单聊（默认）  at-me = @我（默认）  all-group = 全部群消息（量大，按需）
+#   注意：group / sender 暂不支持（需要 dws 目标参数），配了会被忽略并在启动日志告警，回退默认范围
+DINGTALK_USER_EVENT_KINDS=all-direct,at-me
+# dws 可执行文件（默认 dws，在 PATH 里）；可带参数，如 node scripts/fake-dws.mjs（离线演示/测试用）
+DWS_BIN=dws
+# 指定 dws 登录档案（多账号时用；一般留空）
+DWS_PROFILE=
+# dws 命令超时（毫秒；登录 1000–120000，发送 1000–600000）
+DWS_AUTH_TIMEOUT_MS=15000
+DWS_SEND_TIMEOUT_MS=30000
+```
+
+> **只配本人身份也可以（钉钉）**：飞书必须先有 App 凭据才能发起 OAuth；钉钉的本人身份不依赖机器人应用凭据——如果你想只用钉钉本人身份、完全不配机器人，请显式设 `DINGTALK_IDENTITY=user` 并保持机器人通道无凭据（`auto` 在没有任何机器人凭据时平台会判为 mock，**不会**自动启用本人通道；显式 `user` 才会以本人身份真实收发）。
+
+原有的机器人配置（`DINGTALK_CLIENT_ID` / `DINGTALK_CLIENT_SECRET` / `DINGTALK_ROBOT_CODE` / `DINGTALK_STREAM`）**保留不动**，用于机器人兜底。
+
+### 5.5 在 LinkHub 里连接
+
+1. 先确认终端里 `dws auth status --readonly --format json` 是 `authenticated: true`（LinkHub 不会替你做真人授权）；
+2. 启动后端 → 平台账号页 → 钉钉卡片；
+3. 卡片身份块下方点 **「连接本人账号」**（dws 未安装时按钮为 **「查看连接步骤」**）→ 打开 **「连接钉钉本人账号」** 弹窗：
+   - 未安装 dws：按弹窗给的官方下载页与 `DWS_BIN` 写法安装，重启后端后点「重新检测」；
+   - 未登录：点 **「开始登录」**，LinkHub 会拉起 `dws auth login` 并展示授权链接 / 设备码 / 终端等价命令；**授权必须由你本人在钉钉页面完成**；
+   - 弹窗每 2 秒自动检测一次登录状态（最多等 2 分钟）；也可以自己在终端登录后点 **「我已登录，刷新状态」**；
+4. 连接成功后卡片显示「已连接：<dws 档案展示名>」，身份块 接收 = 本人、发送 = 本人；钉钉卡片提供 **「重新登录」**（换账号）与 **「注销」**。
+
+> LinkHub 的登录按钮只负责**展示 / 引导 / 拉起** `dws auth login`，后端不会、也无法代你登录；容器 / 无浏览器环境请直接在运行环境内执行 `dws auth login --device`（见 [deploy.md](deploy.md)）。
+
+### 5.6 接收机制（看到什么范围）
+
+- LinkHub 为 `DINGTALK_USER_EVENT_KINDS` 里的每个范围拉起一个 `dws event +listen-im --kind <kind> --events message --flatten -f ndjson -y` 子进程（Stream 长连接），逐行解析事件并入库；
+- 默认 `all-direct,at-me`：本人收到的**全部单聊**消息 + **@我**的群消息；`all-group`（本人所在全部群的消息）可以直接配置但量大、按需开启；
+- **`group` / `sender` 暂不支持**：它们需要 dws 的群 / 人目标参数（`--chat-id` / `--user`），本期不做；配置了会被**忽略并在启动日志告警**，回退到 `all-direct,at-me`，**不会**导致子进程反复重启；
+- 事件流带平台消息 ID，入库走幂等键，dws 重放 / 重连不会重复入库；
+- **自环过滤依赖 `dws contact user get-self`**：取不到本人 `openDingTalkId` 时只少一层过滤（不会阻断接收，可能偶尔看到自己发出的消息回显），日志会提示；
+- **平台整体 Mock 时**：本人身份通道不启动，身份统一显示「模拟」而不是「机器人」（`effectiveReceive/effectiveSend=mock`），不会冒充真实接收；
+- **钉钉双通道重复（已知限制）**：机器人 Stream 与本人事件同时开启时，同一条群 / 单聊消息可能各入库一次（两套消息 ID 体系），建议二选一（见 §3.3）；
+- LinkHub 启动时若 dws 未登录 / 不存在，**不会崩溃**：auto 下回退机器人并在账号页给出中文修复提示；显式 `user` 时启动报错并提示；
+- 子进程崩溃会指数退避重启（1s → 2s → 4s … 上限 60s），日志说明第几次重启；后端退出时一并清理，不残留子进程。
+
+### 5.7 验证命令
+
+```bash
+# 在 unimsg-connector/ 下
+pnpm run doctor --platform=dingtalk     # dws version / auth status / 事件目录可用性（只读）
+curl http://127.0.0.1:3001/api/health   # identities 摘要
+curl -H "Authorization: Bearer dev-token" http://127.0.0.1:3001/api/accounts
+# 看钉钉平台 identity.user.state / displayName / hint
+```
+
+### 5.8 钉钉本人身份常见报错
+
+| 现象 | 原因 | 处理 |
+|---|---|---|
+| 账号页提示「未找到 dws」 | 本机没装 dws，或 `DWS_BIN` 指向错误路径 | 按 §5.1 安装；`DWS_BIN` 保持 `dws`（PATH 中）或写绝对路径 |
+| `dws auth login` 提示组织未开启 CLI 访问 | 企业管理员没开「CLI 访问管理」 | 按 §5.2 申请 / 开启，或走 Custom App 模式 |
+| 登录流程卡在浏览器 / 回调失败 | 无浏览器环境用了默认 loopback 模式；或 127.0.0.1 不可达 | 改用 `dws auth login --device`；容器 / SSH 必须用 device flow |
+| `dws auth status` 报 `local_state_requires_repair` | 本机凭据状态需要修复（如系统凭据被改） | 重新执行 `dws auth login`；必要时按官方文档迁移 / 重建 |
+| 换机器 / 重建容器后「未登录」 | dws 凭据与设备绑定，跨机不可解密 | 在新机器 / 容器内重新 `dws auth login` |
+| auto 下账号页显示「机器人」而非本人 | dws 未登录 / 未安装 / 身份策略不是 auto | 看 `identity.user.hint`；先修 dws 登录，再看策略是否 `bot` |
+| `DINGTALK_IDENTITY=user` 时发送报错 | 显式固定本人但本人不可用 | 这是**正确行为**（不悄悄换身份）；按 hint 连接 dws 或改回 `auto` / `bot` |
+| 收不到某些群消息 | 默认只订阅单聊 + @我；普通群消息平台不推送 | 需要的话显式配置事件范围；全量群消息受平台能力限制，不承诺 |
+| 事件流反复重启 | dws 崩溃 / 未登录 / 网络断开 | 看后端日志的退避重启说明与 stderr 摘要；先修登录态与网络 |
+
+---
+
+## 6. LinkHub 内操作与状态标注
+
+### 6.1 状态字段（`GET /api/accounts` 的 `identity`）
+
+飞书 / 钉钉两个平台的账号信息里带 `identity` 视图（不含任何令牌）：
+
+| 字段 | 含义 |
+|---|---|
+| `policy` | 配置策略：`auto` / `bot` / `user`（来自 `FEISHU_IDENTITY` / `DINGTALK_IDENTITY`） |
+| `effectiveSend` | 本次发送实际身份：`user`（本人）/ `bot`（机器人）/ `mock`（平台整体模拟） |
+| `effectiveReceive` | 本次接收实际身份：`user` / `bot` / `mock` |
+| `user.state` | 本人身份状态：`unavailable`（本机不具备条件）/ `not_linked`（未授权）/ `linked`（已连接可用）/ `expired`（过期）/ `error`（异常） |
+| `user.linked` | 是否已连接且当前可用 |
+| `user.displayName` / `detail` / `expiresAt` | 脱敏展示名 / 补充说明 / 到期时间 |
+| `user.hint` | 中文、可操作的下一步（含修复命令） |
+| `user.canLink` / `linkMethod` | 现在能否发起连接；飞书=`oauth`，钉钉=`cli` |
+| `user.loginCommand` | 钉钉：需要在终端执行的命令（无浏览器 / 容器部署时展示） |
+| `botAvailable` / `botHint` | 机器人通道是否可用与说明 |
+| `receiveHint` / `sendHint` | 本次收发走什么通道的人话说明，例如「本人身份：飞书用户轮询（20s）」「机器人长连接」 |
+
+### 6.2 界面里看身份
+
+| 位置 | 显示 | 说明 |
+|---|---|---|
+| 平台账号页 · 飞书 / 钉钉卡片 | 「**身份 · 谁在收、谁在发**」块：`接收` / `发送` 两行，各一枚 Tag（**本人**绿 / **机器人**蓝 / **模拟**橙）+ 人话说明；未连接时给出下一步；已连接显示「已连接：<展示名>」与有效期 | 连接入口在块下方：飞书「连接本人账号 / 重新授权 / 重新连接」；钉钉「连接本人账号 / 查看连接步骤」，已连接时「重新登录 / 注销」；卡片右上角还会显示当前策略，如 `FEISHU_IDENTITY=auto` |
+| 收件箱 · 消息卡片 / 详情 | Tag「**本人账号接收**」/「**机器人接收**」 | 来自 `receivedAs`；**Mock / 演示消息不写接收身份**（详情显示「—」或不显示），绝不冒充真实接收 |
+| 收件箱 · 详情「投递方式」 | 「**本人发送**」/「**机器人发送**」/「**模拟发送**」 | 来自 `delivery.identity` 与 `delivery.mode` |
+| 新建发送 · 发送身份 | 「发送身份」单选：`本人（<展示名>）` / `机器人`；**两种身份都可用时才可切换**，只有一种时直接展示当前身份 + 原因；Mock 下显示「模拟」且不可选 | 提交 `identity` 字段；默认跟随后端策略（当前是本人 / 机器人） |
+| 全链路回放 | 事件与消息上同样显示接收 / 发送身份标签 | 便于演示"这条是谁收的、谁发的" |
+
+### 6.3 发送身份语义（重要）
+
+- 默认按该平台的 `policy` 解析：`auto` 已连接 → 本人，否则机器人；`bot` → 机器人；`user` → 本人（不可用显式报错）；
+- **新建发送**在飞书 / 钉钉两种身份都可用时可选择发送身份（提交 `identity`），服务端会校验该身份当前可用，不可用返回 400 中文错误（例：当前钉钉本人身份未连接…请连接或改用机器人），**绝不悄悄换身份**；**回复**界面不提供身份选择器，按平台策略发送（后端 API 支持 `identity` 覆盖），界面展示实际生效身份；
+- 真实发送成功后 `delivery.identity` 记录实际身份；Mock 发送不写身份（只标模拟）。
+
+---
+
+## 7. 离线演示：用 fake-dws 模拟已登录（不碰真实钉钉）
+
+评审现场 / 断网环境不想登录真实钉钉时，可以用仓库自带的 **fake-dws 本地桩**演示"钉钉本人身份收发"的完整闭环。它只模拟 dws 命令输出，**不连接钉钉、不发送任何真实消息**，用于测试与演示。
+
+```powershell
+# 在 unimsg-connector/ 下（PowerShell；确保当前环境没有真实机器人凭据，或至少 DINGTALK_STREAM=false）
+$env:DWS_BIN="node scripts/fake-dws.mjs"
+$env:DINGTALK_IDENTITY="user"     # 「仅本人身份」模式：不配机器人凭据也能走本人通道（auto 会判 Mock，必须显式 user）
+$env:FAKE_DWS_EVENT_INTERVAL_MS="1000"   # 可选：模拟事件间隔（默认 3000ms，首条 300ms）
+pnpm --filter @unimsg/server start
+```
+
+```bash
+# 在 unimsg-connector/ 下（bash / macOS / Linux）
+DWS_BIN="node scripts/fake-dws.mjs" DINGTALK_IDENTITY=user pnpm --filter @unimsg/server start
+```
+
+`.env` 里的写法（与 `.env.example` 注释一致，值可带空格、无需引号）：
+
+```dotenv
+DWS_BIN=node scripts/fake-dws.mjs
+DINGTALK_IDENTITY=user
+```
+
+- fake-dws 是**有状态的本地桩**：默认视为**已登录**（展示名 `张三（模拟）`）；`FAKE_DWS_AUTHENTICATED=false` 或先执行 `node scripts/fake-dws.mjs auth logout` 可演示「未登录 → auto 回退机器人」；`node scripts/fake-dws.mjs auth login` 可模拟登录成功；可用 `FAKE_DWS_STATE_FILE=<路径>` 指定隔离的登录状态文件，避免上一次演示的登录态残留；
+- 它支持 `version` / `auth status --readonly --format json` / `profile list --format json` / `contact user get-self -f json`（返回本人 `openDingTalkId`，真实 dws 用它做「过滤自己发的消息」；fake 下返回模拟本人）/ `event +listen-im --kind <k> --events message --flatten -f ndjson`（长驻输出模拟事件，收到 SIGTERM 退出；**默认只推 5 条示例事件后停止推流、进程保持存活**，避免离线演示把收件箱灌成重复消息；可用 `--max-events N` 或 `FAKE_DWS_MAX_EVENTS=N` 显式控制，`0`=不限；每隔 5 条混入一行非 JSON 诊断，验证容错）/ `chat message send` / `chat message reply`（返回与真实 dws 同形状的成功 JSON，并把发送记录写到本地 NDJSON）；`FAKE_DWS_FAIL=not-logged-in|permission|validation` 可复现失败分支；退出码与真实 dws 对齐（0 成功 / 2 用法 / 3 校验 / 5 未登录）；
+- **fake 下能跑不代表真实可用**：fake-dws 对 `group` / `sender` 不做目标参数校验；而 LinkHub 的配置解析会**忽略这两个范围并告警**（本期不支持按群 / 按人订阅）——不要用 fake 的现象推断真实通道行为。
+
+- 启动后账号页钉钉卡片应显示「已连接本人账号」与 dws 档案展示名（动态来源是本地桩），个人事件子进程会输出模拟事件并入库，回复会走桩发送并返回成功回执；
+- **演示时必须说明**：这是本地桩 / 离线演示，不是真实钉钉；真实收发需要按 §5 完成 dws 安装、企业 CLI 访问与真人授权；
+- fake-dws 同时被自动化测试使用（`DWS_BIN` 指向它做真子进程冒烟），不影响真实配置：不设 `DWS_BIN` 时默认就是 `dws`。
+
+> 具体演示分镜见 [demo-script.md](demo-script.md)。
+
+---
+
+## 8. 安全说明
+
+- **令牌只在本机 / 服务端**：
+  - 飞书 `access_token` / `refresh_token` 存服务端令牌文件（默认 `unimsg-connector/.feishu-user-token.json`；Docker 为 `DATA_DIR/feishu-user-token.json`），POSIX 下权限 0600；接口、日志、前端都拿不到，只下发状态与脱敏展示名；
+  - 钉钉 token 由 dws 存在本机系统凭据（Windows DPAPI + 设备绑定），LinkHub 不读取、不落盘、不下发；LinkHub 只解析 `dws` 的 JSON 输出（不含 token）。
+- **gitignore 覆盖**：`unimsg-connector/.feishu-user-token.json`、`.feishu-user-receive.json`（接收水位）、`.mail-watermarks.json` 等都已在 `.gitignore` 中；交付打包（`pnpm run deliver`）也会排除。
+- **不要**把 `.env`、令牌文件、`~/.dws` 目录、`dws auth export` 包提交 / 截图 / 发群。
+- **单实例约束**：
+  - 飞书 refresh_token 单次有效，不要让多个后端进程共享同一个令牌文件（并发刷新会互相失效）；
+  - 钉钉 dws 的登录档与本地事件消费者也是单机状态；同一台机器不要同时跑多个实例抢同一 dws profile。
+- **入口令牌**：连接身份 / 发起授权走 Bearer 鉴权接口，默认 `dev-token` 只适合本机演示；对外暴露前必须把 `API_TOKEN` 改成强随机值，否则任何能访问服务的人都能触发授权流程 / 覆盖身份。
+- **日志**：身份日志只打印「本人 / 机器人 / 模拟」与脱敏账号名，不打印 token；doctor 的身份探针是只读的，不发送业务消息。
+
+---
+
+## 9. 回退到机器人身份
+
+本人身份出问题时，机器人通道仍然可用，随时可回退：
+
+| 想做什么 | 做法 | 结果 |
+|---|---|---|
+| 某平台固定用机器人 | `.env` 设 `FEISHU_IDENTITY=bot` / `DINGTALK_IDENTITY=bot`，重启后端 | 发送 / 接收都走原机器人通道，账号页显示「机器人」；已连接的本人身份保留但不使用 |
+| 只关本人接收、保留本人发送 | 设 `FEISHU_USER_RECEIVE=false` / `DINGTALK_USER_RECEIVE=false`，重启 | 接收走机器人通道，发送仍按本人身份 |
+| 临时离线演示 | 四个平台 `*_MODE=mock`（或 `start.bat mock`） | 全平台模拟，界面标「模拟」 |
+| 撤销飞书授权 | 账号页点「重新授权」覆盖，或删除令牌文件后重启 | 未连接状态；`auto` 回退机器人 |
+| 撤销钉钉登录 | 账号页点「注销」，或终端执行 `dws auth logout` | dws 未登录；`auto` 回退机器人，`user` 显式报错 |
+
+> 回退后机器人能力仍取决于原有配置：钉钉需要 `DINGTALK_CLIENT_ID` / `DINGTALK_CLIENT_SECRET` / `DINGTALK_ROBOT_CODE`，要收消息还需 `DINGTALK_STREAM=true` 或 HTTP 回调；飞书需要应用凭据与长连接 / 回调配置。具体见 [swap-accounts.md](swap-accounts.md)。
+
+---
+
+## 10. 故障排查总表
+
+| 现象 | 可能原因 | 解决 |
+|---|---|---|
+| 两个平台都显示「模拟」 | 平台 `*_MODE=mock`，或凭据不全 `auto` 回退 | 看 `/api/accounts` 的 `mode` / `missing` / `reason`；补齐凭据或显式 `real`；Mock 是合法状态 |
+| 账号页身份块显示「未连接」但发送成功 | 发送走了机器人（`auto` 下本人不可用） | 看身份块「发送」一行与 `sendHint`；想固定本人就设 `*_IDENTITY=user`（会暴露不可用错误） |
+| 已连接但收不到消息 | 飞书：权限不足 / 只读本人可见会话 / 水位基线 / 轮询间隔；钉钉：事件范围没订阅到 / dws 掉线 | 分别按 §4.6 / §5.8 排查；看后端日志的身份行与接收器日志 |
+| 发送失败「本人身份未连接」 | 显式选了本人身份但不可用 | 连接钉钉 dws / 飞书授权，或改用机器人身份 |
+| 换了 App / 换了钉钉组织后身份异常 | 飞书令牌按 App ID 校验，换 App 需重新授权；dws 换组织需 `dws auth login` / `--profile` | 重新连接；多组织用 `DWS_PROFILE` 指定 |
+| 服务启动报「飞书用户身份不可用」 | `FEISHU_IDENTITY=user` 且未授权 | 按提示授权，或改 `auto` / `bot` |
+| 页面 400「当前身份不可用」 | 新建发送指定了不可用的身份 | 改选可用身份，先完成连接 |
+| 升级后日志出现 `FEISHU_SEND_AS` 废弃提示 | 旧变量别名生效 | 改成 `FEISHU_IDENTITY`，删除旧变量 |
+| 配了 `group` / `sender` 但没生效 | 本期不支持按群 / 按人订阅（需要 dws 目标参数） | 启动日志会告警并回退默认范围；改用 `all-direct` / `at-me` / `all-group` |
+| 钉钉同一条消息出现两条（机器人一条、本人一条） | 机器人 Stream 与本人事件同时开启：两套平台消息 ID 体系，跨通道幂等键不通用 | 二选一：`DINGTALK_STREAM=false` 关机器人 Stream，或 `DINGTALK_USER_RECEIVE=false` 关本人接收（已知限制） |
+| 容器里钉钉永远回退机器人 | 容器没装 dws / 没登录 | 容器内安装并 `dws auth login --device`；详见 [deploy.md](deploy.md) |
+
+---
+
+## 11. 验证状态（诚实标注）
+
+| 项目 | 状态 |
+|---|---|
+| LinkHub 身份解析、飞书用户轮询、钉钉 dws 子进程、发送身份分流 | 已由单元测试 + 注入 fetch / 注入 runner 覆盖（以仓库测试输出为准） |
+| 飞书本人身份真实端到端（授权 → 轮询 → 入库 → 本人发送） | **待实测**：本机租户受 `21001` 限制，无法完成真实租户验证；代码与配置已就绪 |
+| 钉钉 dws 真实端到端（登录 → 个人事件 → 入库 → 本人发送） | **待实测**：需要企业管理员开启 CLI 访问并真人授权；本机 dws v1.0.68-beta.1 已安装但未登录 |
+| fake-dws 离线闭环（事件入库、幂等、本人发送回执、进程重启） | ✅ **2026-11-12 离线实测通过**（3099 端口 + 独立 `DATA_DIR` + `DWS_BIN=node scripts/fake-dws.mjs` + 仅本人身份模式）：模拟事件入库 `receivedAs=user`；回复 `delivery.mode=real / identity=user`；杀掉子进程后 1s 自动重启；进程退出无残留子进程。**不接触真实钉钉** |
+| 平台侧限制（飞书轮询延迟 / 可见范围；钉钉共创阶段 / CLI 访问 / 设备绑定） | 已按官方文档与只读探测核实，写进本文 §3 |
+
+---
+
+## 附录 A：`identity` 字段真实样例（2026-11-12 离线实测）
+
+> 采集环境：本机 `:3099` + 独立 `DATA_DIR` + `DWS_BIN=node scripts/fake-dws.mjs` + `DINGTALK_IDENTITY=user`（不配机器人凭据）——**本地桩，不是真实钉钉/飞书**；只用于说明字段结构与取值，所有值为脱敏 / 模拟。
+
+**A1. 平台整体 Mock（飞书 `FEISHU_MODE=mock`）**——`identity` 的发送/接收统一为 `mock`：
+
+```json
+{
+  "platform": "feishu",
+  "configured": true,
+  "policy": "mock",
+  "mode": "mock",
+  "identity": {
+    "policy": "auto",
+    "effectiveSend": "mock",
+    "effectiveReceive": "mock",
+    "user": {
+      "state": "not_linked",
+      "linked": false,
+      "hint": "尚未连接飞书本人身份：当前用机器人收发；推荐连接本人账号（免把机器人拉进每个群），连接后自动切换为本人",
+      "canLink": true,
+      "linkMethod": "oauth"
+    },
+    "botAvailable": true,
+    "botHint": "飞书机器人通道可用（收发）",
+    "receiveHint": "本地模拟接收（不连真实平台）",
+    "sendHint": "模拟发送（本地 Mock，界面标注「模拟发送」，不调用真实平台）"
+  }
+}
+```
+
+**A2. 仅本人身份（钉钉无机器人凭据 + fake-dws 已登录）**——`mode` 仍是 `mock`，但 `identity` 收发都是 `user`：
+
+```json
+{
+  "platform": "dingtalk",
+  "configured": false,
+  "policy": "auto",
+  "mode": "mock",
+  "identity": {
+    "policy": "user",
+    "effectiveSend": "user",
+    "effectiveReceive": "user",
+    "user": {
+      "state": "linked",
+      "linked": true,
+      "displayName": "张三（模拟）",
+      "detail": "dws v1.0.68-beta.1；档案 di***rp:fa***01（已脱敏）",
+      "hint": "已登录钉钉本人身份：发送以本人身份发出，接收走 dws 个人事件（all-direct,at-me）",
+      "canLink": true,
+      "linkMethod": "cli",
+      "loginCommand": "node <仓库>/scripts/fake-dws.mjs auth login"
+    },
+    "botAvailable": false,
+    "botHint": "钉钉机器人通道不可用：缺 DINGTALK_CLIENT_ID / DINGTALK_CLIENT_SECRET / DINGTALK_AES_TOKEN / DINGTALK_AES_KEY（可运行 pnpm run doctor 自检）",
+    "receiveHint": "本人身份通道独立于机器人通道（机器人通道当前为 Mock）：本人身份：dws 个人事件（all-direct,at-me）",
+    "sendHint": "本人身份通道独立于机器人通道（机器人通道当前为 Mock）：本人身份发送（用户授权有效）"
+  }
+}
+```
+
+**A3. `/api/health` 的身份摘要**（与 `modes` 分开：`modes` 描述机器人/既有通道，`identities` 描述本人身份）：
+
+```json
+{
+  "modes": { "feishu": "mock", "dingtalk": "mock", "wecom": "mock", "mail": "mock" },
+  "identities": {
+    "feishu": { "send": "mock", "receive": "mock" },
+    "dingtalk": { "send": "user", "receive": "user" },
+    "wecom": { "send": "mock", "receive": "mock" },
+    "mail": { "send": "mock", "receive": "mock" }
+  }
+}
+```
+
+**A4. 入库消息的身份字段**（本人身份接收 + 本人发送后）：
+
+```json
+{
+  "platform": "dingtalk",
+  "externalId": "dingtalk:fake-open-message-45-1794447105615",
+  "receivedAs": "user",
+  "status": "synced",
+  "delivery": {
+    "mode": "real",
+    "platformReply": "fake-open-task-1794447120120",
+    "identity": "user",
+    "at": "2026-11-12T01:32:00.125Z"
+  }
+}
+```
+
+> 复现方式（不碰真实账号）：`pnpm --filter @unimsg/server start` 前设置 `SERVER_PORT=3099`、`DATA_DIR=<临时目录>`、`FEISHU_MODE=mock`、`WECOM_MODE=mock`、`MAIL_MODE=mock`、`MAIL_ENABLED=false`、`DINGTALK_STREAM=false`、`DINGTALK_IDENTITY=user`、`DWS_BIN=node scripts/fake-dws.mjs`、`FAKE_DWS_STATE_FILE=<临时文件>`、`LLM_PROVIDER=mock`；再用 `Authorization: Bearer <你的 API_TOKEN>` 调 `/api/accounts`。
+
+> 文档与实现不一致时，以代码 / `.env.example` / 实际界面为准，并请提 issue 或反馈给维护者修正本文。

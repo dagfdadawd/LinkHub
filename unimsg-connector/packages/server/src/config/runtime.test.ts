@@ -11,9 +11,13 @@ import {
   parseMailAccounts,
   readPlatformCredentials,
   resolveLlmRuntime,
+  resolveFeishuScopes,
   resolveModePolicies,
   type MailAccount,
   type PlatformCredentials,
+  resolveIdentityConfig,
+  parseDingtalkEventKinds,
+  parseFeishuIdentityPolicy,
 } from './runtime';
 
 function creds(): PlatformCredentials {
@@ -42,13 +46,14 @@ function mailAccount(over: Partial<MailAccount> = {}): MailAccount {
   };
 }
 
-function runtimeOf(env: NodeJS.ProcessEnv, over: { platforms?: PlatformCredentials; mailAccounts?: MailAccount[]; mailEnabled?: boolean } = {}) {
+function runtimeOf(env: NodeJS.ProcessEnv, over: { platforms?: PlatformCredentials; mailAccounts?: MailAccount[]; mailEnabled?: boolean; mailEnabledExplicit?: boolean } = {}) {
   return buildPlatformRuntime({
     env,
     platforms: over.platforms ?? readPlatformCredentials(env),
     mailAccounts: over.mailAccounts ?? [],
     mailIssues: [],
     mailEnabled: over.mailEnabled ?? (over.mailAccounts ?? []).length > 0,
+    mailEnabledExplicit: over.mailEnabledExplicit,
     underTest: false,
   });
 }
@@ -346,4 +351,126 @@ test('LLM：不支持的 provider 明确降级，不静默当成真实', () => {
   assert.equal(r.mode, 'mock');
   assert.equal(r.ready, false);
   assert.match(r.reason, /wenxin|不支持/);
+});
+
+
+test('Mock 模式不冒充"已开启长连接"：改为"已配置但当前为 Mock、不会实际连接"', () => {
+  const mock = runtimeOf({ FEISHU_STREAM: 'true', FEISHU_MODE: 'mock', DINGTALK_STREAM: 'true', DINGTALK_MODE: 'mock' }, {});
+  const feishuWarn = mock[Platform.FEISHU].warnings.join('|');
+  assert.ok(!/已开启.*长连接/.test(feishuWarn), `mock 下不得说已开启：${feishuWarn}`);
+  assert.match(feishuWarn, /不会实际连接/);
+  const dingtalkWarn = mock[Platform.DINGTALK].warnings.join('|');
+  assert.ok(!/已开启.*长连接/.test(dingtalkWarn));
+  assert.match(dingtalkWarn, /不会实际连接/);
+
+  const real = runtimeOf({ FEISHU_STREAM: 'true', FEISHU_APP_ID: 'a', FEISHU_APP_SECRET: 'b', FEISHU_MODE: 'real' }, {});
+  assert.match(real[Platform.FEISHU].warnings.join('|'), /已开启飞书长连接/);
+});
+
+test('邮箱轮询关闭原因：显式 MAIL_ENABLED=false 与"未开启"区分文案', () => {
+  const accounts = [mailAccount()];
+  const explicit = runtimeOf({}, { mailAccounts: accounts, mailEnabled: false, mailEnabledExplicit: true });
+  assert.match(explicit[Platform.MAIL].reason, /MAIL_ENABLED=false/);
+  const implicit = runtimeOf({}, { mailAccounts: accounts, mailEnabled: false, mailEnabledExplicit: false });
+  assert.doesNotMatch(implicit[Platform.MAIL].reason, /MAIL_ENABLED=false/);
+  assert.match(implicit[Platform.MAIL].reason, /邮箱轮询未启用/);
+});
+
+
+test('resolveFeishuScopes：本人接收开启时 OAuth 必须一并申请读消息权限（否则授权后仍 99991672）', () => {
+  const auto = resolveFeishuScopes({ policy: 'auto', receive: 'auto' });
+  assert.ok(auto.includes('im:message'));
+  assert.ok(auto.includes('im:message.send_as_user'));
+  assert.ok(auto.includes('im:resource'));
+  assert.ok(auto.includes('im:message.p2p_msg:get_as_user'), 'auto 必须申请单聊读消息权限');
+  assert.ok(auto.includes('im:message.group_msg:get_as_user'), 'auto 必须申请群聊读消息权限');
+  assert.ok(auto.includes('offline_access'));
+
+  const forcedReceive = resolveFeishuScopes({ policy: 'bot', receive: true });
+  assert.ok(forcedReceive.includes('im:message.p2p_msg:get_as_user'), '显式 receive=true 也要申请');
+
+  const botOnly = resolveFeishuScopes({ policy: 'bot', receive: 'auto' });
+  assert.ok(!botOnly.includes('im:message.p2p_msg:get_as_user'), '固定机器人不需要读消息权限');
+  assert.ok(botOnly.includes('im:message.send_as_user'));
+
+  const receiveOff = resolveFeishuScopes({ policy: 'auto', receive: false });
+  assert.ok(!receiveOff.includes('im:message.group_msg:get_as_user'), '关闭本人接收时不申请读消息权限');
+});
+
+test('身份配置默认值：未设置时必须用文档默认值（clampInt 空串 bug 回归）', () => {
+  const conf = resolveIdentityConfig({});
+  assert.equal(conf.feishu.receive, 'auto');
+  assert.equal(conf.feishu.pollMs, 20_000, 'FEISHU_USER_RECEIVE_SECONDS 默认 20s');
+  assert.equal(conf.feishu.chatLimit, 20, 'FEISHU_USER_CHAT_LIMIT 默认 20');
+  assert.equal(conf.feishu.backfillHours, 0);
+  assert.equal(conf.dingtalk.policy, 'auto');
+  assert.equal(conf.dingtalk.receive, 'auto');
+  assert.deepEqual(conf.dingtalk.eventKinds, ['all-direct', 'at-me']);
+  assert.equal(conf.dingtalk.bin, 'dws');
+  assert.equal(conf.dingtalk.authTimeoutMs, 15_000, 'DWS_AUTH_TIMEOUT_MS 默认 15000');
+  assert.equal(conf.dingtalk.sendTimeoutMs, 30_000, 'DWS_SEND_TIMEOUT_MS 默认 30000');
+});
+
+test('身份配置：显式值 / 0 / 非法值 / 越界分别按契约处理', () => {
+  const warnings: string[] = [];
+  const conf = resolveIdentityConfig({
+    FEISHU_USER_RECEIVE_SECONDS: '8',
+    FEISHU_USER_CHAT_LIMIT: '7',
+    FEISHU_USER_BACKFILL_HOURS: '24',
+    DWS_AUTH_TIMEOUT_MS: '20000',
+    DWS_SEND_TIMEOUT_MS: '40000',
+  }, warnings);
+  assert.equal(conf.feishu.pollMs, 8_000);
+  assert.equal(conf.feishu.chatLimit, 7);
+  assert.equal(conf.feishu.backfillHours, 24);
+  assert.equal(conf.dingtalk.authTimeoutMs, 20_000);
+  assert.equal(conf.dingtalk.sendTimeoutMs, 40_000);
+
+  // 显式 0：轮询间隔低于最小值 → 夹到 5s 并告警；回溯 0 是合法值
+  const zero = resolveIdentityConfig({
+    FEISHU_USER_RECEIVE_SECONDS: '0',
+    FEISHU_USER_CHAT_LIMIT: '0',
+    FEISHU_USER_BACKFILL_HOURS: '0',
+    DWS_AUTH_TIMEOUT_MS: '0',
+    DWS_SEND_TIMEOUT_MS: '0',
+  }, warnings);
+  assert.equal(zero.feishu.pollMs, 5_000);
+  assert.equal(zero.feishu.chatLimit, 1);
+  assert.equal(zero.feishu.backfillHours, 0);
+  assert.equal(zero.dingtalk.authTimeoutMs, 1_000);
+  assert.equal(zero.dingtalk.sendTimeoutMs, 1_000);
+  assert.ok(warnings.some((w) => w.includes('FEISHU_USER_RECEIVE_SECONDS')));
+
+  // 非法值回退默认
+  const bad = resolveIdentityConfig({
+    FEISHU_USER_RECEIVE_SECONDS: 'abc',
+    FEISHU_USER_CHAT_LIMIT: 'x',
+    DWS_AUTH_TIMEOUT_MS: 'NaN',
+  });
+  assert.equal(bad.feishu.pollMs, 20_000);
+  assert.equal(bad.feishu.chatLimit, 20);
+  assert.equal(bad.dingtalk.authTimeoutMs, 15_000);
+
+  // 越界夹取
+  const over = resolveIdentityConfig({ FEISHU_USER_CHAT_LIMIT: '9999', DWS_SEND_TIMEOUT_MS: '999999' });
+  assert.equal(over.feishu.chatLimit, 100);
+  assert.equal(over.dingtalk.sendTimeoutMs, 600_000);
+});
+
+test('DINGTALK_USER_EVENT_KINDS：group/sender 需要目标参数 → 忽略并告警；未知值也告警', () => {
+  const warnings: string[] = [];
+  const kinds = parseDingtalkEventKinds('all-direct,group,sender,all-group,unknown-kind', warnings);
+  assert.deepEqual(kinds, ['all-direct', 'all-group']);
+  assert.ok(warnings.some((w) => w.includes('"group"') && w.includes('不支持')));
+  assert.ok(warnings.some((w) => w.includes('"sender"')));
+  assert.ok(warnings.some((w) => w.includes('unknown-kind')));
+  // 全部被过滤时回退默认，绝不静默不收消息
+  assert.deepEqual(parseDingtalkEventKinds('group,sender', []), ['all-direct', 'at-me']);
+});
+
+test('FEISHU_IDENTITY 优先；只有旧 FEISHU_SEND_AS 时继承并给废弃提示', () => {
+  const warnings: string[] = [];
+  assert.equal(parseFeishuIdentityPolicy({ FEISHU_IDENTITY: 'user', FEISHU_SEND_AS: 'bot' }, warnings), 'user');
+  assert.equal(parseFeishuIdentityPolicy({ FEISHU_SEND_AS: 'bot' }, warnings), 'bot');
+  assert.ok(warnings.some((w) => w.includes('已废弃') && w.includes('FEISHU_SEND_AS')));
 });

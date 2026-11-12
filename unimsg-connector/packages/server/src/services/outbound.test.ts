@@ -75,6 +75,23 @@ test('normalizeCompose：文本 / 纯文件 / 文本+文件都合法，双空拒
   assert.throws(() => normalizeCompose({ platform: 'feishu', text: 'hi', attachments: 'x' }), InvalidOutboundRequest);
 });
 
+test('normalizeCompose：邮箱发件账号可选，仅限邮箱平台且字符受限', () => {
+  assert.equal(normalizeCompose({ platform: 'mail', text: 'hi', mailAccount: ' work ' }).mailAccount, 'work');
+  assert.equal(normalizeCompose({ platform: 'mail', text: 'hi' }).mailAccount, undefined);
+  assert.throws(
+    () => normalizeCompose({ platform: 'feishu', text: 'hi', mailAccount: 'work' }),
+    InvalidOutboundRequest,
+  );
+  assert.throws(
+    () => normalizeCompose({ platform: 'mail', text: 'hi', mailAccount: 'a b' }),
+    InvalidOutboundRequest,
+  );
+  assert.throws(
+    () => normalizeCompose({ platform: 'mail', text: 'hi', mailAccount: 1 }),
+    InvalidOutboundRequest,
+  );
+});
+
 test('isOutboundComposed：识别主动发送的 externalId（含邮箱账号前缀形式）', () => {
   const base = {
     traceId: 't', platform: Platform.FEISHU, externalId: '',
@@ -95,4 +112,18 @@ test('sendCapabilities：四个平台都声明文本 + 文件能力并带上体�
     assert.equal(c.maxFileBytes, FILE_LIMITS.maxFileBytes);
     assert.ok(c.mode === 'mock' || c.mode === 'real');
   }
+});
+
+
+test('normalizeCompose 身份字段：只有飞书/钉钉可用 bot|user，其余平台或非法值 400 类错误', () => {
+  const feishu = normalizeCompose({ platform: 'feishu', text: 'hi', identity: 'user' });
+  assert.equal(feishu.identity, 'user');
+  const dingtalk = normalizeCompose({ platform: 'dingtalk', text: 'hi', identity: 'bot' });
+  assert.equal(dingtalk.identity, 'bot');
+  // 不传 / 空值 → undefined
+  assert.equal(normalizeCompose({ platform: 'feishu', text: 'hi' }).identity, undefined);
+  assert.equal(normalizeCompose({ platform: 'feishu', text: 'hi', identity: '' }).identity, undefined);
+  // 非法取值
+  assert.throws(() => normalizeCompose({ platform: 'feishu', text: 'hi', identity: 'robot' }), /identity 只能是 bot/);
+  assert.throws(() => normalizeCompose({ platform: 'wecom', text: 'hi', identity: 'user' }), /仅适用于飞书/);
 });

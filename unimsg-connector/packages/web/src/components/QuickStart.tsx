@@ -5,7 +5,8 @@
  * 所以这里只放三颗按钮（飞书 / 钉钉 / 企微），点一下走真实入站链路灌一条示例。
  * 纯前端 Mock 模式下不假装有平台，只给一颗「灌入演示消息」。
  *
- * 底部的键位提示是唯一的文字：它是可操作信息，不是解释文案。
+ * 2026-11 小白复盘：原来胶囊和顶部筛选标签同形同色，用户看不出可点。现在
+ * 按钮文案直接写「注入 xx 示例」，上方加一行说明——点下去会发生什么不用猜。
  */
 import { useState } from 'react';
 import { InboxOutlined, ThunderboltOutlined } from '@ant-design/icons';
@@ -47,11 +48,16 @@ export function QuickStart({
         <InboxOutlined />
       </span>
       <p className="quickstart__title">还没有收到消息</p>
+      <p className="quickstart__hint">
+        {demoMode
+          ? '点下面按钮灌入一条演示消息，立刻看到完整闭环'
+          : '点下面的平台按钮，注入一条示例消息试试（走真实入站链路，不会真的发到平台）'}
+      </p>
 
       {demoMode ? (
         <button
           type="button"
-          className="quickstart__chip"
+          className="quickstart__chip quickstart__chip--accent"
           disabled={busy !== null}
           onClick={() => void run('demo')}
         >
@@ -66,7 +72,7 @@ export function QuickStart({
               <button
                 key={platform}
                 type="button"
-                className="quickstart__chip"
+                className="quickstart__chip quickstart__chip--accent"
                 disabled={busy !== null}
                 onClick={() => void run(platform, platform)}
               >
@@ -75,7 +81,7 @@ export function QuickStart({
                   style={{ background: meta.color }}
                   aria-hidden="true"
                 />
-                {busy === platform ? '注入中…' : meta.name}
+                {busy === platform ? '注入中…' : `注入${meta.name}示例`}
               </button>
             );
           })}

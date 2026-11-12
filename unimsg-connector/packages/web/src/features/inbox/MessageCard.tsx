@@ -4,6 +4,7 @@ import { MsgStatus } from '../../types';
 import type { UnifiedMessage } from '../../types';
 import { clamp, formatRelative, PLATFORM_META } from '../../utils/format';
 import { AvatarBadge } from '../../components/AvatarBadge';
+import { IdentityTag } from '../../components/IdentityTag';
 import { PlatformGlyph } from '../../components/PlatformGlyph';
 import { PlatformTag } from '../../components/PlatformTag';
 import { StatusBadge } from '../../components/StatusBadge';
@@ -116,6 +117,12 @@ export function MessageCard({
         <div className="msg-card__row msg-card__row--meta">
           <StatusBadge status={message.status} small />
           <IntentTag intent={message.intent} />
+          {/* 身份如实标注：真实接收写「本人账号接收 / 机器人接收」；回写看 delivery.identity / Mock */}
+          {message.receivedAs && <IdentityTag role={message.receivedAs} action="receive" />}
+          {message.delivery?.mode === 'mock' && <IdentityTag role="mock" action="send" />}
+          {message.delivery?.mode === 'real' && message.delivery.identity && (
+            <IdentityTag role={message.delivery.identity} action="send" />
+          )}
           {message.needsReview && <span className="chip chip--warn">需人工确认</span>}
           {message.done && <span className="chip chip--done">已完成</span>}
 
