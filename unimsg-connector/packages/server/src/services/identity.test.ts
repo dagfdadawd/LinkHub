@@ -273,3 +273,36 @@ test('assertIdentityUsable：机器人身份不可用时给中文可操作错误
   // 不传 identity 时不校验（由连接器按 policy 解析）
   assert.doesNotThrow(() => assertIdentityUsable(Platform.DINGTALK, undefined));
 });
+
+test('NEW-P2-3 机器人不可用提示：本人未连接时引导先连接，已连接时才建议改用 identity=user', async () => {
+  // 未连接本人身份：不能建议「改用 identity=user」（用户选不了）
+  const dir = tempDir();
+  process.env.FAKE_DWS_STATE_FILE = join(dir, 'state.json');
+  process.env.FAKE_DWS_AUTHENTICATED = 'false';
+  config.identity.dingtalk.bin = `node ${FAKE_DWS}`;
+  config.identity.dingtalk.policy = 'auto';
+  setRuntime(Platform.DINGTALK, {
+    mode: 'real', policy: 'real', canSend: false, canReceive: false, missing: ['DINGTALK_CLIENT_ID'],
+  });
+  resetDingtalkPersonalClientCache();
+  resetIdentityCaches();
+  await dingtalkPersonalClient().authStatus({ force: true });
+  assert.throws(
+    () => assertIdentityUsable(Platform.DINGTALK, 'bot'),
+    (e: unknown) => e instanceof IdentityUnavailableError
+      && /机器人通道当前不可用/.test(e.message)
+      && /先在「平台账号」页连接本人身份/.test(e.message)
+      && !/或改用 identity=user 以本人身份发送/.test(e.message),
+  );
+
+  // 已连接本人身份：保留「或改用 identity=user」原建议
+  delete process.env.FAKE_DWS_AUTHENTICATED;
+  resetDingtalkPersonalClientCache();
+  resetIdentityCaches();
+  await dingtalkPersonalClient().authStatus({ force: true });
+  assert.throws(
+    () => assertIdentityUsable(Platform.DINGTALK, 'bot'),
+    (e: unknown) => e instanceof IdentityUnavailableError
+      && /或改用 identity=user 以本人身份发送/.test(e.message),
+  );
+});

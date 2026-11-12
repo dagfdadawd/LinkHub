@@ -15,6 +15,7 @@ import {
 import { MsgStatus } from '../../types';
 import type { OutboundAttachment, UnifiedMessage } from '../../types';
 import { formatBytes } from '../../utils/attachments';
+import { formatSendError } from '../../utils/sendError';
 import { store } from '../../store';
 import { useAppState } from '../../hooks/useAppState';
 import { TYPE_LABEL, PLATFORM_META, deliveryLabel, conversationLabel, formatDateTime, formatRelative, shortTrace } from '../../utils/format';
@@ -90,7 +91,9 @@ export function DetailPanel({
       window.clearTimeout(cooldownTimer.current);
       cooldownTimer.current = window.setTimeout(() => setCooldown(false), 2000);
     } catch (e) {
-      toast.error(e instanceof Error ? `发送失败：${e.message}` : '发送失败，请重试');
+      toast.error(
+        formatSendError(e instanceof Error ? e.message : '发送失败，请重试', account?.identity),
+      );
     } finally {
       setSending(false);
     }
@@ -108,7 +111,9 @@ export function DetailPanel({
       await store.reply(message.traceId, retryContent);
       toast.success('已重新提交，正在重试…成功/失败会实时更新');
     } catch (e) {
-      toast.error(e instanceof Error ? `重试失败：${e.message}` : '重试失败，请稍后再试');
+      toast.error(
+        formatSendError(e instanceof Error ? e.message : '重试失败，请稍后再试', account?.identity),
+      );
     } finally {
       setSending(false);
     }

@@ -22,6 +22,7 @@ import { store } from '../store';
 import { ConnectionDot } from '../components/ConnectionDot';
 import { footerShortLabel, footerState } from '../utils/footerState';
 import { clamp } from '../utils/format';
+import { formatSendError } from '../utils/sendError';
 import { initialOf, useProfile } from '../features/settings/profile';
 import { usePreferences } from '../features/settings/preferences';
 import { SettingsModal } from '../features/settings/SettingsModal';
@@ -108,8 +109,17 @@ export function AppShell() {
   const sendFailure = state.sendFailure;
   useEffect(() => {
     if (!sendFailure) return;
-    const reason = sendFailure.reason
-      ? clamp(sendFailure.reason, 60)
+    // 失败原因若带「改用 identity=user」建议，要按该平台本人身份是否已连接来分支（NEW-P2-3）
+    const snapshot = store.getSnapshot();
+    const failedMessage = snapshot.messages.find((m) => m.traceId === sendFailure.traceId);
+    const failedAccount = failedMessage
+      ? snapshot.accounts.find((a) => a.platform === failedMessage.platform)
+      : undefined;
+    const readableReason = sendFailure.reason
+      ? formatSendError(sendFailure.reason, failedAccount?.identity)
+      : '';
+    const reason = readableReason
+      ? clamp(readableReason, 60)
       : '具体原因见消息详情或全链路回放';
     message.error(
       <span className="failure-toast">

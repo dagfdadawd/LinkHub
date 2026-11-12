@@ -70,6 +70,27 @@ export function sendBreakdown(sent?: number, sentMock?: number): SendBreakdown {
   return { total, real: total - mock, mock };
 }
 
+/**
+ * 卡片摘要里的「不可接收 / 不可发送」chip：必须和身份块口径一致（NEW-P2-1）。
+ *
+ * 之前的矛盾：摘要说的 `canReceive/canSend` 是**机器人兜底通道**的能力，
+ * 而身份块说的是**当前生效身份**。本人身份已连接时，机器人通道不可用 ≠ 收发不可用。
+ */
+export function capabilityWarning(
+  action: 'receive' | 'send',
+  available: boolean | undefined,
+  identity?: PlatformIdentityView,
+): string | undefined {
+  if (available !== false) return undefined;
+  const effective = action === 'receive' ? identity?.effectiveReceive : identity?.effectiveSend;
+  // 当前生效身份就是本人：机器人通道不可用不影响收发，身份块已经写清「接收/发送 本人」，
+  // 再挂一个「不可接收」只会自相矛盾（NEW-P2-1）。
+  if (effective === 'user') return undefined;
+  // Mock 平台 / 企业微信 / 邮箱 / 本人未连接且机器人不可用：保持原来的能力缺口提示，
+  // 「模拟」口径由身份块/通道 Tag 表达，不在能力 chip 里重复。
+  return action === 'receive' ? '不可接收' : '不可发送';
+}
+
 /** 每个平台的策略环境变量名：让用户知道界面状态由哪个变量决定（可替换性） */
 const IDENTITY_ENV: Record<string, string> = {
   [Platform.FEISHU]: 'FEISHU_IDENTITY',
@@ -281,6 +302,8 @@ export function AccountCard({
   const identity = account.identity;
   const realMode = account.mode === 'real';
   const doctor = doctorCommand(account.platform);
+  const receiveWarning = capabilityWarning('receive', account.canReceive, identity);
+  const sendWarning = capabilityWarning('send', account.canSend, identity);
 
   return (
     <Card className="account-card" data-testid={`account-card-${account.platform}`}>
@@ -314,8 +337,9 @@ export function AccountCard({
           </Tag>
         )}
         {account.policy && <span className="account-card__policy">{policyLabel(account.policy)}</span>}
-        {account.canReceive === false && <span className="chip chip--warn">不可接收</span>}
-        {account.canSend === false && <span className="chip chip--warn">不可发送</span>}
+        {/* 能力缺口 chip 跟随「生效身份」口径，避免与身份块「接收=本人」打架（NEW-P2-1） */}
+        {receiveWarning && <span className="chip chip--warn">{receiveWarning}</span>}
+        {sendWarning && <span className="chip chip--warn">{sendWarning}</span>}
         {account.reason && <span className="account-card__hint">{account.reason}</span>}
       </div>
 

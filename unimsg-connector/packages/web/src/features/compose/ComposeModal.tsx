@@ -14,6 +14,7 @@ import type { AccountInfo, MailAccountInfo } from '../../services/api';
 import { PLATFORM_META } from '../../utils/format';
 import { IdentityTag } from '../../components/IdentityTag';
 import { filesToAttachments, formatBytes, validateFiles } from '../../utils/attachments';
+import { formatSendError } from '../../utils/sendError';
 import { services, store } from '../../store';
 
 const { TextArea } = Input;
@@ -141,7 +142,8 @@ export function ComposeModal({
       onSent?.(taskId);
       onClose();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '发送失败');
+      // 后端建议「改用 identity=user」在本人身份未连接时做不到：按能力替换成去连接的指引（NEW-P2-3）
+      toast.error(formatSendError(e instanceof Error ? e.message : '发送失败', identity));
     } finally {
       setSending(false);
     }

@@ -206,4 +206,44 @@ describe('ComposeModal 发送身份（本人 / 机器人）', () => {
     await waitFor(() => expect(compose).toHaveBeenCalledTimes(1));
     expect(compose.mock.calls[0][0]).not.toHaveProperty('identity');
   });
+
+  it('NEW-P2-3：本人未连接时，后端「改用 identity=user」建议被替换成去连接的指引', async () => {
+    mockFeishuIdentity(
+      feishuIdentity(
+        { effectiveSend: 'bot', effectiveReceive: 'bot' },
+        { state: 'not_linked', linked: false, hint: '本人账号未连接。' },
+      ),
+    );
+    const { compose } = setup();
+    compose.mockRejectedValueOnce(
+      new Error(
+        '飞书机器人当前不可用：缺少 FEISHU_APP_ID / FEISHU_APP_SECRET。请补齐凭据后重试，或改用 identity=user 以本人身份发送',
+      ),
+    );
+
+    // 等身份块渲染后再发送，确保 identity 已下发（catch 分支据此判断 linked）
+    await screen.findByText('机器人发送');
+    await fillAndSend();
+
+    expect(
+      await screen.findByText(/本人身份未连接，连接后可用本人身份发送/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/改用 identity=user/)).toBeNull();
+    // 原始可执行的部分（补齐凭据）保留
+    expect(screen.getByText(/请补齐凭据后重试/)).toBeInTheDocument();
+  });
+
+  it('NEW-P2-3：本人已连接时保留后端原建议（此时建议可执行）', async () => {
+    mockFeishuIdentity(feishuIdentity({ effectiveSend: 'bot', effectiveReceive: 'user' }));
+    const { compose } = setup();
+    compose.mockRejectedValueOnce(
+      new Error('请补齐机器人凭据后重试，或改用 identity=user 以本人身份发送'),
+    );
+
+    await screen.findByRole('radio', { name: '机器人' });
+    await fillAndSend();
+
+    expect(await screen.findByText(/改用 identity=user/)).toBeInTheDocument();
+    expect(screen.queryByText(/本人身份未连接，连接后可用本人身份发送/)).toBeNull();
+  });
 });

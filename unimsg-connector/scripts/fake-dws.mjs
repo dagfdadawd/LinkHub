@@ -28,7 +28,10 @@
  *   FAKE_DWS_AUTHENTICATED   true/false：强制覆盖登录态（不落盘）
  *   FAKE_DWS_FAIL            not-logged-in | permission | validation：模拟失败
  *   FAKE_DWS_EVENT_INTERVAL_MS  事件间隔（默认 3000ms，首条 300ms）
- *   FAKE_DWS_MAX_EVENTS      无 --max-events 时的事件条数上限（默认不限）
+ *   事件条数：未显式 --max-events 且未设 FAKE_DWS_MAX_EVENTS 时，默认推 5 条示例事件后
+ *   **停止推流但进程保持存活**（离线演示不会无限灌重复消息）；显式 --max-events=N 或
+ *   FAKE_DWS_MAX_EVENTS=N 时行为不变（N=0 表示不限）。
+ *   FAKE_DWS_MAX_EVENTS      无 --max-events 时的事件条数上限（默认 5，0 = 不限）
  *   FAKE_DWS_SENT_LOG        发送记录 NDJSON（默认状态文件旁 fake-dws-sent.ndjson）
  *   FAKE_DWS_LOGIN_DELAY_MS  登录后多久变为已登录（默认 1200ms，测试可设 0）
  *
@@ -39,6 +42,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 const VERSION = 'v1.0.68-beta.1';
+/** 未显式指定条数时的默认示例事件数（覆盖 2–3 个模板后停止推流，避免演示时无限重复） */
+const DEFAULT_EVENT_LIMIT = 5;
 const argv = process.argv.slice(2);
 
 /** 全局 flag：存在于任意位置（与 cobra 一致） */
@@ -279,8 +284,16 @@ if (argv[0] === 'event' && (argv[1] === '+listen-im' || argv[1] === 'consume')) 
     sender: 'user_im_message_receive_user',
   }[kind] ?? 'user_im_message_receive_o2o_all';
   const intervalMs = Math.max(100, Number(process.env.FAKE_DWS_EVENT_INTERVAL_MS ?? '3000'));
-  const maxEventsRaw = Number(flagValue('max-events', process.env.FAKE_DWS_MAX_EVENTS ?? '0'));
-  const maxEvents = Number.isFinite(maxEventsRaw) && maxEventsRaw > 0 ? Math.floor(maxEventsRaw) : 0;
+  const maxEventsFlag = flagValue('max-events', '');
+  const maxEventsEnv = (process.env.FAKE_DWS_MAX_EVENTS ?? '').trim();
+  const maxEventsExplicit = maxEventsFlag !== '' || maxEventsEnv !== '';
+  const maxEventsRaw = Number(maxEventsFlag !== '' ? maxEventsFlag : (maxEventsEnv || '0'));
+  // 未显式指定 → 默认推 DEFAULT_EVENT_LIMIT 条后停止推流（进程保持存活）；
+  // 显式指定 → 行为不变：N>0 推 N 条后退出，N=0 不限。
+  const maxEvents = Number.isFinite(maxEventsRaw) && maxEventsRaw > 0
+    ? Math.floor(maxEventsRaw)
+    : (maxEventsExplicit ? 0 : DEFAULT_EVENT_LIMIT);
+  const exitAfterLimit = maxEventsExplicit;
   const durationRaw = flagValue('duration', '');
   const durationMs = parseDurationMs(durationRaw);
 
@@ -335,7 +348,13 @@ if (argv[0] === 'event' && (argv[1] === '+listen-im' || argv[1] === 'consume')) 
     if (seq % 5 === 0) process.stdout.write(`WARN: fake-dws 诊断行（非 JSON，应被忽略）seq=${seq}\n`);
     process.stdout.write(`${JSON.stringify(line)}\n`);
     if (maxEvents > 0 && seq >= maxEvents) {
-      stop(0);
+      if (exitAfterLimit) {
+        stop(0);
+        return;
+      }
+      // 默认示例事件推完：停止推流但进程保持存活（等 SIGTERM / --duration），
+      // 这样 LinkHub 的个人事件子进程不会每 1.2–3s 灌一条重复消息。
+      process.stderr.write(`[event] 已推送 ${seq} 条示例事件（fake-dws 默认上限，进程保持存活；如需更多请传 --max-events）\n`);
       return;
     }
     timer = setTimeout(emit, intervalMs);
