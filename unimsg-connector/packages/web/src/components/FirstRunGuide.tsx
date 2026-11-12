@@ -159,14 +159,16 @@ export function FirstRunGuide({
   const connectionMeta = CONNECTION_META[connection];
   const smokeCommand = `python scripts/smoke.py ${smokeBaseUrl(apiBase)}`;
 
-  /** 需要管理员 / 安装才能推进的平台（折叠展示数量，不暴露 env 键名） */
-  const adminPlatforms = PLATFORM_ORDER.map((platform) => {
+  /** 缺配置的平台（折叠展示数量，不暴露 env 键名） */
+  const platformsMissingConfig = PLATFORM_ORDER.map((platform) => {
     const account = accounts.find((item) => item.platform === platform);
     const missing = account?.missing ?? [];
     return { platform, count: missing.length, names: humanizeMissingKeys(missing) };
   }).filter((item) => item.count > 0);
-  // 与首启横幅统一口径：管理员数量优先用 onboarding steps 的 needs_admin 计数，
-  // 不能把可自助的邮箱/钉钉也硬算进「需管理员」。
+  // 只有飞书/企业微信需要企业管理员开通；邮箱/钉钉可自助（添加账号 / 本人扫码登录）。
+  // 与首启横幅统一口径：管理员数量优先用 onboarding steps 的 needs_admin 计数。
+  const adminPlatforms = platformsMissingConfig.filter((item) => item.platform === 'feishu' || item.platform === 'wecom');
+  const selfServicePlatforms = platformsMissingConfig.filter((item) => item.platform === 'mail' || item.platform === 'dingtalk');
   const adminPlatformCount = needsAdminCount ?? adminPlatforms.length;
 
   const handleDismiss = () => {
@@ -217,10 +219,10 @@ export function FirstRunGuide({
               </span>
             );
           })}
-          {adminPlatformCount > 0 || adminPlatforms.length > 0 ? (
+          {adminPlatformCount > 0 || adminPlatforms.length > 0 || selfServicePlatforms.length > 0 ? (
             <details className="first-run-guide__admin" data-testid="first-run-admin-config">
               <summary>
-                需要管理员配置（{adminPlatformCount} 个平台）
+                {adminPlatformCount > 0 ? `需要管理员配置（${adminPlatformCount} 个平台）` : '还缺账号配置'}
                 {(needsAuthCount ?? 0) > 0
                   ? ` · 另有 ${needsAuthCount} 项可自己登录/添加`
                   : ''}
@@ -232,6 +234,12 @@ export function FirstRunGuide({
                     ——需要企业管理员在平台后台开通；也可以把「连接账号」里的清单发给管理员。
                   </li>
                 ))}
+                {selfServicePlatforms.length > 0 ? (
+                  <li>
+                    {selfServicePlatforms.map((item) => PLATFORM_META[item.platform].name).join('、')}
+                    ：可以自己添加/登录（打开「连接账号」按卡片操作即可；邮箱只需授权码，钉钉需企业已开启 CLI 访问）。
+                  </li>
+                ) : null}
               </ul>
             </details>
           ) : null}
