@@ -533,3 +533,45 @@ test('NEW-P2-2 fake-dws 默认只推 5 条示例事件后停止推流（进程�
   assert.equal(explicit.lines.length, 2);
   assert.equal(explicit.code, 0);
 });
+
+
+test('NEW-P2-2 默认模式推完 5 条后进程必须保持存活（无 pending handle 会 exit 0 → 监管器反复重启）', async () => {
+  setFakeEnv({ FAKE_DWS_EVENT_INTERVAL_MS: '40' });
+  delete process.env.FAKE_DWS_MAX_EVENTS;
+  const child = spawn(process.execPath, [
+    FAKE_DWS, 'event', '+listen-im', '--kind', 'all-direct', '--events', 'message', '-f', 'ndjson',
+  ], {
+    cwd: process.cwd(),
+    env: process.env,
+    windowsHide: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let buf = '';
+  const lines: string[] = [];
+  let stderr = '';
+  child.stdout.on('data', (d) => {
+    buf += String(d);
+    for (;;) {
+      const i = buf.indexOf('\n');
+      if (i < 0) break;
+      const line = buf.slice(0, i);
+      buf = buf.slice(i + 1);
+      if (line.trim().startsWith('{')) lines.push(line);
+    }
+  });
+  child.stderr.on('data', (d) => { stderr += String(d); });
+  const closed = new Promise<number | null>((resolve) => child.on('close', (code) => resolve(code)));
+  try {
+    // 5 条 × 40ms ≈ 200ms + 首条 300ms 延迟；等 1.2s 后应「已推完但还活着」
+    await new Promise((r) => setTimeout(r, 1_200));
+    assert.equal(lines.length, 5, `默认应只推 5 条，实际 ${lines.length}`);
+    assert.equal(child.exitCode, null, '推完默认上限后进程必须保持存活（exitCode=null）');
+    assert.match(stderr, /默认上限/);
+  } finally {
+    child.kill('SIGTERM');
+  }
+  const code = await closed;
+  // Windows 上 Node 的 kill('SIGTERM') 实际是 TerminateProcess（无 POSIX 信号语义），
+  // close 回调拿到 code=null / signal='SIGTERM'；POSIX 下才是 exit 0。两者都算「已退出」。
+  assert.ok(code === 0 || code === null, `SIGTERM 后进程应退出（实际 code=${code}）`);
+});

@@ -312,12 +312,16 @@ if (argv[0] === 'event' && (argv[1] === '+listen-im' || argv[1] === 'consume')) 
   ];
   let seq = 0;
   let timer;
+  /** 默认示例事件推完后的保活 handle：没有 pending handle 时 Node 会直接退出， */
+  /** 导致 LinkHub 监管器把子进程当成崩溃、按退避反复重启（验收 FAIL #3）。 */
+  let keepAlive;
   let finished = false;
   const stop = (code = 0) => {
     if (finished) return;
     finished = true;
     if (timer) clearTimeout(timer);
     if (durationTimer) clearTimeout(durationTimer);
+    if (keepAlive) clearInterval(keepAlive);
     process.exit(code);
   };
   const emit = () => {
@@ -352,8 +356,10 @@ if (argv[0] === 'event' && (argv[1] === '+listen-im' || argv[1] === 'consume')) 
         stop(0);
         return;
       }
-      // 默认示例事件推完：停止推流但进程保持存活（等 SIGTERM / --duration），
-      // 这样 LinkHub 的个人事件子进程不会每 1.2–3s 灌一条重复消息。
+      // 默认示例事件推完：停止推流但**进程必须保持存活**（等 SIGTERM / --duration），
+      // 否则 Node 没有 pending handle 会立即 exit(0)，LinkHub 监管器会当成崩溃反复重启。
+      // 用 setInterval 做保活（不 unref）；stop() 里清理。
+      if (!keepAlive) keepAlive = setInterval(() => {}, 1 << 30);
       process.stderr.write(`[event] 已推送 ${seq} 条示例事件（fake-dws 默认上限，进程保持存活；如需更多请传 --max-events）\n`);
       return;
     }
