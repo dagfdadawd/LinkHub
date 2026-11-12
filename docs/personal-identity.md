@@ -385,7 +385,7 @@ DINGTALK_IDENTITY=user
 ```
 
 - fake-dws 是**有状态的本地桩**：默认视为**已登录**（展示名 `张三（模拟）`）；`FAKE_DWS_AUTHENTICATED=false` 或先执行 `node scripts/fake-dws.mjs auth logout` 可演示「未登录 → auto 回退机器人」；`node scripts/fake-dws.mjs auth login` 可模拟登录成功；可用 `FAKE_DWS_STATE_FILE=<路径>` 指定隔离的登录状态文件，避免上一次演示的登录态残留；
-- 它支持 `version` / `auth status --readonly --format json` / `profile list --format json` / `contact user get-self -f json`（返回本人 `openDingTalkId`，真实 dws 用它做「过滤自己发的消息」；fake 下返回模拟本人）/ `event +listen-im --kind <k> --events message --flatten -f ndjson`（长驻输出模拟事件，收到 SIGTERM 退出；每隔 5 条混入一行非 JSON 诊断，验证容错）/ `chat message send` / `chat message reply`（返回与真实 dws 同形状的成功 JSON，并把发送记录写到本地 NDJSON）；`FAKE_DWS_FAIL=not-logged-in|permission|validation` 可复现失败分支；退出码与真实 dws 对齐（0 成功 / 2 用法 / 3 校验 / 5 未登录）；
+- 它支持 `version` / `auth status --readonly --format json` / `profile list --format json` / `contact user get-self -f json`（返回本人 `openDingTalkId`，真实 dws 用它做「过滤自己发的消息」；fake 下返回模拟本人）/ `event +listen-im --kind <k> --events message --flatten -f ndjson`（长驻输出模拟事件，收到 SIGTERM 退出；**默认只推 5 条示例事件后停止推流、进程保持存活**，避免离线演示把收件箱灌成重复消息；可用 `--max-events N` 或 `FAKE_DWS_MAX_EVENTS=N` 显式控制，`0`=不限；每隔 5 条混入一行非 JSON 诊断，验证容错）/ `chat message send` / `chat message reply`（返回与真实 dws 同形状的成功 JSON，并把发送记录写到本地 NDJSON）；`FAKE_DWS_FAIL=not-logged-in|permission|validation` 可复现失败分支；退出码与真实 dws 对齐（0 成功 / 2 用法 / 3 校验 / 5 未登录）；
 - **fake 下能跑不代表真实可用**：fake-dws 对 `group` / `sender` 不做目标参数校验；而 LinkHub 的配置解析会**忽略这两个范围并告警**（本期不支持按群 / 按人订阅）——不要用 fake 的现象推断真实通道行为。
 
 - 启动后账号页钉钉卡片应显示「已连接本人账号」与 dws 档案展示名（动态来源是本地桩），个人事件子进程会输出模拟事件并入库，回复会走桩发送并返回成功回执；
