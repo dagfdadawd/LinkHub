@@ -20,7 +20,7 @@ import { RateLimiter } from './rateLimiter';
 import { decidePlatformEvent } from './sync';
 import { writeTrace } from '../core/loop-log';
 import { counters } from '../core/metrics';
-import { config } from '../config';
+import { config, modeOf } from '../config';
 import { describeAttachments } from './outbound';
 import { assertIdentityUsable, ensureIdentityProbed } from './identity';
 
@@ -323,9 +323,16 @@ export class MessageService {
       conversationType = recent?.conversation?.type ?? conversationType;
     }
     if (!conversationId) {
-      throw new Error(
-        `向 ${req.platform} 发送缺少目标会话：请填写 conversationId，或先让该平台收到一条消息`,
-      );
+      if (modeOf(req.platform) === 'mock') {
+        // Mock 模式（演示/白号）：允许「新建发送」直接演示，不要求客户先拿到真实会话 ID。
+        // 用固定演示会话 mock:demo，界面与回放都如实标「模拟发送」，绝不假装真实送达。
+        conversationId = 'mock:demo';
+        conversationType = conversationType ?? 'p2p';
+      } else {
+        throw new Error(
+          `向 ${req.platform} 发送缺少目标会话：请在收件箱打开一条消息点「回复」，或填写会话 ID（conversationId）后重试`,
+        );
+      }
     }
 
     // 邮箱的发件账号由 mailMeta.account / externalId 前缀决定：

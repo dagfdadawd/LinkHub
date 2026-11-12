@@ -2,9 +2,10 @@
  * 钉钉「本人身份」接收：dws 个人事件长连接子进程监管。
  *
  * 每个事件范围（`DINGTALK_USER_EVENT_KINDS`）起一个子进程：
- *   `dws event +listen-im --kind <kind> --events message --flatten -f ndjson -y`
+ *   `dws event +listen-im --kind <kind> --events message -f ndjson -y`
  * 契约依据 dws v1.0.68-beta.1 `dws event consume --help` / `event +listen-im --help`：
- *  - 默认输出 transport envelope（type/event_type/data/headers），`--flatten` 后业务字段在 payload；
+ *  - 默认输出 transport envelope（type/event_type/data/headers），其中 **data 是 JSON 字符串**，
+ *    由 parseEventLine 再解析；`--flatten` 只属于 event consume/schema，+listen-im 不支持（传了会 exit 3）；
  *  - stderr 会打就绪行 `[event] ready ...`，诊断信息也走 stderr —— **stderr 不算错误**；
  *  - 停机用 SIGTERM（或关 stdin）；**不要 kill -9**（会跳过服务端退订、泄漏订阅）。
  *
@@ -47,7 +48,10 @@ export function restartDelay(attempt: number): number {
 
 /** 构造 listen 参数（供单测断言；--profile 由运行器统一追加） */
 export function buildListenArgs(kind: string): string[] {
-  return ['event', '+listen-im', '--kind', kind, '--events', 'message', '--flatten', '-f', 'ndjson', '-y'];
+  // 真实 dws v1.0.68：+listen-im 不支持 --flatten（只属于 event consume/schema），
+  // 传了会 exit 3 "unknown flag: --flatten" 导致子进程反复重启、一条事件都收不到（task-13 P0）。
+  // 默认输出 transport envelope，业务字段在 data（JSON 字符串）里，由解析层处理。
+  return ['event', '+listen-im', '--kind', kind, '--events', 'message', '-f', 'ndjson', '-y'];
 }
 
 /** 从一行 stdout 里解析事件：非 JSON/日志行返回 null（调用方计数） */
@@ -206,11 +210,11 @@ export class DingtalkPersonalStream {
       this.log(`[dingtalk-user] 本次接收身份为「${view.effectiveReceive === 'bot' ? '机器人' : '模拟'}」，跳过本人身份事件订阅；${view.user.hint}`);
       return;
     }
-    // best-effort：本人 openDingTalkId（账号页预热阶段已尝试拉取，这里只读缓存）
+    // best-effort：本人 openDingTalkId（账号页预热阶段已尝试拉取，这里只读缓存）。
+    // 真实 dws v1.0.68 的 contact user get-self 不返回 openDingTalkId（只有 userId/orgUserName），
+    // 且个人事件目录本身只推「收到」的消息、不含本人已发送消息，因此拿不到时不做自环过滤即可，
+    // 属于正常情况，**不 warn**（避免每次重启都刷同一条警告）。
     this.selfOpenDingtalkId = dingtalkPersonalClient().peekSelfOpenDingtalkId();
-    if (!this.selfOpenDingtalkId) {
-      this.warn('[dingtalk-user] 未取得本人 openDingTalkId，无法过滤自己发出的消息（不影响接收；可运行 pnpm run doctor --platform=dingtalk 自检）');
-    }
     for (const channel of this.channels) this.spawnChannel(channel);
   }
 
@@ -228,7 +232,9 @@ export class DingtalkPersonalStream {
         cwd: MONOREPO_ROOT,
         env: process.env,
         windowsHide: true,
-        stdio: ['ignore', 'pipe', 'pipe'],
+        // stdin 必须是 pipe：真实 dws 在 Windows 上收不到 SIGTERM（TerminateProcess 来不及退订），
+        // 官方建议「关 stdin」优雅停机（会注销 event 订阅），见 killChildTree。
+        stdio: ['pipe', 'pipe', 'pipe'],
       });
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
@@ -361,8 +367,9 @@ export class DingtalkPersonalStream {
 }
 
 /**
- * 终止子进程：先 SIGTERM（dws 会优雅退订），超时后 Windows 用 taskkill /T /F，
- * 其它平台 SIGKILL。绝不残留。
+ * 终止子进程：**先关 stdin**（真实 dws 官方推荐的优雅停机方式，会注销 event 订阅；
+ * Windows 上 SIGTERM 实际是 TerminateProcess，dws 来不及退订），非 Windows 同时补 SIGTERM；
+ * 超时后 Windows 用 taskkill /T /F、其它平台 SIGKILL。绝不残留。
  */
 export function killChildTree(child: SpawnedProcessLike, timeoutMs = 5_000): Promise<void> {
   return new Promise((resolve) => {
@@ -377,11 +384,34 @@ export function killChildTree(child: SpawnedProcessLike, timeoutMs = 5_000): Pro
       resolve();
     };
     child.once('exit', finish);
-    try {
-      child.kill('SIGTERM');
-    } catch {
-      finish();
-      return;
+
+    // 1) 关 stdin：dws 收到 EOF 后优雅退出并注销订阅（实测 consume --help 的停机建议）
+    let stdinClosed = false;
+    const stdin = child.stdin as (NodeJS.WritableStream & { writableEnded?: boolean; end?: () => void }) | null | undefined;
+    if (stdin && typeof stdin.end === 'function' && !stdin.writableEnded) {
+      try {
+        stdin.end();
+        stdinClosed = true;
+      } catch { /* 已关闭 */ }
+    }
+    // 2) 非 Windows 再补 SIGTERM（POSIX 真实信号，dws 同样会优雅退订）
+    if (process.platform !== 'win32') {
+      try {
+        child.kill('SIGTERM');
+      } catch {
+        if (!stdinClosed) {
+          finish();
+          return;
+        }
+      }
+    } else if (!stdinClosed) {
+      // 没有 stdin 可关（旧桩/异常情况）：退回原来的 SIGTERM
+      try {
+        child.kill('SIGTERM');
+      } catch {
+        finish();
+        return;
+      }
     }
     timer = setTimeout(() => {
       const pid = child.pid;

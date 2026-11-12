@@ -1,0 +1,2035 @@
+{
+  "env": {
+    "front": "http://127.0.0.1:5174",
+    "api": "http://127.0.0.1:3003"
+  },
+  "bannerText": "首次使用：先连接你自己的账号\n邮箱、钉钉、飞书、企业微信逐项连接；不用把机器人拉进群。其中 2 项需管理员开通、2 项可自己登录/添加。\n去连接账号\n先体验演示\n稍后再说",
+  "guideSummary": "需要管理员配置（2 个平台） · 另有 2 项可自己登录/添加",
+  "guideAdminExpanded": "需要管理员配置（2 个平台） · 另有 2 项可自己登录/添加\n飞书：2 项待配置（飞书 App ID、飞书 App Secret） ——需要企业管理员在平台后台开通；也可以把「连接账号」里的清单发给管理员。\n企业微信：5 项待配置（企业微信 Corp ID、企业微信 Secret、企业微信 Agent ID、企业微信 Token、企业微信 EncodingAESKey） ——需要企业管理员在平台后台开通；也可以把「连接账号」里的清单发给管理员。\n钉钉、邮箱：可以自己添加/登录（打开「连接账号」按卡片操作即可；邮箱只需授权码，钉钉需企业已开启 CLI 访问）。",
+  "inbox": {
+    "restart": false,
+    "envWarn": false
+  },
+  "dismissClick": {
+    "ok": true,
+    "tag": "BUTTON",
+    "text": "稍后再说"
+  },
+  "bannerAfterDismiss": false,
+  "onboardedFlag": "1",
+  "bannerAfterReload": false,
+  "guideAfterReload": true,
+  "connectHints": {
+    "restartBanner": false,
+    "pnpm": false,
+    "envModified": false,
+    "footerEnv": true,
+    "awkwardDeploy": true
+  },
+  "accountsHints": {
+    "envModified": false,
+    "restart": true,
+    "saved": false
+  },
+  "aboutText": "设置\n 个人资料\n 外观\n 消息\n 关于\n版本\nv1.0.0\n接口地址\nhttp://127.0.0.1:3003\n本地后端\n服务已连接\n账号\n0/4 已就绪（不代表已连真实平台）\n清除本地数据\n恢复默认设置\n重新显示首次使用引导\n设置会立即生效，并保存在本机浏览器。\n完成",
+  "about": {
+    "localBackend": true,
+    "accounts": true
+  },
+  "apiBefore": {
+    "ok": true,
+    "data": {
+      "version": 1,
+      "identity": {
+        "feishu": {
+          "source": "none",
+          "configured": false,
+          "envKey": "FEISHU_IDENTITY",
+          "label": "飞书收发身份策略"
+        },
+        "dingtalk": {
+          "source": "none",
+          "configured": false,
+          "envKey": "DINGTALK_IDENTITY",
+          "label": "钉钉收发身份策略"
+        },
+        "userReceive": {
+          "source": "none",
+          "configured": false,
+          "envKey": "FEISHU_USER_RECEIVE",
+          "label": "本人身份接收开关"
+        }
+      },
+      "modes": {
+        "feishu": {
+          "source": "none",
+          "configured": false,
+          "envKey": "FEISHU_MODE",
+          "label": "飞书运行模式"
+        },
+        "dingtalk": {
+          "source": "none",
+          "configured": false,
+          "envKey": "DINGTALK_MODE",
+          "label": "钉钉运行模式"
+        },
+        "wecom": {
+          "source": "none",
+          "configured": false,
+          "envKey": "WECOM_MODE",
+          "label": "企业微信运行模式"
+        },
+        "mail": {
+          "source": "none",
+          "configured": false,
+          "envKey": "MAIL_MODE",
+          "label": "邮箱运行模式"
+        }
+      },
+      "llm": {
+        "provider": {
+          "source": "none",
+          "configured": false,
+          "envKey": "LLM_PROVIDER",
+          "label": "AI 模型服务商"
+        },
+        "apiKey": {
+          "source": "none",
+          "configured": false,
+          "envKey": "LLM_API_KEY",
+          "label": "AI 模型 API Key"
+        },
+        "baseUrl": {
+          "source": "none",
+          "configured": false,
+          "envKey": "LLM_BASE_URL",
+          "label": "AI 模型 Base URL"
+        },
+        "model": {
+          "source": "none",
+          "configured": false,
+          "envKey": "LLM_MODEL",
+          "label": "AI 模型名称"
+        }
+      },
+      "platforms": {
+        "feishu": {
+          "fields": {
+            "appId": {
+              "source": "none",
+              "configured": false,
+              "envKey": "FEISHU_APP_ID",
+              "label": "飞书 App ID"
+            },
+            "appSecret": {
+              "source": "none",
+              "configured": false,
+              "envKey": "FEISHU_APP_SECRET",
+              "label": "飞书 App Secret"
+            },
+            "verifyToken": {
+              "source": "none",
+              "configured": false,
+              "envKey": "FEISHU_VERIFY_TOKEN",
+              "label": "飞书 Verification Token"
+            },
+            "encryptKey": {
+              "source": "none",
+              "configured": false,
+              "envKey": "FEISHU_ENCRYPT_KEY",
+              "label": "飞书 Encrypt Key"
+            },
+            "stream": {
+              "source": "none",
+              "configured": false,
+              "envKey": "FEISHU_STREAM",
+              "label": "飞书长连接"
+            }
+          },
+          "missing": [
+            "FEISHU_APP_ID",
+            "FEISHU_APP_SECRET"
+          ],
+          "configured": false
+        },
+        "dingtalk": {
+          "fields": {
+            "clientId": {
+              "source": "none",
+              "configured": false,
+              "envKey": "DINGTALK_CLIENT_ID",
+              "label": "钉钉 Client ID（AppKey）"
+            },
+            "clientSecret": {
+              "source": "none",
+              "configured": false,
+              "envKey": "DINGTALK_CLIENT_SECRET",
+              "label": "钉钉 Client Secret（AppSecret）"
+            },
+            "robotCode": {
+              "source": "none",
+              "configured": false,
+              "envKey": "DINGTALK_ROBOT_CODE",
+              "label": "钉钉 Robot Code"
+            },
+            "stream": {
+              "source": "none",
+              "configured": false,
+              "envKey": "DINGTALK_STREAM",
+              "label": "钉钉 Stream 长连接"
+            },
+            "aesToken": {
+              "source": "none",
+              "configured": false,
+              "envKey": "DINGTALK_AES_TOKEN",
+              "label": "钉钉 AES Token"
+            },
+            "aesKey": {
+              "source": "none",
+              "configured": false,
+              "envKey": "DINGTALK_AES_KEY",
+              "label": "钉钉 AES Key"
+            }
+          },
+          "missing": [
+            "DINGTALK_CLIENT_ID",
+            "DINGTALK_CLIENT_SECRET"
+          ],
+          "configured": false
+        },
+        "wecom": {
+          "fields": {
+            "corpId": {
+              "source": "none",
+              "configured": false,
+              "envKey": "WECOM_CORP_ID",
+              "label": "企业微信 Corp ID"
+            },
+            "agentId": {
+              "source": "none",
+              "configured": false,
+              "envKey": "WECOM_AGENT_ID",
+              "label": "企业微信 Agent ID"
+            },
+            "secret": {
+              "source": "none",
+              "configured": false,
+              "envKey": "WECOM_SECRET",
+              "label": "企业微信 Secret"
+            },
+            "token": {
+              "source": "none",
+              "configured": false,
+              "envKey": "WECOM_TOKEN",
+              "label": "企业微信 Token"
+            },
+            "aesKey": {
+              "source": "none",
+              "configured": false,
+              "envKey": "WECOM_AES_KEY",
+              "label": "企业微信 EncodingAESKey"
+            }
+          },
+          "missing": [
+            "WECOM_CORP_ID",
+            "WECOM_AGENT_ID",
+            "WECOM_SECRET"
+          ],
+          "configured": false
+        }
+      },
+      "restartRequired": false,
+      "envFile": null,
+      "settingsFile": {
+        "path": "linkhub-config.json",
+        "present": false,
+        "mtime": null
+      }
+    }
+  },
+  "statusBefore": {
+    "ok": true,
+    "data": {
+      "available": true,
+      "version": "v1.0.68-beta.1",
+      "authenticated": false,
+      "state": "not_linked",
+      "detail": "dws v1.0.68-beta.1",
+      "hint": "尚未登录钉钉本人身份：当前用机器人收发；推荐连接本人账号（免把机器人拉进每个群），登录后自动切换为本人",
+      "loginCommand": "C:\\Users\\zx\\AppData\\Local\\Temp\\linkhub-r3-sandbox\\unimsg-connector\\tools\\dws.exe auth login",
+      "loginInProgress": false
+    }
+  },
+  "dingtalkBefore": {
+    "needsAuth": true,
+    "configureEntry": true
+  },
+  "dingtalkClick": {
+    "ok": true,
+    "tag": "BUTTON",
+    "text": "用钉钉本人账号登录（推荐，无需机器人应用）"
+  },
+  "modalUp": true,
+  "modalReady": true,
+  "modalText": "连接钉钉本人账号\n钉钉当前是 Mock 运行态：可以先登录本人账号\n没有企业机器人应用也能用本人身份：登录后到「连接账号」页点「用钉钉本人账号登录（推荐）」，会先切换身份模式（热应用、无需重启），再用浏览器完成授权。Mock 下不会真实收发，也不会假成功。\n不用把机器人拉进群：登录后，消息以你自己的钉钉账号接收（私聊 / @我）， 回复也以你本人发出。\n登录的是本机 dws 官方 CLI：授权在钉钉官方页面完成，LinkHub 只读取 「已登录 / 未登录」状态，不接触你的密码。\n随时可回退：不登录或注销后，消息会自动走机器人通道兜底；也可以把 身份策略已被部署配置固定为「只用机器人」。\n尚未登录钉钉本人身份：当前用机器人收发；推荐连接本人账号（免把机器人拉进每个群），登录后自动切换为本人\n用浏览器登录（推荐）\n已尝试在本机打开浏览器。如果没有弹出授权页，点下面的「打开授权页」；授权完成后本弹窗会自动刷新为已连接。\n授权链接：\n打开授权页\nhttps://login.dingtalk.com/oauth2/auth?caller=dws&callerUmt=P1gA5pFP3GKmN1JtPlxKFcGqZvc6-P3HiKZVyfblalQe-DNVusPsMI_oNcnQdarIc0Jo8m_f14w-ejxTnf2UrxiB&client_id=dingmbw5n9ktkkbbjv3g&prompt=consent&redirect_uri=http%3A%2F%2F127.0.0.1%3A64218%2Fcallback&response_type=code&scope=openid+corpid\n没反应？直接点这里打开授权链接\n授权地址是运行 LinkHub 这台机器的 127.0.0.1 回调，必须在同一台机器的浏览器打开；远程 / 无浏览器请改用设备码登录。\n终端等价命令：\nC:\\Users\\zx\\AppData\\Local\\Temp\\linkhub-r3-sandbox\\unimsg-connector\\tools\\dws.exe auth login\n正在自动检测登录状态（每 2 秒一次）…\n我已登录，刷新状态\n改用设备码登录\n重新发起\n关闭",
+  "apiWhileModal": {
+    "ok": true,
+    "data": {
+      "version": 1,
+      "identity": {
+        "feishu": {
+          "source": "none",
+          "configured": false,
+          "envKey": "FEISHU_IDENTITY",
+          "label": "飞书收发身份策略"
+        },
+        "dingtalk": {
+          "source": "none",
+          "configured": false,
+          "envKey": "DINGTALK_IDENTITY",
+          "label": "钉钉收发身份策略"
+        },
+        "userReceive": {
+          "source": "none",
+          "configured": false,
+          "envKey": "FEISHU_USER_RECEIVE",
+          "label": "本人身份接收开关"
+        }
+      },
+      "modes": {
+        "feishu": {
+          "source": "none",
+          "configured": false,
+          "envKey": "FEISHU_MODE",
+          "label": "飞书运行模式"
+        },
+        "dingtalk": {
+          "source": "none",
+          "configured": false,
+          "envKey": "DINGTALK_MODE",
+          "label": "钉钉运行模式"
+        },
+        "wecom": {
+          "source": "none",
+          "configured": false,
+          "envKey": "WECOM_MODE",
+          "label": "企业微信运行模式"
+        },
+        "mail": {
+          "source": "none",
+          "configured": false,
+          "envKey": "MAIL_MODE",
+          "label": "邮箱运行模式"
+        }
+      },
+      "llm": {
+        "provider": {
+          "source": "none",
+          "configured": false,
+          "envKey": "LLM_PROVIDER",
+          "label": "AI 模型服务商"
+        },
+        "apiKey": {
+          "source": "none",
+          "configured": false,
+          "envKey": "LLM_API_KEY",
+          "label": "AI 模型 API Key"
+        },
+        "baseUrl": {
+          "source": "none",
+          "configured": false,
+          "envKey": "LLM_BASE_URL",
+          "label": "AI 模型 Base URL"
+        },
+        "model": {
+          "source": "none",
+          "configured": false,
+          "envKey": "LLM_MODEL",
+          "label": "AI 模型名称"
+        }
+      },
+      "platforms": {
+        "feishu": {
+          "fields": {
+            "appId": {
+              "source": "none",
+              "configured": false,
+              "envKey": "FEISHU_APP_ID",
+              "label": "飞书 App ID"
+            },
+            "appSecret": {
+              "source": "none",
+              "configured": false,
+              "envKey": "FEISHU_APP_SECRET",
+              "label": "飞书 App Secret"
+            },
+            "verifyToken": {
+              "source": "none",
+              "configured": false,
+              "envKey": "FEISHU_VERIFY_TOKEN",
+              "label": "飞书 Verification Token"
+            },
+            "encryptKey": {
+              "source": "none",
+              "configured": false,
+              "envKey": "FEISHU_ENCRYPT_KEY",
+              "label": "飞书 Encrypt Key"
+            },
+            "stream": {
+              "source": "none",
+              "configured": false,
+              "envKey": "FEISHU_STREAM",
+              "label": "飞书长连接"
+            }
+          },
+          "missing": [
+            "FEISHU_APP_ID",
+            "FEISHU_APP_SECRET"
+          ],
+          "configured": false
+        },
+        "dingtalk": {
+          "fields": {
+            "clientId": {
+              "source": "none",
+              "configured": false,
+              "envKey": "DINGTALK_CLIENT_ID",
+              "label": "钉钉 Client ID（AppKey）"
+            },
+            "clientSecret": {
+              "source": "none",
+              "configured": false,
+              "envKey": "DINGTALK_CLIENT_SECRET",
+              "label": "钉钉 Client Secret（AppSecret）"
+            },
+            "robotCode": {
+              "source": "none",
+              "configured": false,
+              "envKey": "DINGTALK_ROBOT_CODE",
+              "label": "钉钉 Robot Code"
+            },
+            "stream": {
+              "source": "none",
+              "configured": false,
+              "envKey": "DINGTALK_STREAM",
+              "label": "钉钉 Stream 长连接"
+            },
+            "aesToken": {
+              "source": "none",
+              "configured": false,
+              "envKey": "DINGTALK_AES_TOKEN",
+              "label": "钉钉 AES Token"
+            },
+            "aesKey": {
+              "source": "none",
+              "configured": false,
+              "envKey": "DINGTALK_AES_KEY",
+              "label": "钉钉 AES Key"
+            }
+          },
+          "missing": [
+            "DINGTALK_CLIENT_ID",
+            "DINGTALK_CLIENT_SECRET"
+          ],
+          "configured": false
+        },
+        "wecom": {
+          "fields": {
+            "corpId": {
+              "source": "none",
+              "configured": false,
+              "envKey": "WECOM_CORP_ID",
+              "label": "企业微信 Corp ID"
+            },
+            "agentId": {
+              "source": "none",
+              "configured": false,
+              "envKey": "WECOM_AGENT_ID",
+              "label": "企业微信 Agent ID"
+            },
+            "secret": {
+              "source": "none",
+              "configured": false,
+              "envKey": "WECOM_SECRET",
+              "label": "企业微信 Secret"
+            },
+            "token": {
+              "source": "none",
+              "configured": false,
+              "envKey": "WECOM_TOKEN",
+              "label": "企业微信 Token"
+            },
+            "aesKey": {
+              "source": "none",
+              "configured": false,
+              "envKey": "WECOM_AES_KEY",
+              "label": "企业微信 EncodingAESKey"
+            }
+          },
+          "missing": [
+            "WECOM_CORP_ID",
+            "WECOM_AGENT_ID",
+            "WECOM_SECRET"
+          ],
+          "configured": false
+        }
+      },
+      "restartRequired": false,
+      "envFile": null,
+      "settingsFile": {
+        "path": "linkhub-config.json",
+        "present": false,
+        "mtime": null
+      }
+    }
+  },
+  "statusWhileModal": {
+    "ok": true,
+    "data": {
+      "available": true,
+      "version": "v1.0.68-beta.1",
+      "authenticated": false,
+      "state": "not_linked",
+      "detail": "dws v1.0.68-beta.1",
+      "hint": "尚未登录钉钉本人身份：当前用机器人收发；推荐连接本人账号（免把机器人拉进每个群），登录后自动切换为本人",
+      "loginCommand": "C:\\Users\\zx\\AppData\\Local\\Temp\\linkhub-r3-sandbox\\unimsg-connector\\tools\\dws.exe auth login",
+      "loginInProgress": true,
+      "loginMode": "browser",
+      "loginUrl": "https://login.dingtalk.com/oauth2/auth?caller=dws&callerUmt=P1gA5pFP3GKmN1JtPlxKFcGqZvc6-P3HiKZVyfblalQe-DNVusPsMI_oNcnQdarIc0Jo8m_f14w-ejxTnf2UrxiB&client_id=dingmbw5n9ktkkbbjv3g&prompt=consent&redirect_uri=http%3A%2F%2F127.0.0.1%3A64218%2Fcallback&response_type=code&scope=openid+corpid",
+      "loginExpiresAt": "2026-11-12T09:48:53.621Z",
+      "loginExpiresInSec": 598,
+      "loginInstructions": "已尝试打开浏览器（若未弹出请点下方授权链接）。请在运行 LinkHub 的这台机器上用钉钉扫码/账号登录并确认授权，完成后回到本页点「我已登录，刷新状态」（约 10 分钟内有效）。注意：浏览器授权地址是 127.0.0.1 本机回调，必须在这台机器上打开；服务器/SSH/容器请改用设备码登录。",
+      "loginId": "35ec51bc-679d-4411-af48-2514d23402c6"
+    }
+  },
+  "closeClick": {
+    "ok": true
+  },
+  "modalGone": true,
+  "afterClose": {
+    "restartBanner": false,
+    "pnpm": false,
+    "needsAuth": true,
+    "configureEntry": true,
+    "userWording": false
+  },
+  "apiAfter": {
+    "ok": true,
+    "data": {
+      "version": 1,
+      "identity": {
+        "feishu": {
+          "source": "none",
+          "configured": false,
+          "envKey": "FEISHU_IDENTITY",
+          "label": "飞书收发身份策略"
+        },
+        "dingtalk": {
+          "source": "none",
+          "configured": false,
+          "envKey": "DINGTALK_IDENTITY",
+          "label": "钉钉收发身份策略"
+        },
+        "userReceive": {
+          "source": "none",
+          "configured": false,
+          "envKey": "FEISHU_USER_RECEIVE",
+          "label": "本人身份接收开关"
+        }
+      },
+      "modes": {
+        "feishu": {
+          "source": "none",
+          "configured": false,
+          "envKey": "FEISHU_MODE",
+          "label": "飞书运行模式"
+        },
+        "dingtalk": {
+          "source": "none",
+          "configured": false,
+          "envKey": "DINGTALK_MODE",
+          "label": "钉钉运行模式"
+        },
+        "wecom": {
+          "source": "none",
+          "configured": false,
+          "envKey": "WECOM_MODE",
+          "label": "企业微信运行模式"
+        },
+        "mail": {
+          "source": "none",
+          "configured": false,
+          "envKey": "MAIL_MODE",
+          "label": "邮箱运行模式"
+        }
+      },
+      "llm": {
+        "provider": {
+          "source": "none",
+          "configured": false,
+          "envKey": "LLM_PROVIDER",
+          "label": "AI 模型服务商"
+        },
+        "apiKey": {
+          "source": "none",
+          "configured": false,
+          "envKey": "LLM_API_KEY",
+          "label": "AI 模型 API Key"
+        },
+        "baseUrl": {
+          "source": "none",
+          "configured": false,
+          "envKey": "LLM_BASE_URL",
+          "label": "AI 模型 Base URL"
+        },
+        "model": {
+          "source": "none",
+          "configured": false,
+          "envKey": "LLM_MODEL",
+          "label": "AI 模型名称"
+        }
+      },
+      "platforms": {
+        "feishu": {
+          "fields": {
+            "appId": {
+              "source": "none",
+              "configured": false,
+              "envKey": "FEISHU_APP_ID",
+              "label": "飞书 App ID"
+            },
+            "appSecret": {
+              "source": "none",
+              "configured": false,
+              "envKey": "FEISHU_APP_SECRET",
+              "label": "飞书 App Secret"
+            },
+            "verifyToken": {
+              "source": "none",
+              "configured": false,
+              "envKey": "FEISHU_VERIFY_TOKEN",
+              "label": "飞书 Verification Token"
+            },
+            "encryptKey": {
+              "source": "none",
+              "configured": false,
+              "envKey": "FEISHU_ENCRYPT_KEY",
+              "label": "飞书 Encrypt Key"
+            },
+            "stream": {
+              "source": "none",
+              "configured": false,
+              "envKey": "FEISHU_STREAM",
+              "label": "飞书长连接"
+            }
+          },
+          "missing": [
+            "FEISHU_APP_ID",
+            "FEISHU_APP_SECRET"
+          ],
+          "configured": false
+        },
+        "dingtalk": {
+          "fields": {
+            "clientId": {
+              "source": "none",
+              "configured": false,
+              "envKey": "DINGTALK_CLIENT_ID",
+              "label": "钉钉 Client ID（AppKey）"
+            },
+            "clientSecret": {
+              "source": "none",
+              "configured": false,
+              "envKey": "DINGTALK_CLIENT_SECRET",
+              "label": "钉钉 Client Secret（AppSecret）"
+            },
+            "robotCode": {
+              "source": "none",
+              "configured": false,
+              "envKey": "DINGTALK_ROBOT_CODE",
+              "label": "钉钉 Robot Code"
+            },
+            "stream": {
+              "source": "none",
+              "configured": false,
+              "envKey": "DINGTALK_STREAM",
+              "label": "钉钉 Stream 长连接"
+            },
+            "aesToken": {
+              "source": "none",
+              "configured": false,
+              "envKey": "DINGTALK_AES_TOKEN",
+              "label": "钉钉 AES Token"
+            },
+            "aesKey": {
+              "source": "none",
+              "configured": false,
+              "envKey": "DINGTALK_AES_KEY",
+              "label": "钉钉 AES Key"
+            }
+          },
+          "missing": [
+            "DINGTALK_CLIENT_ID",
+            "DINGTALK_CLIENT_SECRET"
+          ],
+          "configured": false
+        },
+        "wecom": {
+          "fields": {
+            "corpId": {
+              "source": "none",
+              "configured": false,
+              "envKey": "WECOM_CORP_ID",
+              "label": "企业微信 Corp ID"
+            },
+            "agentId": {
+              "source": "none",
+              "configured": false,
+              "envKey": "WECOM_AGENT_ID",
+              "label": "企业微信 Agent ID"
+            },
+            "secret": {
+              "source": "none",
+              "configured": false,
+              "envKey": "WECOM_SECRET",
+              "label": "企业微信 Secret"
+            },
+            "token": {
+              "source": "none",
+              "configured": false,
+              "envKey": "WECOM_TOKEN",
+              "label": "企业微信 Token"
+            },
+            "aesKey": {
+              "source": "none",
+              "configured": false,
+              "envKey": "WECOM_AES_KEY",
+              "label": "企业微信 EncodingAESKey"
+            }
+          },
+          "missing": [
+            "WECOM_CORP_ID",
+            "WECOM_AGENT_ID",
+            "WECOM_SECRET"
+          ],
+          "configured": false
+        }
+      },
+      "restartRequired": false,
+      "envFile": null,
+      "settingsFile": {
+        "path": "linkhub-config.json",
+        "present": false,
+        "mtime": null
+      }
+    }
+  },
+  "onboardingAfter": {
+    "ok": true,
+    "data": {
+      "generatedAt": "2026-11-12T09:38:58.147Z",
+      "firstRun": true,
+      "startedAt": "2026-11-12T09:38:19.058Z",
+      "envFile": null,
+      "dws": {
+        "available": true,
+        "version": "v1.0.68-beta.1",
+        "source": "tools",
+        "pathHint": "仓库 tools/（pnpm run fetch:dws 下载位置）"
+      },
+      "overall": {
+        "ready": 0,
+        "total": 4,
+        "needsAction": 4
+      },
+      "steps": [
+        {
+          "id": "mail",
+          "label": "邮箱",
+          "state": "needs_user_auth",
+          "summary": "还没有邮箱账号。个人版可直接在页面添加（需要邮箱授权码）。",
+          "hints": [
+            "先到邮箱网页版「设置 → POP3/SMTP/IMAP」开启服务并生成授权码（16 位左右，不是网页登录密码）。",
+            "添加账号并点「测试连接」验证通过后会自动启用真实收信（无需改 .env、无需重启）。",
+            "首轮只建立 UID 基线、不导入历史邮件；测试连接会真实连接一次邮箱服务器（只做 IMAP/SMTP 登录，不发信）。"
+          ],
+          "actions": [
+            {
+              "id": "mail-add-account",
+              "kind": "form",
+              "label": "添加邮箱账号"
+            },
+            {
+              "id": "mail-provider-help",
+              "kind": "link",
+              "label": "去邮箱网页版开启 IMAP/SMTP（QQ 邮箱示例）",
+              "url": "https://mail.qq.com"
+            },
+            {
+              "id": "mail-doctor",
+              "kind": "command",
+              "label": "自检 mail 配置（在 unimsg-connector/ 目录运行；pnpm 不在 PATH 时用 corepack pnpm run …）",
+              "command": "cd unimsg-connector && pnpm run doctor --platform=mail"
+            }
+          ],
+          "detail": {
+            "accounts": [],
+            "filePath": "mail-accounts.json",
+            "issues": [],
+            "mode": "mock",
+            "verifiedCount": 0,
+            "unverifiedCount": 0
+          }
+        },
+        {
+          "id": "dingtalk",
+          "label": "钉钉",
+          "state": "needs_user_auth",
+          "summary": "用钉钉本人账号登录即可，无需机器人应用（需企业已开 CLI 访问）。",
+          "hints": [
+            "点「用钉钉本人账号登录（推荐）」：登录成功后会自动启用本人身份（无需重启），个人事件接收自动启动。",
+            "未完成授权不会改变任何配置（不会出现「已启用但未登录」的状态）；若企业未开 CLI 访问，请联系管理员（清单可复制）。",
+            "登录用的是本机 dws CLI：浏览器授权/设备码确认一次即可，凭据只留在本机。"
+          ],
+          "actions": [
+            {
+              "id": "dingtalk-login",
+              "kind": "api",
+              "label": "用钉钉本人账号登录（推荐，无需机器人应用）",
+              "path": "/api/dingtalk/personal/login",
+              "method": "POST",
+              "payload": {
+                "mode": "browser"
+              }
+            },
+            {
+              "id": "dingtalk-configure",
+              "kind": "form",
+              "label": "填写钉钉应用凭据（可选，用机器人时）",
+              "path": "/api/app-config",
+              "method": "PUT"
+            },
+            {
+              "id": "dingtalk-admin",
+              "kind": "link",
+              "label": "打开钉钉开发者后台",
+              "url": "https://open-dev.dingtalk.com/"
+            },
+            {
+              "id": "dingtalk-admin-checklist",
+              "kind": "copy",
+              "label": "复制管理员开通清单（CLI 访问 + 登录命令）",
+              "text": "钉钉管理员开通清单（LinkHub 个人版需要企业管理员配合）：\n1. 打开钉钉开发者后台 https://open-dev.dingtalk.com/ ；\n2. 如用「本人账号」收发（推荐，无需机器人应用）：企业管理员在钉钉开放平台开启「CLI 访问管理」（dws 个人身份依赖）；\n3. 如用机器人：创建「企业内部应用」，记录 Client ID / Client Secret，开通机器人发消息权限并配置事件订阅；\n4. 个人登录（本机推荐）：打开 LinkHub「连接账号」→ 钉钉 →「用钉钉本人账号登录（推荐）」；\n   或在本机终端执行：tools\\dws.exe auth login --recommend（登录成功后无交互批量授权推荐权限）；\n5. 机器人凭据可写回 LinkHub「填写钉钉应用凭据」或 .env 的 DINGTALK_CLIENT_ID / DINGTALK_CLIENT_SECRET / DINGTALK_ROBOT_CODE，然后重启后端；\n6. dws 官方 CLI 与文档：https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli 。"
+            },
+            {
+              "id": "dingtalk-doctor",
+              "kind": "command",
+              "label": "自检 dingtalk 配置（在 unimsg-connector/ 目录运行；pnpm 不在 PATH 时用 corepack pnpm run …）",
+              "command": "cd unimsg-connector && pnpm run doctor --platform=dingtalk"
+            }
+          ],
+          "detail": {
+            "identity": {
+              "state": "not_linked",
+              "linked": false,
+              "hint": "尚未登录钉钉本人身份：当前用机器人收发；推荐连接本人账号（免把机器人拉进每个群），登录后自动切换为本人"
+            },
+            "dws": {
+              "available": true,
+              "version": "v1.0.68-beta.1",
+              "source": "tools",
+              "pathHint": "仓库 tools/（pnpm run fetch:dws 下载位置）"
+            },
+            "identityChannelsReal": false,
+            "botAvailable": false,
+            "runtimeMode": "mock",
+            "runtimePolicy": "auto",
+            "effectiveSend": "mock",
+            "effectiveReceive": "mock",
+            "missing": [
+              "DINGTALK_CLIENT_ID",
+              "DINGTALK_CLIENT_SECRET",
+              "DINGTALK_AES_TOKEN",
+              "DINGTALK_AES_KEY"
+            ]
+          }
+        },
+        {
+          "id": "feishu",
+          "label": "飞书",
+          "state": "needs_admin",
+          "summary": "缺少飞书应用凭据：个人用户需企业管理员创建自建应用；拿到 App ID / Secret 后在 LinkHub 填写（或写 .env）并重启。",
+          "hints": [
+            "还缺：FEISHU_APP_ID / FEISHU_APP_SECRET（填到 LinkHub 配置或 .env 后重启）",
+            "用长连接时 Verify Token 可不填（默认 FEISHU_STREAM=true，免公网回调）；只有改用 HTTP 回调模式才需要 Verification Token。",
+            "重定向 URL 必须是：http://localhost:3003/api/feishu/oauth/callback（与飞书后台逐字一致）。",
+            "个人版通常需要企业管理员操作；配好后回到本页刷新。"
+          ],
+          "actions": [
+            {
+              "id": "feishu-configure",
+              "kind": "form",
+              "label": "填写飞书应用凭据（App ID / App Secret）",
+              "path": "/api/app-config",
+              "method": "PUT"
+            },
+            {
+              "id": "feishu-admin",
+              "kind": "link",
+              "label": "打开飞书开放平台（应用后台）",
+              "url": "https://open.feishu.cn/app"
+            },
+            {
+              "id": "feishu-admin-checklist",
+              "kind": "copy",
+              "label": "复制管理员开通清单（权限 + 回调 URL + .env 键名 + 重启）",
+              "text": "飞书管理员开通清单（LinkHub 个人版需要企业管理员配合）：\n1. 打开飞书开放平台 https://open.feishu.cn/app ，创建/选择一个「企业自建应用」；\n2. 权限管理：按下面清单开通消息权限（缺权限时 OAuth 后仍读不到消息）：\n   im:message、im:message.send_as_user、im:resource、im:message.p2p_msg:get_as_user、im:message.group_msg:get_as_user、im:chat:read、offline_access\n3. 安全设置 → 重定向 URL：添加 http://localhost:3003/api/feishu/oauth/callback（照抄，含 /api/feishu/oauth/callback）；\n4. 事件订阅：默认用长连接（FEISHU_STREAM=true）可免公网回调，此时 Verify Token / Encrypt Key 都可不填；只有改用 HTTP 回调模式才必须填 Verification Token；\n5. 发布应用；\n6. 运行模式：FEISHU_MODE=auto/real（显式 mock 会一直演示，不会真实收发）。\n7. 在 LinkHub 点「填写飞书应用凭据（App ID / App Secret）」填入凭据（也可写 .env 的 FEISHU_APP_ID / FEISHU_APP_SECRET），然后重启后端（保存后界面会提示）；\n8. 回到「连接账号」页点「连接飞书本人账号」，用本人账号完成 OAuth 授权。"
+            },
+            {
+              "id": "feishu-doctor",
+              "kind": "command",
+              "label": "自检 feishu 配置（在 unimsg-connector/ 目录运行；pnpm 不在 PATH 时用 corepack pnpm run …）",
+              "command": "cd unimsg-connector && pnpm run doctor --platform=feishu"
+            }
+          ],
+          "detail": {
+            "identity": {
+              "state": "unavailable",
+              "linked": false,
+              "hint": "未配置 FEISHU_APP_ID / FEISHU_APP_SECRET，无法连接飞书本人身份；请先在 .env 填写飞书自建应用凭据，然后到「平台账号」页点飞书卡片的「连接本人账号」"
+            },
+            "redirectUri": "http://localhost:3003/api/feishu/oauth/callback",
+            "scopes": [
+              "im:message",
+              "im:message.send_as_user",
+              "im:resource",
+              "im:message.p2p_msg:get_as_user",
+              "im:message.group_msg:get_as_user",
+              "im:chat:read",
+              "offline_access"
+            ],
+            "missing": [
+              "FEISHU_APP_ID",
+              "FEISHU_APP_SECRET"
+            ],
+            "warnings": [
+              "已配置飞书长连接（FEISHU_STREAM），但当前为 Mock 模拟、不会实际连接"
+            ],
+            "identityChannelsReal": false,
+            "effectiveSend": "mock",
+            "effectiveReceive": "mock"
+          }
+        },
+        {
+          "id": "wecom",
+          "label": "企业微信",
+          "state": "needs_admin",
+          "summary": "缺少企业微信自建应用凭据：需要企业管理员创建应用并提供 Corp ID / Agent ID / Secret。",
+          "hints": [
+            "缺少变量：WECOM_CORP_ID / WECOM_SECRET / WECOM_AGENT_ID / WECOM_TOKEN / WECOM_AES_KEY",
+            "个人版无法自行开通企业微信，需要企业管理员配合；拿到凭据后在 LinkHub 填写或写 .env 并重启。"
+          ],
+          "actions": [
+            {
+              "id": "wecom-configure",
+              "kind": "form",
+              "label": "填写企业微信凭据（Corp ID / Agent ID / Secret）",
+              "path": "/api/app-config",
+              "method": "PUT"
+            },
+            {
+              "id": "wecom-admin",
+              "kind": "link",
+              "label": "打开企业微信管理后台",
+              "url": "https://work.weixin.qq.com/"
+            },
+            {
+              "id": "wecom-admin-checklist",
+              "kind": "copy",
+              "label": "复制管理员开通清单（凭据 + 可信 IP + 重启）",
+              "text": "企业微信管理员开通清单（LinkHub 个人版需要企业管理员配合）：\n1. 打开企业微信管理后台 https://work.weixin.qq.com/ → 应用管理 → 自建，创建应用并记录 AgentId / Secret / 企业 CorpID；\n2. 应用「接收消息」：设置 Token 与 EncodingAESKey，回调 URL 指向 LinkHub 的 /api/wecom/callback（需公网可达）；\n   本机演示端口：http://127.0.0.1:3003/api/wecom/callback（公网需用域名/内网穿透）\n3. 应用「企业可信 IP」：添加运行 LinkHub 的机器的公网出口 IP（否则发送会报 60020）；\n4. 把凭据写回 LinkHub：点「填写企业微信凭据」，或写入 .env 的 WECOM_CORP_ID / WECOM_AGENT_ID / WECOM_SECRET / WECOM_TOKEN / WECOM_AES_KEY，然后重启后端。"
+            },
+            {
+              "id": "wecom-doctor",
+              "kind": "command",
+              "label": "自检 wecom 配置（在 unimsg-connector/ 目录运行；pnpm 不在 PATH 时用 corepack pnpm run …）",
+              "command": "cd unimsg-connector && pnpm run doctor --platform=wecom"
+            }
+          ],
+          "detail": {
+            "missing": [
+              "WECOM_CORP_ID",
+              "WECOM_SECRET",
+              "WECOM_AGENT_ID",
+              "WECOM_TOKEN",
+              "WECOM_AES_KEY"
+            ],
+            "warnings": [],
+            "configured": false,
+            "mode": "mock",
+            "policy": "auto"
+          }
+        }
+      ]
+    }
+  },
+  "statusAfter": {
+    "ok": true,
+    "data": {
+      "available": true,
+      "version": "v1.0.68-beta.1",
+      "authenticated": false,
+      "state": "not_linked",
+      "detail": "dws v1.0.68-beta.1",
+      "hint": "尚未登录钉钉本人身份：当前用机器人收发；推荐连接本人账号（免把机器人拉进每个群），登录后自动切换为本人",
+      "loginCommand": "C:\\Users\\zx\\AppData\\Local\\Temp\\linkhub-r3-sandbox\\unimsg-connector\\tools\\dws.exe auth login",
+      "loginInProgress": true,
+      "loginMode": "browser",
+      "loginUrl": "https://login.dingtalk.com/oauth2/auth?caller=dws&callerUmt=P1gA5pFP3GKmN1JtPlxKFcGqZvc6-P3HiKZVyfblalQe-DNVusPsMI_oNcnQdarIc0Jo8m_f14w-ejxTnf2UrxiB&client_id=dingmbw5n9ktkkbbjv3g&prompt=consent&redirect_uri=http%3A%2F%2F127.0.0.1%3A64218%2Fcallback&response_type=code&scope=openid+corpid",
+      "loginExpiresAt": "2026-11-12T09:48:53.621Z",
+      "loginExpiresInSec": 595,
+      "loginInstructions": "已尝试打开浏览器（若未弹出请点下方授权链接）。请在运行 LinkHub 的这台机器上用钉钉扫码/账号登录并确认授权，完成后回到本页点「我已登录，刷新状态」（约 10 分钟内有效）。注意：浏览器授权地址是 127.0.0.1 本机回调，必须在这台机器上打开；服务器/SSH/容器请改用设备码登录。",
+      "loginId": "35ec51bc-679d-4411-af48-2514d23402c6"
+    }
+  },
+  "dingtalkCardText": "钉钉\n需本人授权",
+  "afterReloadText": "L\n收件箱\n待办\n全链路回放\n连接账号\n平台账号\n设置\n服务已连接\nCONNECT\n连接账号\n新建发送\n搜索\n⌘K\n服务已连接\n我\n连接账号\n\n个人版只需连接你自己的账号；带「需管理员」的项由企业管理员在平台后台开通。\n\n平台应用配置\n刷新状态\n平台账号页\n已就绪 0 / 4\n按 邮箱 → 钉钉 → 飞书 → 企业微信 的顺序连接，还有 4 项待处理\n钉钉运行环境：内置 tools 目录（无需手动安装）\n已就绪 0 项 · 待处理 4 项 · 首次使用建议从「邮箱」开始\n邮箱\n需本人授权\n\n还没有邮箱账号。个人版可直接在页面添加（需要邮箱授权码）。\n\n先到邮箱网页版「设置 → POP3/SMTP/IMAP」开启服务并生成授权码（16 位左右，不是网页登录密码）。\n添加账号并点「测试连接」验证通过后会自动启用真实收信（无需改 部署配置、无需重启）。\n首轮只建立 UID 基线、不导入历史邮件；测试连接会真实连接一次邮箱服务器（只做 IMAP/SMTP 登录，不发信）。\n还没有通过 LinkHub 添加的邮箱账号。添加后即可在收件箱查看邮件，并以你自己的邮箱回复。\n添加邮箱账号\n去邮箱网页版开启 IMAP/SMTP（QQ 邮箱示例）\n高级 / 开发者：命令行自检（可选）\n钉钉\n需本人授权\n\n用钉钉本人账号登录即可，无需机器人应用（需企业已开 CLI 访问）。\n\n还缺：钉钉 Client ID、钉钉 Client Secret、钉钉 AES Token、钉钉 AES Key\n也可以不填：直接用「用钉钉本人账号登录」。\n点「用钉钉本人账号登录（推荐）」：登录成功后会自动启用本人身份（无需重启），个人事件接收自动启动。\n未完成授权不会改变任何配置（不会出现「已启用但未登录」的状态）；若企业未开 CLI 访问，请联系管理员（清单可复制）。\n登录用的是本机 dws CLI：浏览器授权/设备码确认一次即可，凭据只留在本机。\n用钉钉本人账号登录（推荐，无需机器人应用）\n填写钉钉应用凭据（可选，用机器人时）\n打开钉钉开发者后台\n复制管理员开通清单（CLI 访问 + 登录命令）\n查看要复制的内容\n高级 / 开发者：命令行自检（可选）\n飞书\n需管理员\n\n缺少飞书应用凭据：个人用户需企业管理员创建自建应用；拿到 App ID / Secret 后在 LinkHub 填写（或写 .env）并重启。\n\n需要企业管理员在平台后台开通，可把下面的清单发给管理员。\n还缺：飞书 App ID、飞书 App Secret\n填写配置\n还缺：FEISHU_APP_ID / FEISHU_APP_SECRET（填到 LinkHub 配置或 部署配置 后重启）\n用长连接时 Verify Token 可不填（默认 FEISHU_STREAM=true，免公网回调）；只有改用 HTTP 回调模式才需要 Verification Token。\n重定向 URL 必须是：http://localhost:3003/api/feishu/oauth/callback（与飞书后台逐字一致）。\n个人版通常需要企业管理员操作；配好后回到本页刷新。\n填写飞书应用凭据（App ID / App Secret）\n打开飞书开放平台（应用后台）\n复制管理员开通清单（权限 + 回调 URL + 技术细节 + 重启）\n查看要复制的内容\n高级 / 开发者：命令行自检（可选）\n企业微信\n需管理员\n\n缺少企业微信自建应用凭据：需要企业管理员创建应用并提供 Corp ID / Agent ID / Secret。\n\n需要企业管理员在平台后台开通，可把下面的清单发给管理员。\n还缺：企业微信 Corp ID、企业微信 Secret、企业微信 Agent ID、企业微信 Token、企业微信 EncodingAESKey\n填写配置\n缺少变量：WECOM_CORP_ID / WECOM_SECRET / WECOM_AGENT_ID / WECOM_TOKEN / WECOM_AES_KEY\n个人版无法自行开通企业微信，需要企业管理员配合；拿到凭据后在 LinkHub 填写或写 部署配置 并重启。\n填写企业微信凭据（Corp ID / Agent ID / Secret）\n打开企业微信管理后台\n复制管理员开通清单（凭据 + 可信 IP + 重启）\n查看要复制的内容\n高级 / 开发者：命令行自检（可选）\n\n状态由本机后端实时探测；改完 .env 需要重启后端，平台状态才会更新。 本页不会显示任何 token 或邮箱授权码。",
+  "afterReload": {
+    "restartBanner": false,
+    "pnpm": false,
+    "needsAuth": true,
+    "configureEntry": true
+  },
+  "logout": {
+    "ok": true,
+    "data": {
+      "ok": true,
+      "authenticated": false
+    }
+  },
+  "statusAfterLogout": {
+    "ok": true,
+    "data": {
+      "available": true,
+      "version": "v1.0.68-beta.1",
+      "authenticated": false,
+      "state": "not_linked",
+      "detail": "dws v1.0.68-beta.1",
+      "hint": "尚未登录钉钉本人身份：当前用机器人收发；推荐连接本人账号（免把机器人拉进每个群），登录后自动切换为本人",
+      "loginCommand": "C:\\Users\\zx\\AppData\\Local\\Temp\\linkhub-r3-sandbox\\unimsg-connector\\tools\\dws.exe auth login",
+      "loginInProgress": false
+    }
+  },
+  "apiAfterLogout": {
+    "ok": true,
+    "data": {
+      "version": 1,
+      "identity": {
+        "feishu": {
+          "source": "none",
+          "configured": false,
+          "envKey": "FEISHU_IDENTITY",
+          "label": "飞书收发身份策略"
+        },
+        "dingtalk": {
+          "source": "none",
+          "configured": false,
+          "envKey": "DINGTALK_IDENTITY",
+          "label": "钉钉收发身份策略"
+        },
+        "userReceive": {
+          "source": "none",
+          "configured": false,
+          "envKey": "FEISHU_USER_RECEIVE",
+          "label": "本人身份接收开关"
+        }
+      },
+      "modes": {
+        "feishu": {
+          "source": "none",
+          "configured": false,
+          "envKey": "FEISHU_MODE",
+          "label": "飞书运行模式"
+        },
+        "dingtalk": {
+          "source": "none",
+          "configured": false,
+          "envKey": "DINGTALK_MODE",
+          "label": "钉钉运行模式"
+        },
+        "wecom": {
+          "source": "none",
+          "configured": false,
+          "envKey": "WECOM_MODE",
+          "label": "企业微信运行模式"
+        },
+        "mail": {
+          "source": "none",
+          "configured": false,
+          "envKey": "MAIL_MODE",
+          "label": "邮箱运行模式"
+        }
+      },
+      "llm": {
+        "provider": {
+          "source": "none",
+          "configured": false,
+          "envKey": "LLM_PROVIDER",
+          "label": "AI 模型服务商"
+        },
+        "apiKey": {
+          "source": "none",
+          "configured": false,
+          "envKey": "LLM_API_KEY",
+          "label": "AI 模型 API Key"
+        },
+        "baseUrl": {
+          "source": "none",
+          "configured": false,
+          "envKey": "LLM_BASE_URL",
+          "label": "AI 模型 Base URL"
+        },
+        "model": {
+          "source": "none",
+          "configured": false,
+          "envKey": "LLM_MODEL",
+          "label": "AI 模型名称"
+        }
+      },
+      "platforms": {
+        "feishu": {
+          "fields": {
+            "appId": {
+              "source": "none",
+              "configured": false,
+              "envKey": "FEISHU_APP_ID",
+              "label": "飞书 App ID"
+            },
+            "appSecret": {
+              "source": "none",
+              "configured": false,
+              "envKey": "FEISHU_APP_SECRET",
+              "label": "飞书 App Secret"
+            },
+            "verifyToken": {
+              "source": "none",
+              "configured": false,
+              "envKey": "FEISHU_VERIFY_TOKEN",
+              "label": "飞书 Verification Token"
+            },
+            "encryptKey": {
+              "source": "none",
+              "configured": false,
+              "envKey": "FEISHU_ENCRYPT_KEY",
+              "label": "飞书 Encrypt Key"
+            },
+            "stream": {
+              "source": "none",
+              "configured": false,
+              "envKey": "FEISHU_STREAM",
+              "label": "飞书长连接"
+            }
+          },
+          "missing": [
+            "FEISHU_APP_ID",
+            "FEISHU_APP_SECRET"
+          ],
+          "configured": false
+        },
+        "dingtalk": {
+          "fields": {
+            "clientId": {
+              "source": "none",
+              "configured": false,
+              "envKey": "DINGTALK_CLIENT_ID",
+              "label": "钉钉 Client ID（AppKey）"
+            },
+            "clientSecret": {
+              "source": "none",
+              "configured": false,
+              "envKey": "DINGTALK_CLIENT_SECRET",
+              "label": "钉钉 Client Secret（AppSecret）"
+            },
+            "robotCode": {
+              "source": "none",
+              "configured": false,
+              "envKey": "DINGTALK_ROBOT_CODE",
+              "label": "钉钉 Robot Code"
+            },
+            "stream": {
+              "source": "none",
+              "configured": false,
+              "envKey": "DINGTALK_STREAM",
+              "label": "钉钉 Stream 长连接"
+            },
+            "aesToken": {
+              "source": "none",
+              "configured": false,
+              "envKey": "DINGTALK_AES_TOKEN",
+              "label": "钉钉 AES Token"
+            },
+            "aesKey": {
+              "source": "none",
+              "configured": false,
+              "envKey": "DINGTALK_AES_KEY",
+              "label": "钉钉 AES Key"
+            }
+          },
+          "missing": [
+            "DINGTALK_CLIENT_ID",
+            "DINGTALK_CLIENT_SECRET"
+          ],
+          "configured": false
+        },
+        "wecom": {
+          "fields": {
+            "corpId": {
+              "source": "none",
+              "configured": false,
+              "envKey": "WECOM_CORP_ID",
+              "label": "企业微信 Corp ID"
+            },
+            "agentId": {
+              "source": "none",
+              "configured": false,
+              "envKey": "WECOM_AGENT_ID",
+              "label": "企业微信 Agent ID"
+            },
+            "secret": {
+              "source": "none",
+              "configured": false,
+              "envKey": "WECOM_SECRET",
+              "label": "企业微信 Secret"
+            },
+            "token": {
+              "source": "none",
+              "configured": false,
+              "envKey": "WECOM_TOKEN",
+              "label": "企业微信 Token"
+            },
+            "aesKey": {
+              "source": "none",
+              "configured": false,
+              "envKey": "WECOM_AES_KEY",
+              "label": "企业微信 EncodingAESKey"
+            }
+          },
+          "missing": [
+            "WECOM_CORP_ID",
+            "WECOM_AGENT_ID",
+            "WECOM_SECRET"
+          ],
+          "configured": false
+        }
+      },
+      "restartRequired": false,
+      "envFile": null,
+      "settingsFile": {
+        "path": "linkhub-config.json",
+        "present": false,
+        "mtime": null
+      }
+    }
+  },
+  "mailOpen": {
+    "ok": true,
+    "tag": "BUTTON",
+    "text": "添加邮箱账号"
+  },
+  "mailFormUp": true,
+  "mailTestClick": {
+    "ok": true
+  },
+  "mailTestResult": "连接测试失败\n请检查邮箱地址、授权码（不是登录密码）与服务商 IMAP 设置。\n这是页面添加的账号：请核对邮箱地址 / 授权码 / IMAP 服务器； 如果是 .env 里的旧账号，请修改 .env 后重启后端。\n技术详情（给管理员看）",
+  "mailToast": "邮箱连接测试失败，请检查授权码与服务器地址\n邮箱连接测试失败，请检查授权码与服务器地址",
+  "mailConfirmText": "还没有通过连接测试\n保存后账号会标记为「未验证」，需要点「测试连接」通过后才会真实收信。仍要保存吗？\n再测试一次\n仍然保存",
+  "mailConfirmClick": {
+    "ok": true
+  },
+  "mailSaveToast": "邮箱账号已保存为未验证账号：点「测试连接」验证通过后才会真实收信（首轮只建立 UID 基线，不会导入历史邮件）。\n邮箱账号已保存为未验证账号：点「测试连接」验证通过后才会真实收信（首轮只建立 UID 基线，不会导入历史邮件）。",
+  "mailSaved": {
+    "toast": "邮箱账号已保存为未验证账号：点「测试连接」验证通过后才会真实收信（首轮只建立 UID 基线，不会导入历史邮件）。\n邮箱账号已保存为未验证账号：点「测试连接」验证通过后才会真实收信（首轮只建立 UID 基线，不会导入历史邮件）。",
+    "unverified": true,
+    "notReady": true,
+    "progress0of4": true,
+    "api": {
+      "platform": "mail",
+      "label": "邮箱",
+      "configured": false,
+      "policy": "auto",
+      "mode": "mock",
+      "canReceive": false,
+      "canSend": false,
+      "missing": [
+        "MAIL_ACCOUNTS（或 MAIL_<KEY>_ADDRESS / MAIL_<KEY>_AUTH_CODE）"
+      ],
+      "warnings": [
+        "未配置任何邮箱账号"
+      ],
+      "reason": "没有可用的邮箱账号（在「连接账号」页添加并验证后自动启用真实邮箱）",
+      "accounts": [
+        {
+          "key": "whiter3fake",
+          "label": "QQ 邮箱",
+          "address": "w******@example.invalid",
+          "provider": "qq",
+          "imapHost": "imap.qq.com",
+          "imapPort": 993,
+          "imapSecure": true,
+          "smtpHost": "smtp.qq.com",
+          "smtpPort": 465,
+          "smtpSecure": true,
+          "folders": [
+            "INBOX"
+          ],
+          "mode": "mock",
+          "source": "file"
+        }
+      ],
+      "issues": []
+    }
+  },
+  "mailDelete": {
+    "ok": true,
+    "tag": "BUTTON",
+    "text": "删除"
+  },
+  "deleteConfirmText": "",
+  "deleteConfirmClick": {
+    "ok": true
+  },
+  "deleteToast": "已删除本地邮箱账号\n已删除本地邮箱账号",
+  "mailDeleted": {
+    "toast": "已删除本地邮箱账号\n已删除本地邮箱账号",
+    "empty": true,
+    "progress0of4": true,
+    "api": {
+      "platform": "mail",
+      "label": "邮箱",
+      "configured": false,
+      "policy": "auto",
+      "mode": "mock",
+      "canReceive": false,
+      "canSend": false,
+      "missing": [
+        "MAIL_ACCOUNTS（或 MAIL_<KEY>_ADDRESS / MAIL_<KEY>_AUTH_CODE）"
+      ],
+      "warnings": [
+        "未配置任何邮箱账号"
+      ],
+      "reason": "没有可用的邮箱账号（在「连接账号」页添加并验证后自动启用真实邮箱）",
+      "accounts": [],
+      "issues": []
+    }
+  },
+  "demoClick": {
+    "ok": true,
+    "tag": "BUTTON",
+    "text": "先体验演示（注入示例消息）"
+  },
+  "demoToast": "已注入一条飞书消息\n已注入一条飞书消息",
+  "demoText": "L\n1\n收件箱\n1\n待办\n全链路回放\n连接账号\n平台账号\n设置\n服务已连接\nINBOX\n收件箱\n新建发送\n搜索\n⌘K\n服务已连接\n我\n全部\n1\n飞书\n1\n钉钉\n0\n企微\n0\n邮箱\n0\n状态\n类型\n需确认\n未读\n1\n全部标为已读\nzhangsan\n·\n飞书\n未读\n刚刚\n明天 10:00 前把周报发我，重点写本周联调进展和下周计划。\n已接收\n待办\n已读\n0\n展开\n共 1 条消息，已读 0 条\n已注入一条飞书消息",
+  "demo": {
+    "toast": "已注入一条飞书消息\n已注入一条飞书消息",
+    "hasMessage": true
+  },
+  "composeOpen": true,
+  "composeDialogText": "新建发送 · 向指定平台发送消息或文件\n目标平台\n飞书\n发送身份\n模拟发送\n当前平台是演示模式：只会生成本地模拟发送记录，不会真的发到平台，因此不能选择本人 / 机器人身份。\n目标会话 ID（留空则复用该平台最近会话）\n演示模式：留空即可，会生成一条本地模拟发送记录（不会真的发到平台）。\n文本内容（也可只发文件）\n0 / 4000\n附件（最多 5 个 · 单文件 ≤ 10.0 MB）\n添加文件\n当前 飞书 通道：演示模式（模拟发送，不会真的调用平台）\n文本与文件都按统一消息格式转换后发送，状态会回流到全链路回放\n取消\n发送",
+  "composeHint": true,
+  "composeSend": {
+    "ok": true,
+    "disabled": false
+  },
+  "composeToast": "已模拟发送（不会真的发到平台）…可在「全链路回放」查看状态回流\n已模拟发送（不会真的发到平台）…可在「全链路回放」查看状态回流",
+  "compose": {
+    "toast": "已模拟发送（不会真的发到平台）…可在「全链路回放」查看状态回流\n已模拟发送（不会真的发到平台）…可在「全链路回放」查看状态回流",
+    "mock": true
+  },
+  "consoleErrors": [],
+  "apiFinal": {
+    "appConfig": {
+      "ok": true,
+      "data": {
+        "version": 1,
+        "identity": {
+          "feishu": {
+            "source": "none",
+            "configured": false,
+            "envKey": "FEISHU_IDENTITY",
+            "label": "飞书收发身份策略"
+          },
+          "dingtalk": {
+            "source": "none",
+            "configured": false,
+            "envKey": "DINGTALK_IDENTITY",
+            "label": "钉钉收发身份策略"
+          },
+          "userReceive": {
+            "source": "none",
+            "configured": false,
+            "envKey": "FEISHU_USER_RECEIVE",
+            "label": "本人身份接收开关"
+          }
+        },
+        "modes": {
+          "feishu": {
+            "source": "none",
+            "configured": false,
+            "envKey": "FEISHU_MODE",
+            "label": "飞书运行模式"
+          },
+          "dingtalk": {
+            "source": "none",
+            "configured": false,
+            "envKey": "DINGTALK_MODE",
+            "label": "钉钉运行模式"
+          },
+          "wecom": {
+            "source": "none",
+            "configured": false,
+            "envKey": "WECOM_MODE",
+            "label": "企业微信运行模式"
+          },
+          "mail": {
+            "source": "none",
+            "configured": false,
+            "envKey": "MAIL_MODE",
+            "label": "邮箱运行模式"
+          }
+        },
+        "llm": {
+          "provider": {
+            "source": "none",
+            "configured": false,
+            "envKey": "LLM_PROVIDER",
+            "label": "AI 模型服务商"
+          },
+          "apiKey": {
+            "source": "none",
+            "configured": false,
+            "envKey": "LLM_API_KEY",
+            "label": "AI 模型 API Key"
+          },
+          "baseUrl": {
+            "source": "none",
+            "configured": false,
+            "envKey": "LLM_BASE_URL",
+            "label": "AI 模型 Base URL"
+          },
+          "model": {
+            "source": "none",
+            "configured": false,
+            "envKey": "LLM_MODEL",
+            "label": "AI 模型名称"
+          }
+        },
+        "platforms": {
+          "feishu": {
+            "fields": {
+              "appId": {
+                "source": "none",
+                "configured": false,
+                "envKey": "FEISHU_APP_ID",
+                "label": "飞书 App ID"
+              },
+              "appSecret": {
+                "source": "none",
+                "configured": false,
+                "envKey": "FEISHU_APP_SECRET",
+                "label": "飞书 App Secret"
+              },
+              "verifyToken": {
+                "source": "none",
+                "configured": false,
+                "envKey": "FEISHU_VERIFY_TOKEN",
+                "label": "飞书 Verification Token"
+              },
+              "encryptKey": {
+                "source": "none",
+                "configured": false,
+                "envKey": "FEISHU_ENCRYPT_KEY",
+                "label": "飞书 Encrypt Key"
+              },
+              "stream": {
+                "source": "none",
+                "configured": false,
+                "envKey": "FEISHU_STREAM",
+                "label": "飞书长连接"
+              }
+            },
+            "missing": [
+              "FEISHU_APP_ID",
+              "FEISHU_APP_SECRET"
+            ],
+            "configured": false
+          },
+          "dingtalk": {
+            "fields": {
+              "clientId": {
+                "source": "none",
+                "configured": false,
+                "envKey": "DINGTALK_CLIENT_ID",
+                "label": "钉钉 Client ID（AppKey）"
+              },
+              "clientSecret": {
+                "source": "none",
+                "configured": false,
+                "envKey": "DINGTALK_CLIENT_SECRET",
+                "label": "钉钉 Client Secret（AppSecret）"
+              },
+              "robotCode": {
+                "source": "none",
+                "configured": false,
+                "envKey": "DINGTALK_ROBOT_CODE",
+                "label": "钉钉 Robot Code"
+              },
+              "stream": {
+                "source": "none",
+                "configured": false,
+                "envKey": "DINGTALK_STREAM",
+                "label": "钉钉 Stream 长连接"
+              },
+              "aesToken": {
+                "source": "none",
+                "configured": false,
+                "envKey": "DINGTALK_AES_TOKEN",
+                "label": "钉钉 AES Token"
+              },
+              "aesKey": {
+                "source": "none",
+                "configured": false,
+                "envKey": "DINGTALK_AES_KEY",
+                "label": "钉钉 AES Key"
+              }
+            },
+            "missing": [
+              "DINGTALK_CLIENT_ID",
+              "DINGTALK_CLIENT_SECRET"
+            ],
+            "configured": false
+          },
+          "wecom": {
+            "fields": {
+              "corpId": {
+                "source": "none",
+                "configured": false,
+                "envKey": "WECOM_CORP_ID",
+                "label": "企业微信 Corp ID"
+              },
+              "agentId": {
+                "source": "none",
+                "configured": false,
+                "envKey": "WECOM_AGENT_ID",
+                "label": "企业微信 Agent ID"
+              },
+              "secret": {
+                "source": "none",
+                "configured": false,
+                "envKey": "WECOM_SECRET",
+                "label": "企业微信 Secret"
+              },
+              "token": {
+                "source": "none",
+                "configured": false,
+                "envKey": "WECOM_TOKEN",
+                "label": "企业微信 Token"
+              },
+              "aesKey": {
+                "source": "none",
+                "configured": false,
+                "envKey": "WECOM_AES_KEY",
+                "label": "企业微信 EncodingAESKey"
+              }
+            },
+            "missing": [
+              "WECOM_CORP_ID",
+              "WECOM_AGENT_ID",
+              "WECOM_SECRET"
+            ],
+            "configured": false
+          }
+        },
+        "restartRequired": false,
+        "envFile": null,
+        "settingsFile": {
+          "path": "linkhub-config.json",
+          "present": false,
+          "mtime": null
+        }
+      }
+    },
+    "onboarding": {
+      "ok": true,
+      "data": {
+        "generatedAt": "2026-11-12T09:39:26.861Z",
+        "firstRun": true,
+        "startedAt": "2026-11-12T09:38:19.066Z",
+        "envFile": null,
+        "dws": {
+          "available": true,
+          "version": "v1.0.68-beta.1",
+          "source": "tools",
+          "pathHint": "仓库 tools/（pnpm run fetch:dws 下载位置）"
+        },
+        "overall": {
+          "ready": 0,
+          "total": 4,
+          "needsAction": 4
+        },
+        "steps": [
+          {
+            "id": "mail",
+            "label": "邮箱",
+            "state": "needs_user_auth",
+            "summary": "还没有邮箱账号。个人版可直接在页面添加（需要邮箱授权码）。",
+            "hints": [
+              "先到邮箱网页版「设置 → POP3/SMTP/IMAP」开启服务并生成授权码（16 位左右，不是网页登录密码）。",
+              "添加账号并点「测试连接」验证通过后会自动启用真实收信（无需改 .env、无需重启）。",
+              "首轮只建立 UID 基线、不导入历史邮件；测试连接会真实连接一次邮箱服务器（只做 IMAP/SMTP 登录，不发信）。"
+            ],
+            "actions": [
+              {
+                "id": "mail-add-account",
+                "kind": "form",
+                "label": "添加邮箱账号"
+              },
+              {
+                "id": "mail-provider-help",
+                "kind": "link",
+                "label": "去邮箱网页版开启 IMAP/SMTP（QQ 邮箱示例）",
+                "url": "https://mail.qq.com"
+              },
+              {
+                "id": "mail-doctor",
+                "kind": "command",
+                "label": "自检 mail 配置（在 unimsg-connector/ 目录运行；pnpm 不在 PATH 时用 corepack pnpm run …）",
+                "command": "cd unimsg-connector && pnpm run doctor --platform=mail"
+              }
+            ],
+            "detail": {
+              "accounts": [],
+              "filePath": "mail-accounts.json",
+              "issues": [],
+              "mode": "mock",
+              "verifiedCount": 0,
+              "unverifiedCount": 0
+            }
+          },
+          {
+            "id": "dingtalk",
+            "label": "钉钉",
+            "state": "needs_user_auth",
+            "summary": "用钉钉本人账号登录即可，无需机器人应用（需企业已开 CLI 访问）。",
+            "hints": [
+              "点「用钉钉本人账号登录（推荐）」：登录成功后会自动启用本人身份（无需重启），个人事件接收自动启动。",
+              "未完成授权不会改变任何配置（不会出现「已启用但未登录」的状态）；若企业未开 CLI 访问，请联系管理员（清单可复制）。",
+              "登录用的是本机 dws CLI：浏览器授权/设备码确认一次即可，凭据只留在本机。"
+            ],
+            "actions": [
+              {
+                "id": "dingtalk-login",
+                "kind": "api",
+                "label": "用钉钉本人账号登录（推荐，无需机器人应用）",
+                "path": "/api/dingtalk/personal/login",
+                "method": "POST",
+                "payload": {
+                  "mode": "browser"
+                }
+              },
+              {
+                "id": "dingtalk-configure",
+                "kind": "form",
+                "label": "填写钉钉应用凭据（可选，用机器人时）",
+                "path": "/api/app-config",
+                "method": "PUT"
+              },
+              {
+                "id": "dingtalk-admin",
+                "kind": "link",
+                "label": "打开钉钉开发者后台",
+                "url": "https://open-dev.dingtalk.com/"
+              },
+              {
+                "id": "dingtalk-admin-checklist",
+                "kind": "copy",
+                "label": "复制管理员开通清单（CLI 访问 + 登录命令）",
+                "text": "钉钉管理员开通清单（LinkHub 个人版需要企业管理员配合）：\n1. 打开钉钉开发者后台 https://open-dev.dingtalk.com/ ；\n2. 如用「本人账号」收发（推荐，无需机器人应用）：企业管理员在钉钉开放平台开启「CLI 访问管理」（dws 个人身份依赖）；\n3. 如用机器人：创建「企业内部应用」，记录 Client ID / Client Secret，开通机器人发消息权限并配置事件订阅；\n4. 个人登录（本机推荐）：打开 LinkHub「连接账号」→ 钉钉 →「用钉钉本人账号登录（推荐）」；\n   或在本机终端执行：tools\\dws.exe auth login --recommend（登录成功后无交互批量授权推荐权限）；\n5. 机器人凭据可写回 LinkHub「填写钉钉应用凭据」或 .env 的 DINGTALK_CLIENT_ID / DINGTALK_CLIENT_SECRET / DINGTALK_ROBOT_CODE，然后重启后端；\n6. dws 官方 CLI 与文档：https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli 。"
+              },
+              {
+                "id": "dingtalk-doctor",
+                "kind": "command",
+                "label": "自检 dingtalk 配置（在 unimsg-connector/ 目录运行；pnpm 不在 PATH 时用 corepack pnpm run …）",
+                "command": "cd unimsg-connector && pnpm run doctor --platform=dingtalk"
+              }
+            ],
+            "detail": {
+              "identity": {
+                "state": "not_linked",
+                "linked": false,
+                "hint": "尚未登录钉钉本人身份：当前用机器人收发；推荐连接本人账号（免把机器人拉进每个群），登录后自动切换为本人"
+              },
+              "dws": {
+                "available": true,
+                "version": "v1.0.68-beta.1",
+                "source": "tools",
+                "pathHint": "仓库 tools/（pnpm run fetch:dws 下载位置）"
+              },
+              "identityChannelsReal": false,
+              "botAvailable": false,
+              "runtimeMode": "mock",
+              "runtimePolicy": "auto",
+              "effectiveSend": "mock",
+              "effectiveReceive": "mock",
+              "missing": [
+                "DINGTALK_CLIENT_ID",
+                "DINGTALK_CLIENT_SECRET",
+                "DINGTALK_AES_TOKEN",
+                "DINGTALK_AES_KEY"
+              ]
+            }
+          },
+          {
+            "id": "feishu",
+            "label": "飞书",
+            "state": "needs_admin",
+            "summary": "缺少飞书应用凭据：个人用户需企业管理员创建自建应用；拿到 App ID / Secret 后在 LinkHub 填写（或写 .env）并重启。",
+            "hints": [
+              "还缺：FEISHU_APP_ID / FEISHU_APP_SECRET（填到 LinkHub 配置或 .env 后重启）",
+              "用长连接时 Verify Token 可不填（默认 FEISHU_STREAM=true，免公网回调）；只有改用 HTTP 回调模式才需要 Verification Token。",
+              "重定向 URL 必须是：http://localhost:3003/api/feishu/oauth/callback（与飞书后台逐字一致）。",
+              "个人版通常需要企业管理员操作；配好后回到本页刷新。"
+            ],
+            "actions": [
+              {
+                "id": "feishu-configure",
+                "kind": "form",
+                "label": "填写飞书应用凭据（App ID / App Secret）",
+                "path": "/api/app-config",
+                "method": "PUT"
+              },
+              {
+                "id": "feishu-admin",
+                "kind": "link",
+                "label": "打开飞书开放平台（应用后台）",
+                "url": "https://open.feishu.cn/app"
+              },
+              {
+                "id": "feishu-admin-checklist",
+                "kind": "copy",
+                "label": "复制管理员开通清单（权限 + 回调 URL + .env 键名 + 重启）",
+                "text": "飞书管理员开通清单（LinkHub 个人版需要企业管理员配合）：\n1. 打开飞书开放平台 https://open.feishu.cn/app ，创建/选择一个「企业自建应用」；\n2. 权限管理：按下面清单开通消息权限（缺权限时 OAuth 后仍读不到消息）：\n   im:message、im:message.send_as_user、im:resource、im:message.p2p_msg:get_as_user、im:message.group_msg:get_as_user、im:chat:read、offline_access\n3. 安全设置 → 重定向 URL：添加 http://localhost:3003/api/feishu/oauth/callback（照抄，含 /api/feishu/oauth/callback）；\n4. 事件订阅：默认用长连接（FEISHU_STREAM=true）可免公网回调，此时 Verify Token / Encrypt Key 都可不填；只有改用 HTTP 回调模式才必须填 Verification Token；\n5. 发布应用；\n6. 运行模式：FEISHU_MODE=auto/real（显式 mock 会一直演示，不会真实收发）。\n7. 在 LinkHub 点「填写飞书应用凭据（App ID / App Secret）」填入凭据（也可写 .env 的 FEISHU_APP_ID / FEISHU_APP_SECRET），然后重启后端（保存后界面会提示）；\n8. 回到「连接账号」页点「连接飞书本人账号」，用本人账号完成 OAuth 授权。"
+              },
+              {
+                "id": "feishu-doctor",
+                "kind": "command",
+                "label": "自检 feishu 配置（在 unimsg-connector/ 目录运行；pnpm 不在 PATH 时用 corepack pnpm run …）",
+                "command": "cd unimsg-connector && pnpm run doctor --platform=feishu"
+              }
+            ],
+            "detail": {
+              "identity": {
+                "state": "unavailable",
+                "linked": false,
+                "hint": "未配置 FEISHU_APP_ID / FEISHU_APP_SECRET，无法连接飞书本人身份；请先在 .env 填写飞书自建应用凭据，然后到「平台账号」页点飞书卡片的「连接本人账号」"
+              },
+              "redirectUri": "http://localhost:3003/api/feishu/oauth/callback",
+              "scopes": [
+                "im:message",
+                "im:message.send_as_user",
+                "im:resource",
+                "im:message.p2p_msg:get_as_user",
+                "im:message.group_msg:get_as_user",
+                "im:chat:read",
+                "offline_access"
+              ],
+              "missing": [
+                "FEISHU_APP_ID",
+                "FEISHU_APP_SECRET"
+              ],
+              "warnings": [
+                "已配置飞书长连接（FEISHU_STREAM），但当前为 Mock 模拟、不会实际连接"
+              ],
+              "identityChannelsReal": false,
+              "effectiveSend": "mock",
+              "effectiveReceive": "mock"
+            }
+          },
+          {
+            "id": "wecom",
+            "label": "企业微信",
+            "state": "needs_admin",
+            "summary": "缺少企业微信自建应用凭据：需要企业管理员创建应用并提供 Corp ID / Agent ID / Secret。",
+            "hints": [
+              "缺少变量：WECOM_CORP_ID / WECOM_SECRET / WECOM_AGENT_ID / WECOM_TOKEN / WECOM_AES_KEY",
+              "个人版无法自行开通企业微信，需要企业管理员配合；拿到凭据后在 LinkHub 填写或写 .env 并重启。"
+            ],
+            "actions": [
+              {
+                "id": "wecom-configure",
+                "kind": "form",
+                "label": "填写企业微信凭据（Corp ID / Agent ID / Secret）",
+                "path": "/api/app-config",
+                "method": "PUT"
+              },
+              {
+                "id": "wecom-admin",
+                "kind": "link",
+                "label": "打开企业微信管理后台",
+                "url": "https://work.weixin.qq.com/"
+              },
+              {
+                "id": "wecom-admin-checklist",
+                "kind": "copy",
+                "label": "复制管理员开通清单（凭据 + 可信 IP + 重启）",
+                "text": "企业微信管理员开通清单（LinkHub 个人版需要企业管理员配合）：\n1. 打开企业微信管理后台 https://work.weixin.qq.com/ → 应用管理 → 自建，创建应用并记录 AgentId / Secret / 企业 CorpID；\n2. 应用「接收消息」：设置 Token 与 EncodingAESKey，回调 URL 指向 LinkHub 的 /api/wecom/callback（需公网可达）；\n   本机演示端口：http://127.0.0.1:3003/api/wecom/callback（公网需用域名/内网穿透）\n3. 应用「企业可信 IP」：添加运行 LinkHub 的机器的公网出口 IP（否则发送会报 60020）；\n4. 把凭据写回 LinkHub：点「填写企业微信凭据」，或写入 .env 的 WECOM_CORP_ID / WECOM_AGENT_ID / WECOM_SECRET / WECOM_TOKEN / WECOM_AES_KEY，然后重启后端。"
+              },
+              {
+                "id": "wecom-doctor",
+                "kind": "command",
+                "label": "自检 wecom 配置（在 unimsg-connector/ 目录运行；pnpm 不在 PATH 时用 corepack pnpm run …）",
+                "command": "cd unimsg-connector && pnpm run doctor --platform=wecom"
+              }
+            ],
+            "detail": {
+              "missing": [
+                "WECOM_CORP_ID",
+                "WECOM_SECRET",
+                "WECOM_AGENT_ID",
+                "WECOM_TOKEN",
+                "WECOM_AES_KEY"
+              ],
+              "warnings": [],
+              "configured": false,
+              "mode": "mock",
+              "policy": "auto"
+            }
+          }
+        ]
+      }
+    },
+    "accounts": {
+      "ok": true,
+      "data": [
+        {
+          "platform": "feishu",
+          "label": "飞书",
+          "configured": false,
+          "policy": "auto",
+          "mode": "mock",
+          "canReceive": false,
+          "canSend": false,
+          "missing": [
+            "FEISHU_APP_ID",
+            "FEISHU_APP_SECRET"
+          ],
+          "warnings": [
+            "已配置飞书长连接（FEISHU_STREAM），但当前为 Mock 模拟、不会实际连接"
+          ],
+          "reason": "飞书未配置有效凭据 → auto 回退本地模拟（回写会标注\"模拟发送\"）",
+          "identity": {
+            "policy": "auto",
+            "effectiveSend": "mock",
+            "effectiveReceive": "mock",
+            "user": {
+              "state": "unavailable",
+              "linked": false,
+              "hint": "未配置 FEISHU_APP_ID / FEISHU_APP_SECRET，无法连接飞书本人身份；请先在 .env 填写飞书自建应用凭据，然后到「平台账号」页点飞书卡片的「连接本人账号」",
+              "canLink": false,
+              "linkMethod": "oauth"
+            },
+            "botAvailable": false,
+            "botHint": "飞书机器人通道不可用：缺 FEISHU_APP_ID / FEISHU_APP_SECRET（可运行 pnpm run doctor 自检）",
+            "receiveHint": "本地模拟接收（不连真实平台）",
+            "sendHint": "模拟发送（本地 Mock，界面标注「模拟发送」，不调用真实平台）"
+          }
+        },
+        {
+          "platform": "dingtalk",
+          "label": "钉钉",
+          "configured": false,
+          "policy": "auto",
+          "mode": "mock",
+          "canReceive": false,
+          "canSend": false,
+          "missing": [
+            "DINGTALK_CLIENT_ID",
+            "DINGTALK_CLIENT_SECRET",
+            "DINGTALK_AES_TOKEN",
+            "DINGTALK_AES_KEY"
+          ],
+          "warnings": [
+            "未开启 DINGTALK_STREAM，且没有配 HTTP 回调的 Token/AES Key：暂时收不到消息"
+          ],
+          "reason": "钉钉未配置有效凭据 → auto 回退本地模拟（回写会标注\"模拟发送\"）",
+          "identity": {
+            "policy": "auto",
+            "effectiveSend": "mock",
+            "effectiveReceive": "mock",
+            "user": {
+              "state": "not_linked",
+              "linked": false,
+              "detail": "dws v1.0.68-beta.1",
+              "hint": "尚未登录钉钉本人身份：当前用机器人收发；推荐连接本人账号（免把机器人拉进每个群），登录后自动切换为本人",
+              "canLink": true,
+              "linkMethod": "cli",
+              "loginCommand": "C:\\Users\\zx\\AppData\\Local\\Temp\\linkhub-r3-sandbox\\unimsg-connector\\tools\\dws.exe auth login"
+            },
+            "botAvailable": false,
+            "botHint": "钉钉机器人通道不可用：缺 DINGTALK_CLIENT_ID / DINGTALK_CLIENT_SECRET / DINGTALK_AES_TOKEN / DINGTALK_AES_KEY（可运行 pnpm run doctor 自检）",
+            "receiveHint": "本地模拟接收（不连真实平台）",
+            "sendHint": "模拟发送（本地 Mock，界面标注「模拟发送」，不调用真实平台）"
+          }
+        },
+        {
+          "platform": "wecom",
+          "label": "企业微信",
+          "configured": false,
+          "policy": "auto",
+          "mode": "mock",
+          "canReceive": false,
+          "canSend": false,
+          "missing": [
+            "WECOM_CORP_ID",
+            "WECOM_SECRET",
+            "WECOM_AGENT_ID",
+            "WECOM_TOKEN",
+            "WECOM_AES_KEY"
+          ],
+          "warnings": [],
+          "reason": "企业微信未配置有效凭据 → auto 回退本地模拟（回写会标注\"模拟发送\"）"
+        },
+        {
+          "platform": "mail",
+          "label": "邮箱",
+          "configured": false,
+          "policy": "auto",
+          "mode": "mock",
+          "canReceive": false,
+          "canSend": false,
+          "missing": [
+            "MAIL_ACCOUNTS（或 MAIL_<KEY>_ADDRESS / MAIL_<KEY>_AUTH_CODE）"
+          ],
+          "warnings": [
+            "未配置任何邮箱账号"
+          ],
+          "reason": "没有可用的邮箱账号（在「连接账号」页添加并验证后自动启用真实邮箱）",
+          "accounts": [],
+          "issues": []
+        }
+      ]
+    },
+    "mailAccounts": null
+  },
+  "log": [
+    {
+      "step": "A-inbox",
+      "at": "2026-11-12T09:38:36.279Z",
+      "banner": "首次使用：先连接你自己的账号\n邮箱、钉钉、飞书、企业微信逐项连接；不用把机器人拉进群。其中 2 项需管理员开通、2 项可自己登录/添加。\n去连接账号\n先体验演示\n稍后再说",
+      "summary": "需要管理员配置（2 个平台） · 另有 2 项可自己登录/添加"
+    },
+    {
+      "step": "A-dismiss",
+      "at": "2026-11-12T09:38:40.777Z",
+      "dismiss": {
+        "ok": true,
+        "tag": "BUTTON",
+        "text": "稍后再说"
+      },
+      "afterDismiss": false,
+      "flag": "1",
+      "afterReload": false
+    },
+    {
+      "step": "B-connect",
+      "at": "2026-11-12T09:38:44.030Z",
+      "restartBanner": false,
+      "pnpm": false,
+      "envModified": false,
+      "footerEnv": true,
+      "awkwardDeploy": true
+    },
+    {
+      "step": "B-accounts",
+      "at": "2026-11-12T09:38:47.287Z",
+      "envModified": false,
+      "restart": true,
+      "saved": false
+    },
+    {
+      "step": "B-about",
+      "at": "2026-11-12T09:38:49.184Z",
+      "localBackend": true,
+      "accounts": true
+    },
+    {
+      "step": "C-cancel",
+      "at": "2026-11-12T09:38:58.152Z",
+      "restartBanner": false,
+      "pnpm": false,
+      "needsAuth": true,
+      "configureEntry": true,
+      "userWording": false,
+      "modalReady": true,
+      "close": {
+        "ok": true
+      },
+      "card": "钉钉\n需本人授权"
+    },
+    {
+      "step": "C-logout",
+      "at": "2026-11-12T09:39:03.937Z",
+      "status": {
+        "available": true,
+        "version": "v1.0.68-beta.1",
+        "authenticated": false,
+        "state": "not_linked",
+        "detail": "dws v1.0.68-beta.1",
+        "hint": "尚未登录钉钉本人身份：当前用机器人收发；推荐连接本人账号（免把机器人拉进每个群），登录后自动切换为本人",
+        "loginCommand": "C:\\Users\\zx\\AppData\\Local\\Temp\\linkhub-r3-sandbox\\unimsg-connector\\tools\\dws.exe auth login",
+        "loginInProgress": false
+      },
+      "identity": {
+        "source": "none",
+        "configured": false,
+        "envKey": "DINGTALK_IDENTITY",
+        "label": "钉钉收发身份策略"
+      }
+    },
+    {
+      "step": "D-test",
+      "at": "2026-11-12T09:39:08.395Z",
+      "ok": true,
+      "text": "连接测试失败\n请检查邮箱地址、授权码（不是登录密码）与服务商 IMAP 设置。\n这是页面添加的账号：请核对邮箱地址 / 授权码 / IMAP 服务器； 如果是 .env 里的旧账号，请修改 .env 后重启后端。\n技术详情（给管理员看）",
+      "toast": "邮箱连接测试失败，请检查授权码与服务器地址\n邮箱连接测试失败，请检查授权码与服务器地址"
+    },
+    {
+      "step": "D-save",
+      "at": "2026-11-12T09:39:11.848Z",
+      "toast": "邮箱账号已保存为未验证账号：点「测试连接」验证通过后才会真实收信（首轮只建立 UID 基线，不会导入历史邮件）。\n邮箱账号已保存为未验证账号：点「测试连接」验证通过后才会真实收信（首轮只建立 UID 基线，不会导入历史邮件）。",
+      "unverified": true,
+      "notReady": true
+    },
+    {
+      "step": "D-delete",
+      "at": "2026-11-12T09:39:14.881Z",
+      "empty": true,
+      "toast": "已删除本地邮箱账号\n已删除本地邮箱账号"
+    },
+    {
+      "step": "E-demo",
+      "at": "2026-11-12T09:39:20.152Z",
+      "toast": "已注入一条飞书消息\n已注入一条飞书消息",
+      "hasMessage": true
+    },
+    {
+      "step": "E-compose",
+      "at": "2026-11-12T09:39:23.591Z",
+      "hint": true,
+      "send": {
+        "ok": true,
+        "disabled": false
+      },
+      "toast": "已模拟发送（不会真的发到平台）…可在「全链路回放」查看状态回流\n已模拟发送（不会真的发到平台）…可在「全链路回放」查看状态回流"
+    }
+  ]
+}

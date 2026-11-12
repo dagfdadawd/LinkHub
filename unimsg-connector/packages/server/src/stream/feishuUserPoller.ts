@@ -193,6 +193,12 @@ export interface PollUserOnceResult {
   duplicates: number;
   /** 跳过（自己发的/撤回/系统/未知类型）条数 */
   skipped: number;
+  /**
+   * 水位内「已经处理过」的消息条数：拉取按秒下取整，每轮都会把水位同一秒的
+   * 最后一条重新拉回来，这里直接跳过、不再 ingest —— 否则每轮都会重复写
+   * `redelivered` trace 并触发一次全量落盘（长期运行会磁盘抖动、状态文件膨胀）。
+   */
+  alreadySeen: number;
   /** 发生错误的会话数 */
   failedChats: number;
 }
@@ -228,7 +234,7 @@ export async function pollFeishuUserOnce(deps: PollUserOnceDeps): Promise<PollUs
   const fetchMessages = deps.fetchMessages ?? fetchChatMessages;
   const onError = deps.onError ?? ((scope, e) => console.warn(`[feishu-user] ${scope}：${errMessage(e)}`));
   const result: PollUserOnceResult = {
-    baselined: 0, fetchedChats: 0, fetchedMessages: 0, added: 0, duplicates: 0, skipped: 0, failedChats: 0,
+    baselined: 0, fetchedChats: 0, fetchedMessages: 0, added: 0, duplicates: 0, skipped: 0, alreadySeen: 0, failedChats: 0,
   };
 
   const token = await deps.getToken();
@@ -263,9 +269,20 @@ export async function pollFeishuUserOnce(deps: PollUserOnceDeps): Promise<PollUs
       result.fetchedMessages += batch.messages.length;
       let maxMark = item.sinceMs;
       for (const raw of batch.messages) {
+        const t = Number(raw.create_time);
+        // 拉取按「秒」下取整，水位同一秒的最后一条每轮都会被重新拉回来：
+        // 它已经在上一轮处理过（入库或按规则跳过），这里直接算「已见过」，
+        // 不再 ingest —— 否则每轮重复写 redelivered trace + 全量落盘。
+        if (Number.isFinite(t) && t > 0 && t <= item.sinceMs) {
+          result.alreadySeen += 1;
+          continue;
+        }
         const msg = mapFeishuUserMessage(raw, item.chat, deps.state.selfOpenId, { now });
         if (!msg) {
           result.skipped += 1;
+          // 自己发的/撤回/系统/未知类型：也算「处理过」，水位照常推进，
+          // 避免它们恰好是最新一条时每轮都被重新拉回来
+          if (Number.isFinite(t) && t > maxMark) maxMark = t;
           continue;
         }
         const r = await deps.ingest(msg);
@@ -274,10 +291,9 @@ export async function pollFeishuUserOnce(deps: PollUserOnceDeps): Promise<PollUs
           result.added += 1;
           deps.onMessage?.(msg);
         }
-        const t = Number(raw.create_time);
         if (Number.isFinite(t) && t > maxMark) maxMark = t;
       }
-      // 水位只推进到「实际处理到的最后一条」；空批次不动水位
+      // 水位推进到本批「处理过的最后一条」（含按规则跳过的）；空批次不动水位
       if (maxMark > item.sinceMs) deps.state.chats[item.chat.chatId] = maxMark;
     } catch (e) {
       result.failedChats += 1;
@@ -366,10 +382,11 @@ export function startFeishuUserPoller(svc: MessageService): FeishuUserPollerHand
         persist();
       }
       if (result.fetchedChats > 0 || result.added > 0) persist();
-      if (result.added > 0 || result.duplicates > 0 || result.skipped > 0) {
+      if (result.added > 0 || result.duplicates > 0 || result.skipped > 0 || result.alreadySeen > 0) {
         console.log(
           `[feishu-user] 本轮：检查 ${result.fetchedChats} 个会话，拉取 ${result.fetchedMessages} 条，`
-          + `新入库 ${result.added} 条，重复 ${result.duplicates} 条，跳过 ${result.skipped} 条`,
+          + `新入库 ${result.added} 条，重复 ${result.duplicates} 条，跳过 ${result.skipped} 条，`
+          + `已见过 ${result.alreadySeen} 条`,
         );
       }
       if (result.failedChats === 0) setFeishuReceiveError(undefined);

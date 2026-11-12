@@ -259,23 +259,54 @@ export async function pollMailFolder(args: PollMailFolderArgs): Promise<PollMail
   return { baseline: false, reset, watermark, added, fetched, batches };
 }
 
-export function startMailPoller(svc: MessageService): void {
+/** 邮箱轮询句柄：个人版运行时增删账号后可热加载，无需重启后端 */
+export interface MailPollerHandle {
+  /** 立即跑一轮（热加载/手动触发） */
+  pollNow(): Promise<void>;
+  /** 账号变化后热加载：清空旧水位不必要（按账号 key 续传），直接补跑一轮并打日志 */
+  reload(reason?: string): Promise<void>;
+  /** 停止定时轮询（服务关闭/单测清理） */
+  stop(): void;
+}
+
+let activePoller: MailPollerHandle | undefined;
+
+/**
+ * 账号变更后热加载邮箱轮询（进程未启动轮询时返回 false，由调用方决定是否提示用户）。
+ * 例如「连接账号」页新增/删除本地邮箱账号后调用：不用重启后端即可生效。
+ */
+export function reloadMailPoller(reason = '邮箱账号变更'): boolean {
+  const handle = activePoller;
+  if (!handle) return false;
+  console.log(`[mail] ${reason}：立即执行一轮轮询（热加载，无需重启）`);
+  void handle.reload(reason).catch(() => undefined);
+  return true;
+}
+
+/** 停止邮箱轮询（服务关闭/单测清理；幂等） */
+export function stopMailPoller(): void {
+  activePoller?.stop();
+  activePoller = undefined;
+}
+
+export function startMailPoller(svc: MessageService): MailPollerHandle | null {
+  activePoller = undefined;
   if (!config.mail.enabled) {
     // 区分「用户显式 MAIL_ENABLED=false」与「没有配置任何邮箱账号」：
     // 旧文案在后者也会说「MAIL_ENABLED=false」，用户根本没设过这个变量，会误以为配置被改了（P3-5）。
     if (config.mail.enabledExplicit) {
       console.log('[mail] 轮询已关闭（MAIL_ENABLED=false，用户显式关闭），跳过邮箱轮询');
     } else if (config.mail.accounts.length === 0) {
-      console.log('[mail] 未配置邮箱账号，跳过邮箱轮询（填 MAIL_<KEY>_ADDRESS / MAIL_<KEY>_AUTH_CODE 后自动开启）');
+      console.log('[mail] 未配置邮箱账号，跳过邮箱轮询（可在「连接账号」页添加，或填 MAIL_<KEY>_ADDRESS / MAIL_<KEY>_AUTH_CODE）');
     } else {
       console.log('[mail] 邮箱轮询未启用，跳过（检查 MAIL_ENABLED / MAIL_MODE 配置）');
     }
-    return;
+    return null;
   }
   // 强制 Mock / 凭据不足时绝不连真实 IMAP（e2e 与本地演示都可安全开 MAIL_ENABLED）
   if (modeOf(Platform.MAIL) !== 'real') {
     console.log(`[mail] 当前邮箱通道为 ${modeOf(Platform.MAIL)}（MAIL_MODE / 凭据），跳过真实 IMAP 轮询`);
-    return;
+    return null;
   }
   if (config.mail.issues.length > 0) {
     for (const issue of config.mail.issues) {
@@ -285,7 +316,7 @@ export function startMailPoller(svc: MessageService): void {
   }
   if (config.mail.accounts.length === 0) {
     console.warn('[mail] 没有任何可用邮箱账号，检查 MAIL_ACCOUNTS 或 MAIL_<KEY>_ADDRESS / MAIL_<KEY>_AUTH_CODE');
-    return;
+    return null;
   }
 
   const stateFile = resolveStateFile();
@@ -311,6 +342,8 @@ export function startMailPoller(svc: MessageService): void {
 
   let running = false;
 
+  // 每轮都从 config.mail.accounts 读取：个人版「连接账号」页运行时增删账号后，
+  // 通过 reloadMailPoller() 立即生效，无需重启。
   const pollOnce = async () => {
     if (running) return;
     running = true;
@@ -360,5 +393,17 @@ export function startMailPoller(svc: MessageService): void {
 
   console.log(`[mail] 轮询已启动，间隔 ${Math.round(config.mail.pollMs / 1000)}s，账号：${config.mail.accounts.map((a) => `${a.label}[${a.folders.join(',')}]@${a.imapHost}`).join(' / ')}`);
   void pollOnce();
-  setInterval(() => void pollOnce(), config.mail.pollMs);
+  const timer = setInterval(() => void pollOnce(), config.mail.pollMs);
+  const handle: MailPollerHandle = {
+    pollNow: () => pollOnce(),
+    reload: async (reason?: string) => {
+      console.log(`[mail] 邮箱账号变更（${reason ?? '热加载'}）：立即补跑一轮`);
+      await pollOnce();
+    },
+    stop: () => {
+      clearInterval(timer);
+    },
+  };
+  activePoller = handle;
+  return handle;
 }

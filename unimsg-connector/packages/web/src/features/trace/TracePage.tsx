@@ -13,6 +13,24 @@ import { StatusBadge } from '../../components/StatusBadge';
 import { EmptyState } from '../../components/EmptyState';
 import { DrawerSection } from '../../components/DrawerSection';
 
+/**
+ * 把后端技术细节翻成客户能看懂的中文（P2-7）。
+ * 例：`待办(0.92) via rules` → `规则识别（置信度 0.92）`。
+ * 不认识的内容原样返回，绝不臆造。
+ */
+export function customerTraceDetail(detail?: string): string | undefined {
+  if (!detail) return detail;
+  const matched = detail.trim().match(/^(.+?)[(（]([\d.]+)[)）]\s*via\s*(rules|llm)\s*$/i);
+  if (matched) {
+    const source = matched[3].toLowerCase() === 'llm' ? 'AI 识别' : '规则识别';
+    return `${source}（置信度 ${matched[2]}）`;
+  }
+  return detail
+    .replace(/\s*via\s*rules\b/gi, '（规则识别）')
+    .replace(/\s*via\s*llm\b/gi, '（AI 识别）')
+    .replace(/\bconversationId\b/gi, '会话 ID');
+}
+
 /** 事件文案与色相：统一走语义变量，明暗主题自动跟随 */
 const EVENT_META: Record<string, { label: string; color: string }> = {
   received: { label: '接收', color: 'var(--text-3)' },
@@ -117,7 +135,22 @@ export function TracePage() {
       </header>
 
       {!selected ? (
-        <EmptyState title="选择一条消息" description="从上方下拉框中选择消息，即可查看它的全链路日志。" />
+        <EmptyState
+          title="选择一条消息"
+          description="先从收件箱选一条消息，或在上方下拉框选择；也可以先去连接账号让真实消息进来。"
+          action={
+            (
+              <div className="empty-state__actions">
+                <Button size="small" type="primary" onClick={() => navigate('/inbox')}>
+                  去收件箱选一条
+                </Button>
+                <Button size="small" type="link" onClick={() => navigate('/connect')}>
+                  连接账号
+                </Button>
+              </div>
+            )
+          }
+        />
       ) : (
         <div className="trace-layout">
           <div className="trace-side">
@@ -202,7 +235,9 @@ export function TracePage() {
                           </span>
                           <span className="trace-event__time">{formatClock(entry.at)}</span>
                         </div>
-                        {entry.detail && <div className="trace-event__detail">{entry.detail}</div>}
+                        {entry.detail && (
+                          <div className="trace-event__detail">{customerTraceDetail(entry.detail)}</div>
+                        )}
                       </div>
                     </li>
                   );

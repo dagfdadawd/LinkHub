@@ -1,0 +1,112 @@
+{
+  "modalUp": true,
+  "modalReady": true,
+  "modalGone": true,
+  "closeClick": {
+    "ok": true,
+    "clicked": "关闭",
+    "tag": "BUTTON",
+    "cls": "ant-btn css-o57yyn ant-btn-default ant-btn-color-default ant-btn-variant-outlined",
+    "count": 1
+  },
+  "checks": {
+    "noRestartBanner": true,
+    "noPnpm": true,
+    "noUserIdentityLeak": true,
+    "dingtalkStillNeedsAuth": true,
+    "configureEntryRetained": true,
+    "identitySourceNone": true,
+    "identityConfiguredFalse": true,
+    "restartRequiredFalse": true,
+    "settingsFileAbsent": true,
+    "onboardingStateNeedsUserAuth": true,
+    "onboardingActionDingtalkLogin": true,
+    "noFalseEnvAlert": true
+  },
+  "reloadFlags": {
+    "noRestartBanner": true,
+    "noPnpm": true,
+    "configureEntryRetained": true
+  },
+  "accountFlags": {
+    "savedNeedsRestart": false,
+    "envModified": false,
+    "visibleAlerts": [],
+    "toasts": [],
+    "staticRestartMentions": [
+      "当前平台通道是「演示模式」：不会真实收发。可到「连接账号 → 平台应用配置」填写应用凭据并重启后端，再回来连接。",
+      "当前平台是「演示模式」运行态（不会真实收发）：可以先登录本人账号（无需机器人应用）；登录后到「连接账号」启用「仅用本人身份」（热应用、无需重启），才会真实收发。"
+    ],
+    "staticEnvMentions": []
+  },
+  "apiAfterCancel": {
+    "appConfig": {
+      "identityDingtalk": {
+        "source": "none",
+        "configured": false,
+        "envKey": "DINGTALK_IDENTITY",
+        "label": "钉钉收发身份策略"
+      },
+      "restartRequired": false,
+      "settingsFile": {
+        "path": "linkhub-config.json",
+        "present": false,
+        "mtime": null
+      }
+    },
+    "onboarding": {
+      "state": "needs_user_auth",
+      "actions": [
+        "dingtalk-login",
+        "dingtalk-configure",
+        "dingtalk-admin",
+        "dingtalk-admin-checklist",
+        "dingtalk-doctor"
+      ]
+    },
+    "accountsDingtalk": {
+      "configured": false,
+      "policy": "auto",
+      "canReceive": false,
+      "canSend": false
+    },
+    "status": {
+      "authenticated": false,
+      "state": "not_linked",
+      "loginInProgress": true
+    }
+  },
+  "apiWhileModal": {
+    "identityDingtalk": {
+      "source": "none",
+      "configured": false,
+      "envKey": "DINGTALK_IDENTITY",
+      "label": "钉钉收发身份策略"
+    },
+    "settingsFile": {
+      "path": "linkhub-config.json",
+      "present": false,
+      "mtime": null
+    }
+  },
+  "logout": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "ok": true,
+        "authenticated": false
+      }
+    }
+  },
+  "statusAfterLogout": {
+    "available": true,
+    "version": "v1.0.68-beta.1",
+    "authenticated": false,
+    "state": "not_linked",
+    "detail": "dws v1.0.68-beta.1",
+    "hint": "尚未登录钉钉本人身份：当前用机器人收发；推荐连接本人账号（免把机器人拉进每个群），登录后自动切换为本人",
+    "loginCommand": "C:\\Users\\zx\\Desktop\\LinkHub\\unimsg-connector\\tools\\dws.exe auth login",
+    "loginInProgress": false
+  }
+}

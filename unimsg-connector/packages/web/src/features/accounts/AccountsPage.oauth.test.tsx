@@ -4,6 +4,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { App as AntApp } from 'antd';
 import type { PlatformIdentityView, UserIdentityStatus } from '@unimsg/shared';
 import { ACCOUNTS } from '../../services/mock/fixtures';
@@ -83,9 +84,11 @@ function makeState(patch: Partial<typeof hoisted.state> = {}) {
 
 function renderPage() {
   render(
-    <AntApp>
-      <AccountsPage />
-    </AntApp>,
+    <MemoryRouter>
+      <AntApp>
+        <AccountsPage />
+      </AntApp>
+    </MemoryRouter>,
   );
 }
 

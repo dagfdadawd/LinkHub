@@ -19,3 +19,10 @@ dist/
 .shots/
 # 运行期数据快照（DATA_DIR 指向这里时产生，不进仓库）
 data/
+
+# 内置工具（pnpm run fetch:dws 下载的 dws 可执行文件，约 25MB，不进仓库）
+tools/
+# 本地导入的邮箱账号（含授权码！personal 版「连接账号」页保存，绝不进仓库）
+.linkhub-mail-accounts.json
+# 本地应用配置（GUI 填写的平台凭据/模式，含 App Secret，绝不进仓库；有 DATA_DIR 时在 DATA_DIR 下）
+.linkhub-config.json

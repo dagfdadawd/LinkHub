@@ -15,10 +15,15 @@ import { RateLimiter } from './services/rateLimiter';
 import { MessageService } from './services/message';
 import { startDingtalkStream } from './stream/dingtalkStream';
 import { startFeishuStream } from './stream/feishuStream';
-import { startMailPoller } from './stream/mailPoller';
-import { startFeishuUserPoller, type FeishuUserPollerHandle } from './stream/feishuUserPoller';
-import { startDingtalkPersonalStream, type DingtalkPersonalStream } from './stream/dingtalkPersonalStream';
+import { reloadMailPoller, startMailPoller, stopMailPoller } from './stream/mailPoller';
+import { initMailAccounts } from './services/mailAccounts';
+import {
+  IDENTITY_CHANNELS_RECONCILE_MS,
+  initIdentityChannels,
+  reconcileIdentityChannels,
+} from './services/identityChannels';
 import { identityStartupLines, warmIdentityProbes } from './services/identity';
+import { maybeAutoEnableDingtalkPersonalIdentity } from './services/personalIdentity';
 import { dingtalkPersonalClient } from './connectors/dingtalkPersonal';
 import { initWs, wsBroadcast } from './ws';
 
@@ -43,6 +48,28 @@ const svc = new MessageService(
   new RateLimiter(config.sendMaxRetry, config.retryBaseMs),
   wsBroadcast,
 );
+
+/**
+ * 邮箱账号「运行时导入」初始化：
+ *  - 启动时把本地文件（DATA_DIR/mail-accounts.json 或 .linkhub-mail-accounts.json）并入 config.mail.accounts；
+ *  - 运行期增删账号 → 热加载：已有轮询器则立刻补跑一轮；启动时因无账号没起来的话，按需拉起（仅真实模式）。
+ * 个人版用户因此不需要改 .env / 重启后端。
+ */
+const mailAccountsStore = initMailAccounts({
+  onChange: () => {
+    // P0-3：账号增删/验证后 config.runtime[MAIL] 已重算；据此启停/热加载轮询，无需重启
+    const mailReal = config.runtime[Platform.MAIL].mode === 'real';
+    if (!mailReal || config.mail.accounts.length === 0) {
+      stopMailPoller();
+      return;
+    }
+    if (!reloadMailPoller('邮箱账号变更')) {
+      // 典型场景：启动时没有任何可用账号 → startMailPoller 当时直接跳过；运行中账号可用后按需启动。
+      startMailPoller(svc);
+    }
+  },
+});
+void mailAccountsStore;
 
 const corsOrigins = parseCorsOrigins(process.env.CORS_ORIGINS);
 const app = createApp(svc, { corsOrigins });
@@ -143,20 +170,31 @@ startMailPoller(svc);
 // ---------------------------------------------------------------------------
 // 本人身份通道（飞书用户轮询 / 钉钉 dws 个人事件）
 //
-// 先异步预热身份探测（钉钉 auth status 实测 1–3s，绝不阻塞 listen），再决定是否启动：
-//  - 平台为模拟模式 / 未连接本人身份 → 只打印中文原因，不启动任何真实通道；
-//  - 只有真实可用的本人身份才起轮询/子进程（契约 §1、§10.2）。
+// 由 IdentityChannelsCoordinator 统一按「当前身份是否可用」start/stop：
+//  - 启动 warm 之后 align 一次；运行中完成登录（浏览器授权成功）也会自动启动接收通道；
+//  - 平台为模拟模式 / 未连接本人身份 → 不起任何真实通道（契约 §1、§10.2）；
+//  - 30–60s 兜底 reconcile：登录可能在本机终端外部完成，没有回调可依赖。
 // ---------------------------------------------------------------------------
-let feishuUserPoller: FeishuUserPollerHandle | null = null;
-let dingtalkPersonalStream: DingtalkPersonalStream | null = null;
+const identityChannels = initIdentityChannels(svc);
 
 void (async () => {
   await warmIdentityProbes().catch((e) => {
     console.warn('[unimsg] 身份探测失败（不影响其他平台）：', e instanceof Error ? e.message : e);
   });
   for (const line of identityStartupLines()) console.log(line);
-  feishuUserPoller = startFeishuUserPoller(svc);
-  dingtalkPersonalStream = startDingtalkPersonalStream(svc);
+  // ① 启动 warm 之后对齐一次
+  await identityChannels.reconcile();
+  // 登录子进程结束（通常是浏览器授权成功）→ 若尚无机器人凭据且身份策略为 auto，
+  // 自动热应用「仅本人身份」（未完成授权/未登录则什么都不改），再对齐接收通道
+  dingtalkPersonalClient().setLoginFinishedHandler(() => {
+    void (async () => {
+      await maybeAutoEnableDingtalkPersonalIdentity('dws 登录会话结束').catch(() => undefined);
+      reconcileIdentityChannels('钉钉登录会话结束');
+    })();
+  });
+  // ⑥ 兜底定时 reconcile（unref：不阻塞进程退出）
+  const timer = setInterval(() => reconcileIdentityChannels('定时对齐'), IDENTITY_CHANNELS_RECONCILE_MS);
+  timer.unref?.();
 })().catch((e) => {
   console.error('[unimsg] 本人身份通道启动失败（其他平台不受影响）：', e instanceof Error ? e.message : e);
 });
@@ -168,8 +206,8 @@ async function shutdown(reason: string): Promise<void> {
   shuttingDown = true;
   console.log(`[unimsg] 收到 ${reason}，正在停止本人身份接收器与子进程…`);
   try {
-    await dingtalkPersonalStream?.stop();
-    feishuUserPoller?.stop();
+    stopMailPoller();
+    await identityChannels.stopAll();
     dingtalkPersonalClient().dispose();
   } catch (e) {
     console.warn('[unimsg] 停止身份接收器时出错（继续关闭）：', e instanceof Error ? e.message : e);

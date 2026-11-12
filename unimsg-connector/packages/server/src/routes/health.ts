@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import { Platform } from '@unimsg/shared';
 import { snapshot } from '../core/metrics';
-import { config, envFileSnapshot } from '../config';
+import { config, envFileSnapshot, monorepoRoot } from '../config';
+import { settingsFileSnapshot } from '../services/localConfig';
 import { MessageService } from '../services/message';
 import { identitySummary } from '../services/identity';
 
@@ -11,13 +12,22 @@ const startedAt = new Date(Date.now() - process.uptime() * 1000).toISOString();
 export function healthRouter(svc: MessageService) {
   const r = Router();
   r.get('/health', (_req, res) => {
+    const envFile = envFileSnapshot();
+    const settingsFile = settingsFileSnapshot(monorepoRoot);
     res.json({
       ok: true,
       ts: new Date().toISOString(),
       // 前端用 startedAt 与 envFile.mtime 对比，提示「.env 已修改，需重启后端生效」（P1-5）。
       // envFile 只给路径与修改时间，绝不下发 .env 内容；文件不存在时 null。
       startedAt,
-      envFile: envFileSnapshot(),
+      // 公共接口不暴露本机绝对路径（P2-10）：只给文件名 + mtime，前端仍可判断「.env 已改需重启」
+      envFile: envFile ? { path: '.env', mtime: envFile.mtime } : null,
+      // 本地配置文件（GUI 保存的凭据/模式）；只给文件名 + 存在性 + mtime，不含内容
+      settingsFile: {
+        path: 'linkhub-config.json',
+        present: settingsFile.present,
+        mtime: settingsFile.mtime,
+      },
       ...snapshot(),
       dlq: svc.listDlq().length,
       // 公开接口也带上每个平台的实际通道，评审 curl 一下就能知道现在是不是真的。

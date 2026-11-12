@@ -64,8 +64,7 @@ describe('AccountCard 基础信息', () => {
   it('部分配置平台展示 Mock 模拟 Tag、缺失变量与能力缺口告警（warnings）', () => {
     render(<AccountCard account={accountOf(Platform.WECOM)} />);
 
-    expect(screen.getByText('Mock 模拟')).toBeInTheDocument();
-    expect(screen.getByText('未配置')).toBeInTheDocument();
+    expect(screen.getByText('未配置（演示模式）')).toBeInTheDocument();
     expect(screen.getByText(/WECOM_SECRET、WECOM_AGENT_ID/)).toBeInTheDocument();
     expect(screen.getByText('不可发送')).toBeInTheDocument();
     expect(screen.queryByText('不可接收')).not.toBeInTheDocument();
@@ -110,7 +109,7 @@ describe('身份块（谁在收、谁在发）', () => {
     expect(within(block).getByText('身份 · 谁在收、谁在发')).toBeInTheDocument();
     // 两枚身份 Tag 都是机器人；策略变量名可追溯
     expect(within(block).getAllByText('机器人')).toHaveLength(2);
-    expect(within(block).getByText('FEISHU_IDENTITY=auto')).toBeInTheDocument();
+    expect(within(block).getByText(/身份策略：自动（本人优先）/)).toBeInTheDocument();
     expect(within(block).getByText('机器人长连接（webhook）')).toBeInTheDocument();
     expect(within(block).getByText('机器人接口发送')).toBeInTheDocument();
     // 小白用户最关心的「为什么登录、不用拉群」
@@ -147,7 +146,7 @@ describe('身份块（谁在收、谁在发）', () => {
     render(<AccountCard account={dingtalkAccount(identity)} actionsEnabled onDingtalkConnect={() => {}} />);
 
     const block = screen.getByTestId('identity-block-dingtalk');
-    expect(within(block).getByText('DINGTALK_IDENTITY=bot')).toBeInTheDocument();
+    expect(within(block).getByText(/身份策略：仅机器人/)).toBeInTheDocument();
     expect(within(block).queryByRole('button', { name: /连接本人账号/ })).toBeNull();
   });
 
@@ -210,8 +209,8 @@ describe('身份块（谁在收、谁在发）', () => {
     render(<AccountCard account={dingtalkAccount(identity, 'mock')} actionsEnabled />);
 
     const block = screen.getByTestId('identity-block-dingtalk');
-    expect(within(block).getAllByText('模拟')).toHaveLength(2);
-    expect(within(block).getByText(/当前平台通道是「Mock 模拟」/)).toBeInTheDocument();
+    expect(within(block).getAllByText('演示')).toHaveLength(2);
+    expect(within(block).getByText(/当前平台通道是「演示模式」/)).toBeInTheDocument();
     expect(within(block).queryByRole('button')).toBeNull();
     // Mock 下不再说「机器人通道可用」——当前根本不会调用真实通道
     expect(within(block).queryByText(/机器人通道/)).toBeNull();
@@ -227,9 +226,9 @@ describe('身份块（谁在收、谁在发）', () => {
     const block = screen.getByTestId('identity-block-dingtalk');
     // 账号卡片 Tag 仍如实写「Mock 模拟」（机器人通道），但身份块不能被误标成模拟
     expect(within(block).getAllByText('本人')).toHaveLength(2);
-    expect(within(block).queryByText(/当前平台通道是「Mock 模拟」/)).toBeNull();
+    expect(within(block).queryByText(/当前平台通道是「演示模式」/)).toBeNull();
     expect(within(block).getByRole('button', { name: /重新登录/ })).toBeInTheDocument();
-    expect(screen.getAllByText('Mock 模拟').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('未配置（演示模式）').length).toBeGreaterThan(0);
   });
 
   it('纯前端演示模式（actionsEnabled=false）：不渲染连接按钮，避免点了没有后端', () => {
@@ -290,6 +289,34 @@ describe('NEW-P2-1：卡片摘要能力 chip 与身份块口径一致（不打�
     expect(screen.getByText('不可发送')).toBeInTheDocument();
   });
 
+  it('P2-5：邮箱已添加本地账号但通道仍是演示模式时，卡头写「已添加账号」而不是「未配置」', () => {
+    const mail = accountOf(Platform.MAIL);
+    render(
+      <AccountCard
+        account={{
+          ...mail,
+          mode: 'mock',
+          configured: false,
+          accounts: [
+            {
+              key: 'whitetest',
+              label: 'QQ 邮箱',
+              address: 'w******@qq.com',
+              imapHost: 'imap.qq.com',
+              smtpHost: 'smtp.qq.com',
+              folders: ['INBOX'],
+              mode: 'mock',
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByText(/已添加 1 个账号（演示模式）/)).toBeInTheDocument();
+    expect(screen.getByText(/已添加 1 个账号（未验证）/)).toBeInTheDocument();
+    expect(screen.queryByText('未配置（演示模式）')).toBeNull();
+  });
+
   it('Mock / 无身份视图：能力 chip 保持原口径，不显示「本人可收」这类不实信息', () => {
     const mockIdentity = identityView(
       { effectiveSend: 'mock', effectiveReceive: 'mock' },
@@ -301,5 +328,21 @@ describe('NEW-P2-1：卡片摘要能力 chip 与身份块口径一致（不打�
     // 能力正常时不显示 chip
     expect(capabilityWarning('receive', true, mockIdentity)).toBeUndefined();
     expect(capabilityWarning('send', true, undefined)).toBeUndefined();
+  });
+});
+
+
+describe('身份策略固定「仅本人」但未登录（二轮复验 P2-4）', () => {
+  it('显示「本人身份（未登录）」，不再出现「发送 本人 / 不可接收」的矛盾状态', () => {
+    const identity = identityView(
+      { policy: 'user', effectiveSend: 'user', effectiveReceive: 'mock' },
+      { state: 'not_linked', linked: false, canLink: true, linkMethod: 'cli' },
+    );
+    render(<AccountCard account={dingtalkAccount(identity, 'mock')} actionsEnabled onDingtalkConnect={() => {}} />);
+
+    const block = screen.getByTestId('identity-block-dingtalk');
+    expect(within(block).getByText('本人身份（未登录）')).toBeInTheDocument();
+    expect(within(block).getByText(/不会以本人身份收发/)).toBeInTheDocument();
+    expect(within(block).queryByRole('button', { name: /^(接收|发送)$/ })).toBeNull();
   });
 });

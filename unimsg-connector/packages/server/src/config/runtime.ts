@@ -112,7 +112,11 @@ export function readPlatformCredentials(env: NodeJS.ProcessEnv): PlatformCredent
       appSecret: env.FEISHU_APP_SECRET ?? '',
       verifyToken: env.FEISHU_VERIFY_TOKEN ?? '',
       encryptKey: env.FEISHU_ENCRYPT_KEY ?? '',
-      stream: truthy(env.FEISHU_STREAM),
+      // P2-6：长连接是默认接收方式（未显式 FEISHU_STREAM 时默认 true）；
+      // 只有 HTTP 回调部署才需要显式 FEISHU_STREAM=false + FEISHU_VERIFY_TOKEN
+      stream: env.FEISHU_STREAM === undefined || env.FEISHU_STREAM.trim() === ''
+        ? true
+        : truthy(env.FEISHU_STREAM),
       baseUrl: trimBase(env.FEISHU_BASE_URL, DEFAULT_FEISHU_BASE_URL),
     },
     dingtalk: {
@@ -256,6 +260,124 @@ function truthy(v: string | undefined): boolean {
 export interface MailAccountsParseResult {
   accounts: MailAccount[];
   issues: MailAccountIssue[];
+}
+
+// ---------------------------------------------------------------------------
+// 邮箱账号运行时导入（个人版在「连接账号」页填表，替代手改 .env）
+// ---------------------------------------------------------------------------
+
+/** 「连接账号」页提交的邮箱账号输入（字段名与本地账号文件一致） */
+export interface MailAccountInput {
+  /** 环境变量段名/本地 key（可选；不传按邮箱地址推导） */
+  key?: string;
+  address?: string;
+  /** 授权码（不是网页登录密码）；只在服务端内存/本地文件，绝不下发 */
+  authCode?: string;
+  /** qq / 163 / 126 / yeah / gmail / outlook / icloud / custom（可省略，按域名推断） */
+  provider?: string;
+  label?: string;
+  imapHost?: string;
+  imapPort?: number | string;
+  imapSecure?: boolean | string;
+  smtpHost?: string;
+  smtpPort?: number | string;
+  smtpSecure?: boolean | string;
+  folders?: string[] | string;
+}
+
+export interface MailAccountBuildResult {
+  account?: MailAccount;
+  /** 校验错误（中文，可直接展示） */
+  errors: string[];
+}
+
+function boolish(v: unknown): boolean | undefined {
+  if (typeof v === 'boolean') return v;
+  if (typeof v === 'string') {
+    const t = v.trim().toLowerCase();
+    if (['true', '1', 'yes', 'on'].includes(t)) return true;
+    if (['false', '0', 'no', 'off'].includes(t)) return false;
+  }
+  return undefined;
+}
+
+function portOf(v: unknown, fallback: number): number {
+  const n = typeof v === 'number' ? v : Number(String(v ?? '').trim());
+  return Number.isInteger(n) && n > 0 && n < 65_536 ? n : fallback;
+}
+
+/**
+ * 把表单/本地文件里的一条账号输入规范化+校验成 MailAccount。
+ * 纯函数、不落盘、不联网；错误全部中文（供接口 400 直接展示）。
+ */
+export function createMailAccountFromInput(input: MailAccountInput): MailAccountBuildResult {
+  const errors: string[] = [];
+  const address = String(input.address ?? '').trim();
+  if (!address) {
+    errors.push('请填写邮箱地址');
+  } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address)) {
+    errors.push('邮箱地址格式不对（示例：you@qq.com）');
+  }
+  const authCode = String(input.authCode ?? '').trim();
+  if (!authCode) {
+    errors.push('请填写授权码（在邮箱网页版「设置 → POP3/SMTP/IMAP」里生成；不是网页登录密码）');
+  } else if (authCode.length > 512) {
+    errors.push('授权码过长（请确认复制正确，不要粘贴整段网页内容）');
+  }
+
+  const explicitKey = String(input.key ?? '').trim().toLowerCase();
+  let key = explicitKey;
+  if (key) {
+    if (!/^[a-z0-9][a-z0-9._-]{0,31}$/.test(key)) {
+      errors.push('账号 key 只能用小写字母/数字/._-（最长 32 位），例如 qq / work');
+    }
+  } else {
+    const local = address.includes('@') ? address.split('@')[0]! : address;
+    key = local.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 24) || 'mail';
+  }
+
+  const provider = inferMailProvider(address, input.provider);
+  const preset = MAIL_PROVIDER_PRESETS[provider] ?? MAIL_PROVIDER_PRESETS.custom!;
+  const imapHost = String(input.imapHost ?? '').trim() || preset.imapHost;
+  const smtpHost = String(input.smtpHost ?? '').trim() || preset.smtpHost;
+  if (!imapHost) errors.push('未识别的邮箱服务商：请填写 IMAP 服务器地址（如 imap.company.com）');
+  if (!smtpHost) errors.push('未识别的邮箱服务商：请填写 SMTP 服务器地址（如 smtp.company.com）');
+
+  const imapPort = portOf(input.imapPort, preset.imapPort || 993);
+  const smtpPort = portOf(input.smtpPort, preset.smtpPort || 465);
+  // 显式端口优先按端口推导加密方式（143=STARTTLS、993=隐式 TLS；587/25=STARTTLS、465=隐式 TLS），
+  // 未显式端口时用服务商预设，保证自定义邮箱/端口覆盖不会配错加密。
+  const imapSecure = boolish(input.imapSecure)
+    ?? (input.imapPort !== undefined ? imapPort === 993 : (preset.imapSecure ?? imapPort === 993));
+  const smtpSecure = boolish(input.smtpSecure)
+    ?? (input.smtpPort !== undefined ? smtpPort === 465 : (preset.smtpSecure ?? smtpPort === 465));
+
+  const folderRaw = Array.isArray(input.folders)
+    ? input.folders
+    : String(input.folders ?? '').split(/[,;\s]+/);
+  const folders = [...new Set(folderRaw.map((f) => String(f).trim()).filter(Boolean))].slice(0, 8);
+  if (folders.length === 0) folders.push('INBOX');
+
+  const label = String(input.label ?? '').trim() || preset.label || provider;
+
+  if (errors.length > 0) return { errors };
+  return {
+    errors,
+    account: {
+      key,
+      label,
+      address,
+      authCode,
+      provider,
+      imapHost,
+      imapPort,
+      imapSecure,
+      smtpHost,
+      smtpPort,
+      smtpSecure,
+      folders,
+    },
+  };
 }
 
 /**
@@ -500,7 +622,7 @@ function capability(platform: Platform, input: RuntimeBuildInput): CapabilityRes
     if (!p.feishu.stream && !p.feishu.verifyToken) missing.push('FEISHU_VERIFY_TOKEN');
     const canSend = Boolean(p.feishu.appId && p.feishu.appSecret);
     // 收：HTTP 回调需 Verification Token；长连接只需 appId/appSecret
-    const canReceive = Boolean(p.feishu.verifyToken || p.feishu.stream);
+    const canReceive = Boolean(p.feishu.appId && p.feishu.appSecret && (p.feishu.verifyToken || p.feishu.stream));
     if (canSend && !canReceive) warnings.push('只能发不能收：缺少 FEISHU_VERIFY_TOKEN（HTTP 回调验签），或开启 FEISHU_STREAM 长连接');
     if (canSend && !p.feishu.stream && !p.feishu.encryptKey) warnings.push('未配置 FEISHU_ENCRYPT_KEY：仅支持未加密回调（若后台开了加密策略会解密失败）');
     if (p.feishu.stream) warnings.push('已开启飞书长连接（FEISHU_STREAM）：本机无需公网回调即可收消息');
@@ -792,8 +914,15 @@ export interface DingtalkIdentityConfig {
   receive: ReceiveToggle;
   /** 个人事件订阅范围（已归一化，顺序保留） */
   eventKinds: string[];
-  /** DWS_BIN 原样保留（可带参数，如 `node scripts/fake-dws.mjs`） */
+  /**
+   * dws 可执行文件（可带参数，如 `node scripts/fake-dws.mjs`）。
+   * 由 connectors/dwsBin.ts 统一解析：DWS_BIN → LINKHUB_TOOLS_DIR → 仓库 tools/ → ~/.local/bin → PATH。
+   */
   bin: string;
+  /** dws 来源（env/tools/user_profile/path/missing，onboarding 如实展示） */
+  binSource?: 'env' | 'tools' | 'user_profile' | 'path' | 'missing';
+  /** 来源人话说明（例如「仓库 tools/（pnpm run fetch:dws 下载位置）」） */
+  binPathHint?: string;
   /** DWS_PROFILE */
   profile: string;
   authTimeoutMs: number;
@@ -815,10 +944,19 @@ export interface IdentityRuntimeConfig {
 
 /** 飞书发送/资源基础权限（本人身份发送用） */
 export const FEISHU_BASE_SCOPES = ['im:message', 'im:message.send_as_user', 'im:resource'] as const;
-/** 飞书「本人身份接收」额外权限（用户身份读消息） */
+/**
+ * 飞书「本人身份接收」额外权限（用户身份读消息 + 列会话）。
+ *
+ * `im:chat:read`（查看群信息）是**列会话的硬前提**：`GET /open-apis/im/v1/chats` 用
+ * user_access_token 调用时缺它直接返回 `99991679`
+ * （required one of [im:chat:readonly, im:chat, im:chat.group_info:readonly, im:chat:read]），
+ * 一条会话都列不出来，轮询等于空转 —— 2026-11-12 用真实令牌实测确认。
+ * 它和读消息权限是两码事（只申请读消息权限不够），所以必须一起申请。
+ */
 export const FEISHU_USER_RECEIVE_SCOPES = [
   'im:message.p2p_msg:get_as_user',
   'im:message.group_msg:get_as_user',
+  'im:chat:read',
 ] as const;
 /** refresh_token 必需 */
 export const FEISHU_OFFLINE_SCOPE = 'offline_access';
@@ -991,5 +1129,31 @@ export function resolveIdentityConfig(
       authTimeoutMs: clampInt(env.DWS_AUTH_TIMEOUT_MS, DEFAULT_DWS_AUTH_TIMEOUT_MS, 1_000, 120_000),
       sendTimeoutMs: clampInt(env.DWS_SEND_TIMEOUT_MS, DEFAULT_DWS_SEND_TIMEOUT_MS, 1_000, 600_000),
     },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 邮箱运行态重算（P0-3）：本地导入账号是运行期才出现的，启动时按 .env 算好的
+// config.runtime[MAIL] 会一直是 mock/configured=false，导致「界面添加账号后永远收不到信」。
+// 这里按「当前账号」重算一次，由 mailAccounts store 在合并/增删/验证后调用。
+// ---------------------------------------------------------------------------
+export function computeMailRuntimeAfterAccounts(args: {
+  policy: ModePolicy;
+  envAccounts: MailAccount[];
+  verifiedFileKeys: string[];
+}): { mode: 'real' | 'mock'; configured: boolean; canSend: boolean; canReceive: boolean; reason: string } {
+  if (args.policy === 'mock') {
+    return { mode: 'mock', configured: false, canSend: false, canReceive: false, reason: 'MAIL_MODE=mock（显式关闭真实邮箱）' };
+  }
+  const usable = args.envAccounts.length + args.verifiedFileKeys.length;
+  if (usable === 0) {
+    return {
+      mode: 'mock', configured: false, canSend: false, canReceive: false,
+      reason: '没有可用的邮箱账号（在「连接账号」页添加并验证后自动启用真实邮箱）',
+    };
+  }
+  return {
+    mode: 'real', configured: true, canSend: true, canReceive: true,
+    reason: '有 ' + usable + ' 个可用邮箱账号（.env ' + args.envAccounts.length + ' / 已验证本地 ' + args.verifiedFileKeys.length + '）',
   };
 }

@@ -5,17 +5,96 @@ import type {
 } from '@unimsg/shared';
 import type {
   AccountInfo,
+  AppConfigFieldMap,
+  AppConfigPlatformId,
+  AppConfigSaveResult,
+  AppConfigUpdate,
+  AppConfigView,
   DemoApi,
+  DingtalkLoginOptions,
   DingtalkLoginStart,
   DingtalkPersonalStatus,
   FeishuOAuthStart,
   HealthInfo,
+  MailAccountInput,
+  MailAccountTestResult,
+  MailAccountView,
   MessageFilter,
+  OnboardingView,
   ReplyAck,
   TraceResult,
 } from '../api';
+import { APP_CONFIG_LLM_FIELD_KEYS, APP_CONFIG_PLATFORM_FIELD_KEYS } from '../api';
 import { EmitterRealtime } from '../realtime';
 import { ACCOUNTS, HEALTH, INCOMING_TEMPLATES, buildTrace, createSeedData } from './fixtures';
+
+/**
+ * 纯前端演示模式下的应用配置视图：全部「未配置」、来源 none，并如实标注不能保存。
+ * 这样配置弹窗在演示模式仍可打开看字段说明，但保存会给出明确中文提示。
+ */
+export function demoAppConfig(): AppConfigView {
+  const noneFields = (keys: string[]): AppConfigFieldMap =>
+    Object.fromEntries(keys.map((key) => [key, { configured: false, source: 'none' as const, key }]));
+  const platforms = {} as AppConfigView['platforms'];
+  for (const id of ['feishu', 'dingtalk', 'wecom'] as AppConfigPlatformId[]) {
+    platforms[id] = { fields: noneFields(APP_CONFIG_PLATFORM_FIELD_KEYS[id]), missing: [] };
+  }
+  return {
+    identity: { feishu: 'auto', dingtalk: 'auto' },
+    platforms,
+    llm: noneFields(APP_CONFIG_LLM_FIELD_KEYS),
+    modes: { feishu: 'mock', dingtalk: 'mock', wecom: 'mock', mail: 'mock' },
+    restartRequired: false,
+    envFile: null,
+    settingsFile: null,
+  };
+}
+
+/**
+ * 纯前端演示模式下的「授权中心」：如实标 4 个平台都是演示模式，
+ * 不提供任何「假连接」按钮——用户看到的是真实状态，而不是伪造的已连接。
+ */
+export function demoOnboarding(): OnboardingView {
+  return {
+    firstRun: true,
+    dws: { available: false, source: 'missing' },
+    overall: { ready: 0, total: 4, needsAction: 0 },
+    steps: [
+      {
+        id: 'mail',
+        label: '邮箱',
+        state: 'mock',
+        summary: '演示模式：不会连接真实邮箱。启动真实后端后，可在这里添加自己的邮箱账号。',
+        hints: ['个人版推荐先连邮箱：收件箱里直接看邮件，回复以你自己的邮箱发出。'],
+        actions: [],
+      },
+      {
+        id: 'dingtalk',
+        label: '钉钉',
+        state: 'mock',
+        summary: '演示模式：不会启动本机 dws，也不会弹出真实钉钉授权页。',
+        hints: ['真实模式下用「用浏览器登录（推荐）」完成钉钉官方授权，无需手输设备码。'],
+        actions: [],
+      },
+      {
+        id: 'feishu',
+        label: '飞书',
+        state: 'mock',
+        summary: '演示模式：不会发起真实飞书 OAuth 授权。',
+        hints: ['真实模式需要飞书企业管理员先开通用户身份权限。'],
+        actions: [],
+      },
+      {
+        id: 'wecom',
+        label: '企业微信',
+        state: 'mock',
+        summary: '演示模式：不会连接真实企业微信。',
+        hints: ['企业微信需要管理员配置应用与可信 IP。'],
+        actions: [],
+      },
+    ],
+  };
+}
 
 export interface MockOptions {
   /** 基础网络延迟（毫秒） */
@@ -217,7 +296,7 @@ export class MockApi implements DemoApi {
     throw new Error('演示模式未接入真实后端，无法发起飞书用户授权');
   }
 
-  async dingtalkPersonalLogin(): Promise<DingtalkLoginStart> {
+  async dingtalkPersonalLogin(_options?: DingtalkLoginOptions): Promise<DingtalkLoginStart> {
     throw new Error('演示模式未接入真实后端，无法连接钉钉本人账号');
   }
 
@@ -231,6 +310,45 @@ export class MockApi implements DemoApi {
 
   async dingtalkPersonalLogout(): Promise<void> {
     throw new Error('演示模式未接入真实后端，无需注销钉钉本人账号');
+  }
+
+  async onboarding(): Promise<OnboardingView> {
+    return demoOnboarding();
+  }
+
+  async mailAccounts(): Promise<MailAccountView[]> {
+    // 纯前端演示没有真实邮箱账号；不要用假账号制造「已连接」的错觉
+    return [];
+  }
+
+  async mailAccountTest(_input: MailAccountInput): Promise<MailAccountTestResult> {
+    return {
+      ok: false,
+      message: '演示模式不会连接真实邮箱服务：无法测试 IMAP / SMTP 登录。启动真实后端后再测试。',
+    };
+  }
+
+  async mailAccountCreate(_input: MailAccountInput): Promise<void> {
+    throw new Error('演示模式不会保存邮箱账号：启动真实后端后再添加（不会把授权码写进浏览器存储）');
+  }
+
+  async mailAccountDelete(_key: string): Promise<void> {
+    throw new Error('演示模式没有可删除的邮箱账号');
+  }
+
+  async mailAccountVerify(_key: string): Promise<MailAccountTestResult> {
+    return {
+      ok: false,
+      message: '演示模式不会连接真实邮箱服务：无法验证账号。启动真实后端后再验证。',
+    };
+  }
+
+  async getAppConfig(): Promise<AppConfigView> {
+    return demoAppConfig();
+  }
+
+  async updateAppConfig(_patch: AppConfigUpdate): Promise<AppConfigSaveResult> {
+    throw new Error('演示模式不会保存平台应用凭据：启动真实后端后再配置');
   }
 
   async markDone(id: string): Promise<UnifiedMessage> {

@@ -7,6 +7,7 @@ import {
   ClearOutlined,
   HistoryOutlined,
   InboxOutlined,
+  LinkOutlined,
   MessageOutlined,
   SearchOutlined,
   SettingOutlined,
@@ -63,6 +64,7 @@ export function CommandPalette({
   const commands = useMemo<PaletteItem[]>(() => {
     const list: PaletteItem[] = [
       { id: 'nav-inbox', group: '跳转', label: '收件箱', icon: <InboxOutlined />, run: () => go('/inbox') },
+      { id: 'nav-connect', group: '跳转', label: '连接账号', icon: <LinkOutlined />, run: () => go('/connect') },
       { id: 'nav-todos', group: '跳转', label: '待办', icon: <CheckSquareOutlined />, run: () => go('/todos') },
       { id: 'nav-trace', group: '跳转', label: '全链路回放', icon: <HistoryOutlined />, run: () => go('/trace') },
       { id: 'nav-accounts', group: '跳转', label: '平台账号', icon: <ApiOutlined />, run: () => go('/accounts') },

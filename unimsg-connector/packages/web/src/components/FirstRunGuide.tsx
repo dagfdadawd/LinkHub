@@ -1,24 +1,29 @@
 /**
  * 首启引导：真实后端已连上、但还没有收到任何消息时，给出「3 步上手」。
  *
+ * 客户化（白号 P1-5/P2-9）：
+ *  - 不再把 DINGTALK_AES_TOKEN 这类环境变量名堆给客户；管理员项折叠为「需要管理员配置（N 项）」；
+ *  - 主 CTA：「去连接账号」；次 CTA：「先体验演示（注入示例消息）」；
+ *  - 去掉指向不存在按钮的文案（不再写「到平台账号页点连接本人账号」）；
+ *  - 开发者命令收进折叠区，普通客户默认看不到。
+ *
  * 设计约束（为了零学习成本 + 可独立单测）：
  *  - 纯 props 驱动：不直接读 store，页面负责把 AppState 的关键字段传进来；
- *  - localStorage 可注入：key = linkhub.firstRunDismissed，默认 window.localStorage，
- *    读写失败（隐私模式 / 沙箱）一律降级为「未关闭」，绝不阻塞渲染；
- *  - 显示条件严格：非 Mock 演示 + 0 条消息 + 后端从未收到消息 + 未点过「知道了」；
- *    加载中 / 加载失败也不显示（失败时不能谎称「后端已连上」）。
- *    真实后端有消息、或前端 Mock 模式，都不显示。
+ *  - localStorage 可注入：key = linkhub.firstRunDismissed，读写失败一律降级为「未关闭」；
+ *  - 显示条件严格：非 Mock 演示 + 0 条消息 + 后端从未收到消息 + 未点过「知道了」。
  */
 import { useState } from 'react';
 import { Button, Card, Tag, Typography } from 'antd';
-import { ArrowRightOutlined, RocketOutlined } from '@ant-design/icons';
+import { ArrowRightOutlined, PlayCircleOutlined, RocketOutlined } from '@ant-design/icons';
 import type { AccountInfo } from '../services/api';
 import type { RealtimeStatus } from '../services/realtime';
 import { Platform } from '../types';
 import { PLATFORM_META } from '../utils/format';
+import { humanizeMissingKeys } from '../features/connect/appConfigFields';
+import { FIRST_RUN_DISMISS_KEY } from '../utils/onboarding';
 
-/** 「知道了」标记的 localStorage key（测试需在前后清理） */
-export const FIRST_RUN_DISMISS_KEY = 'linkhub.firstRunDismissed';
+/** 「知道了」标记沿用统一 key（与 onboarding 横幅分开；设置里可一起重置） */
+export { FIRST_RUN_DISMISS_KEY };
 
 /** 冒烟脚本默认后端地址：VITE_API_BASE 未配置成绝对地址时的回退值 */
 export const DEFAULT_SMOKE_BASE = 'http://127.0.0.1:3001';
@@ -32,7 +37,7 @@ const PLATFORM_ORDER: Platform[] = [Platform.FEISHU, Platform.DINGTALK, Platform
 /** 本次实际通道：real=真实接口，mock=本地模拟（Mock 绝不伪装成真实成功） */
 const MODE_META: Record<string, { label: string; color: string }> = {
   real: { label: '真实接口', color: 'success' },
-  mock: { label: 'Mock 模拟', color: 'warning' },
+  mock: { label: '演示模式', color: 'warning' },
 };
 
 /** 实时连接状态：说「后端已连上」的同时如实展示连接质量 */
@@ -116,8 +121,16 @@ export interface FirstRunGuideProps {
   loading?: boolean;
   /** 加载错误：请求失败时绝不显示（不能在后端不可用时谎称「后端已连上」） */
   error?: string | null;
-  /** 打开「平台账号」页（不传则只显示文字指引，便于组件独立单测） */
-  onOpenAccounts?: () => void;
+  /** 来自 onboarding steps：needs_admin/needs_install 数量（与横幅统一口径） */
+  needsAdminCount?: number;
+  /** 来自 onboarding steps：needs_user_auth 数量（可自己登录/添加） */
+  needsAuthCount?: number;
+  /** 去「连接账号」授权中心（主 CTA） */
+  onOpenConnect?: () => void;
+  /** 先体验演示：注入一条示例消息（次 CTA） */
+  onDemo?: () => void;
+  /** 点「知道了」后通知页面（页面据此把注入入口放回空态） */
+  onDismiss?: () => void;
 }
 
 export function FirstRunGuide({
@@ -130,7 +143,11 @@ export function FirstRunGuide({
   apiBase,
   loading = false,
   error = null,
-  onOpenAccounts,
+  needsAdminCount,
+  needsAuthCount,
+  onOpenConnect,
+  onDemo,
+  onDismiss,
 }: FirstRunGuideProps) {
   const resolvedStorage = storage ?? defaultStorage();
   const [dismissed, setDismissed] = useState(() => readFirstRunDismissed(resolvedStorage));
@@ -142,6 +159,18 @@ export function FirstRunGuide({
   const connectionMeta = CONNECTION_META[connection];
   const smokeCommand = `python scripts/smoke.py ${smokeBaseUrl(apiBase)}`;
 
+  /** 缺配置的平台（折叠展示数量，不暴露 env 键名） */
+  const platformsMissingConfig = PLATFORM_ORDER.map((platform) => {
+    const account = accounts.find((item) => item.platform === platform);
+    const missing = account?.missing ?? [];
+    return { platform, count: missing.length, names: humanizeMissingKeys(missing) };
+  }).filter((item) => item.count > 0);
+  // 只有飞书/企业微信需要企业管理员开通；邮箱/钉钉可自助（添加账号 / 本人扫码登录）。
+  // 与首启横幅统一口径：管理员数量优先用 onboarding steps 的 needs_admin 计数。
+  const adminPlatforms = platformsMissingConfig.filter((item) => item.platform === 'feishu' || item.platform === 'wecom');
+  const selfServicePlatforms = platformsMissingConfig.filter((item) => item.platform === 'mail' || item.platform === 'dingtalk');
+  const adminPlatformCount = needsAdminCount ?? adminPlatforms.length;
+
   const handleDismiss = () => {
     try {
       resolvedStorage?.setItem(FIRST_RUN_DISMISS_KEY, '1');
@@ -149,6 +178,7 @@ export function FirstRunGuide({
       // 隐私模式 / 存储不可写时也不阻塞关闭：本次会话内隐藏即可
     }
     setDismissed(true);
+    onDismiss?.();
   };
 
   return (
@@ -164,7 +194,7 @@ export function FirstRunGuide({
         <div className="first-run-guide__lead">
           <span className="first-run-guide__lead-strong">后端已连上，但还没有消息</span>
           <span className="first-run-guide__lead-desc">
-            收到第一条后，「接收 → 回复 → 回写 → 回流」的完整闭环会出现在这里。
+            先连接你自己的账号，或注入一条示例消息看完整闭环。
           </span>
           <Tag color={connectionMeta.color} className="first-run-guide__connection">
             {connectionMeta.label}
@@ -177,7 +207,6 @@ export function FirstRunGuide({
             const account = accounts.find((item) => item.platform === platform);
             const meta = PLATFORM_META[platform];
             const modeMeta = account?.mode ? MODE_META[account.mode] : undefined;
-            const missing = account?.missing ?? [];
             return (
               <span
                 className="first-run-guide__mode-item"
@@ -187,12 +216,33 @@ export function FirstRunGuide({
                 <Tag color={modeMeta?.color ?? 'default'}>
                   {meta.name} · {modeMeta?.label ?? '通道未知'}
                 </Tag>
-                {missing.length > 0 && (
-                  <span className="first-run-guide__missing">缺 {missing.join('、')}</span>
-                )}
               </span>
             );
           })}
+          {adminPlatformCount > 0 || adminPlatforms.length > 0 || selfServicePlatforms.length > 0 ? (
+            <details className="first-run-guide__admin" data-testid="first-run-admin-config">
+              <summary>
+                {adminPlatformCount > 0 ? `需要管理员配置（${adminPlatformCount} 个平台）` : '还缺账号配置'}
+                {(needsAuthCount ?? 0) > 0
+                  ? ` · 另有 ${needsAuthCount} 项可自己登录/添加`
+                  : ''}
+              </summary>
+              <ul>
+                {adminPlatforms.map((item) => (
+                  <li key={item.platform}>
+                    {PLATFORM_META[item.platform].name}：{item.count} 项待配置（{item.names.join('、')}）
+                    ——需要企业管理员在平台后台开通；也可以把「连接账号」里的清单发给管理员。
+                  </li>
+                ))}
+                {selfServicePlatforms.length > 0 ? (
+                  <li>
+                    {selfServicePlatforms.map((item) => PLATFORM_META[item.platform].name).join('、')}
+                    ：可以自己添加/登录（打开「连接账号」按卡片操作即可；邮箱只需授权码，钉钉需企业已开启 CLI 访问）。
+                  </li>
+                ) : null}
+              </ul>
+            </details>
+          ) : null}
         </div>
 
         <ol className="first-run-guide__steps">
@@ -200,11 +250,22 @@ export function FirstRunGuide({
             <span className="first-run-guide__num">1</span>
             <div className="first-run-guide__step-body">
               <div className="first-run-guide__step-head">
-                <span className="first-run-guide__step-title">想立刻看到效果</span>
-                <Command text={smokeCommand} />
+                <span className="first-run-guide__step-title">想先看看效果</span>
+                {onDemo ? (
+                  <Button
+                    type="primary"
+                    size="small"
+                    icon={<PlayCircleOutlined />}
+                    onClick={onDemo}
+                  >
+                    先体验演示（注入示例消息）
+                  </Button>
+                ) : (
+                  <span className="first-run-guide__step-desc">点收件箱空态里的「注入示例」。</span>
+                )}
               </div>
               <div className="first-run-guide__step-desc">
-                在 unimsg-connector/ 下执行：灌入三平台示例消息，跑通「接收 → 回复 → 回写 → 回流」。
+                注入一条示例消息，走通「接收 → 回复 → 回写 → 回流」的完整闭环。
               </div>
             </div>
           </li>
@@ -214,15 +275,21 @@ export function FirstRunGuide({
             <div className="first-run-guide__step-body">
               <div className="first-run-guide__step-head">
                 <span className="first-run-guide__step-title">想接真实平台</span>
-                <Command text="pnpm run doctor" />
+                {onOpenConnect ? (
+                  <Button
+                    type="primary"
+                    size="small"
+                    onClick={onOpenConnect}
+                  >
+                    去连接账号 <ArrowRightOutlined />
+                  </Button>
+                ) : (
+                  <span className="first-run-guide__step-desc">打开左侧「连接账号」页。</span>
+                )}
               </div>
               <div className="first-run-guide__step-desc">
-                在 unimsg-connector/ 下自检各平台模式 / 凭据 / 连通性；按 docs/swap-accounts.md 填好 .env
-                后重启后端。
-              </div>
-              <div className="first-run-guide__step-desc">
-                连接本人账号（推荐，免拉机器人进群）：到「平台账号」页点「连接本人账号」——
-                飞书走官方授权，钉钉用本机 dws 登录；连上后收发都以你本人身份进行，机器人身份保留兜底。
+                在「连接账号」页按 邮箱 → 钉钉 → 飞书 → 企业微信 逐项连接。
+                钉钉可以只用本人账号（无需机器人应用）；管理员项可复制清单给管理员。
               </div>
             </div>
           </li>
@@ -232,33 +299,48 @@ export function FirstRunGuide({
             <div className="first-run-guide__step-body">
               <div className="first-run-guide__step-head">
                 <span className="first-run-guide__step-title">想核对每个平台走了哪条通道</span>
-                {onOpenAccounts ? (
+                {onOpenConnect ? (
                   <Button
                     type="link"
                     size="small"
                     className="first-run-guide__link"
-                    onClick={onOpenAccounts}
+                    onClick={onOpenConnect}
                   >
-                    查看平台账号 <ArrowRightOutlined />
+                    去「连接账号」查看状态 <ArrowRightOutlined />
                   </Button>
                 ) : (
-                  <span className="first-run-guide__step-desc">打开左侧「平台账号」页查看。</span>
+                  <span className="first-run-guide__step-desc">打开左侧「连接账号」页查看。</span>
                 )}
               </div>
               <div className="first-run-guide__step-desc">
-                账号页展示真实接口 / Mock 模拟、缺失变量与告警，以及每个平台「谁在收、谁在发」的身份标注，
-                方便一眼定位接入问题。
+                每张卡会如实标注「已就绪 / 需本人授权 / 需安装 / 需管理员 / 演示模式」，
+                并给出下一步按钮；不会把 Mock 说成已连接。
               </div>
             </div>
           </li>
         </ol>
 
-        <div className="first-run-guide__start">
-          <span className="first-run-guide__start-label">启动后端</span>
-          <Command text="pnpm --filter @unimsg/server start" />
-          <span className="first-run-guide__start-label">启动前端</span>
-          <Command text="pnpm --filter @unimsg/web dev" />
-        </div>
+        <details className="first-run-guide__dev">
+          <summary>开发者：命令行方式（可选）</summary>
+          <div className="first-run-guide__dev-body">
+            <div className="first-run-guide__dev-row">
+              <span>冒烟脚本（在 unimsg-connector/ 下）：</span>
+              <Command text={smokeCommand} />
+            </div>
+            <div className="first-run-guide__dev-row">
+              <span>平台自检：</span>
+              <Command text="pnpm run doctor" />
+            </div>
+            <div className="first-run-guide__dev-row">
+              <span>启动后端：</span>
+              <Command text="pnpm --filter @unimsg/server start" />
+            </div>
+            <div className="first-run-guide__dev-row">
+              <span>启动前端：</span>
+              <Command text="pnpm --filter @unimsg/web dev" />
+            </div>
+          </div>
+        </details>
 
         <div className="first-run-guide__footer">
           <span className="first-run-guide__foot-hint">收到第一条消息后，这条引导会自动隐藏。</span>
@@ -270,3 +352,5 @@ export function FirstRunGuide({
     </section>
   );
 }
+
+

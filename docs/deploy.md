@@ -150,12 +150,14 @@ docker compose up -d
   1. 基础镜像换成 glibc 发行版（如 `node:22-bookworm-slim`）——官方 dws 的 Linux 产物依赖 glibc，**当前基于 Alpine（musl）的默认镜像不能直接运行**；
   2. 在镜像里安装 dws（官方 `install.sh`，或从官方 Releases 页面下载对应平台的 dws 二进制放到 `PATH`）；
   3. 把 dws 的配置与凭据目录挂到数据卷做持久化（Linux 下通常为 `~/.dws` 与 `~/.local/share/dws-cli`；以 dws 官方文档为准），否则容器重建需要重新登录；
-  4. 容器内无浏览器，登录必须用 device flow：
+  4. 容器内没有可用的本机浏览器，登录用**设备码（device flow）**：
 
      ```bash
      docker compose exec app sh
-     dws auth login --device     # 在另一台有浏览器的设备上打开提示的 URL / 输入 code 完成授权
+     dws auth login --device     # 在另一台有浏览器的设备上打开提示的 URL / 输入设备码完成授权
      ```
+
+     设备码有**有效期**（终端/账号页弹窗会显示倒计时），必须在有效期内输入；过期后重新执行命令，或在账号页弹窗点「重新获取授权码」。容器里不要用浏览器 loopback 方式——`127.0.0.1` 回调指向容器内部，宿主机浏览器访问不到。
 
 - **离线演示**：`scripts/` 会复制进镜像，容器内可用本地桩做本人身份闭环演示（不连接真实钉钉）：
 

@@ -7,10 +7,12 @@ import { Platform } from '@unimsg/shared';
 import {
   FeishuUserReceiveError,
   describeFeishuError,
+  feishuChatTypesEnabled,
   fetchChatMessages,
   fetchUserChats,
   getSelfUserInfo,
   mapFeishuUserMessage,
+  resetFeishuChatTypesProbe,
   type FeishuChat,
   type FeishuUserMessageRaw,
 } from './feishuUserReceive';
@@ -49,7 +51,8 @@ function raw(overrides: Partial<FeishuUserMessageRaw> = {}): FeishuUserMessageRa
   };
 }
 
-test('fetchUserChats：分页拉全 + chat_mode 映射 + maxChats 截断', async () => {
+test('fetchUserChats：默认带 types=p2p,group 才能列到单聊；分页/截断正常', async () => {
+  resetFeishuChatTypesProbe();
   const { impl, calls } = stubFetch([
     { body: { code: 0, data: { items: [{ chat_id: 'oc_1', name: '群一', chat_mode: 'group' }], has_more: true, page_token: 'p2' } } },
     { body: { code: 0, data: { items: [{ chat_id: 'oc_2', name: '单聊', chat_mode: 'p2p' }], has_more: false } } },
@@ -57,9 +60,11 @@ test('fetchUserChats：分页拉全 + chat_mode 映射 + maxChats 截断', async
   const result = await fetchUserChats('u-token', { fetchImpl: impl });
   assert.equal(result.chats.length, 2);
   assert.equal(result.pages, 2);
+  assert.equal(result.p2pIncluded, true);
   assert.equal(result.chats[0]!.chatMode, 'group');
   assert.equal(result.chats[1]!.chatMode, 'p2p');
-  assert.match(calls[0]!.url, /im\/v1\/chats\?user_id_type=open_id&page_size=100/);
+  assert.match(calls[0]!.url, /im\/v1\/chats\?user_id_type=open_id&page_size=100&types=p2p%2Cgroup/);
+  assert.match(calls[1]!.url, /types=p2p%2Cgroup/);
   assert.match(calls[1]!.url, /page_token=p2/);
   assert.equal(calls[0]!.headers.Authorization, 'Bearer u-token');
 
@@ -71,6 +76,21 @@ test('fetchUserChats：分页拉全 + chat_mode 映射 + maxChats 截断', async
   });
   assert.equal(truncated.chats.length, 1);
   assert.equal(truncated.truncated, true);
+});
+
+test('fetchUserChats：types 被平台判为参数错误（232001）时自动降级为纯群列表，绝不阻断接收', async () => {
+  resetFeishuChatTypesProbe();
+  const { impl, calls } = stubFetch([
+    { status: 400, body: { code: 232001, msg: 'Your request contains an invalid request parameter.' } },
+    { body: { code: 0, data: { items: [{ chat_id: 'oc_group', chat_mode: 'group' }], has_more: false } } },
+  ]);
+  const result = await fetchUserChats('u-token', { fetchImpl: impl });
+  assert.equal(result.chats.length, 1);
+  assert.equal(result.p2pIncluded, false);
+  assert.match(calls[0]!.url, /types=p2p%2Cgroup/, '第一次应带上 types 试探');
+  assert.doesNotMatch(calls[1]!.url, /types=/, '被拒后应不带 types 重试');
+  assert.equal(feishuChatTypesEnabled(), false, '降级状态应被记住（进程内不再白试）');
+  resetFeishuChatTypesProbe();
 });
 
 test('fetchUserChats：权限错误码 → 中文可操作错误（含所需 scope）', async () => {
