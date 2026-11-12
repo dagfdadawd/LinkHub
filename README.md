@@ -197,7 +197,8 @@ received → processing → replied → sent → synced
 - **颜色只有一个来源**：平台与状态标签的品牌色写一次，`utils/format.ts` 的 `tone()` 派生浅底、浅底墨色、暗色底、暗底墨色四支；墨色用 `utils/ink.ts` 的 `readableInk()` 按 WCAG 对比度反推（保留色相、只压明度），同类标签 ≥4.5:1 由单测锁定。暗色主题不再用 `!important` 硬压内联样式，而是换一套同名变量。
 - **尺阶**：圆角只有 6 / 8 / 10 / 12 / 16 + 胶囊五档；字号全部用 rem（1rem = 16px），浏览器“默认字号”设置能真正放大界面；间距与圆角保持 px——那是视觉密度，不跟字号缩放。
 - **移动端**：`viewport-fit=cover` + `100dvh` + `env(safe-area-inset-*)`，Toast 抬到底部导航之上；`(hover: none) / (pointer: coarse)` 下行内操作常显、命中区 44px（桌面仍是 26px + 悬停出现）。实测 320 / 360 / 375 无横向溢出。
-- **动效**：位移一律走 `transform`（图标轨高光不再动 `top`）；`prefers-reduced-motion` 与站内“减弱动效”偏好双路径生效。
+- **动效**：位移一律走 `transform`（图标轨高光不再动 `top`）；`prefers-reduced-motion` 与站内“减弱动效”偏好双路径生效。View Transition 在 `ThemeProvider` / `morph.ts` 的 JS 触发点掐断——`::view-transition-*` 挂在根之上的伪树，CSS 的 `*` 通配够不着，因此另给了独立成块的 reduced 规则；循环动画用 `animation-iteration-count: 1` 截断，避免 `0.001ms × infinite` 变成每秒上千次空转。
+- **发送按钮状态色**：未回写的消息用明亮品牌蓝（`--send-ready`），已有回写内容后沉为深石墨（`--send-sent`）；判定取 `message.reply` 这一落库事实而非 WS 推送状态，失败进死信队列时保持亮色以便重试。两种状态只在按钮元素上重绑 `--send*` 令牌，波纹 / hover / 光晕 / spinner 自动跟随，明暗主题各备一套且文字对比度均过 AA。
 - **护栏**：`pnpm --filter @unimsg/web lint:css` 跑 `packages/web/scripts/check-styles.mjs`，锁住五条容易退化的规矩（字号 rem、色值走令牌、位移走 transform、暗色块禁 `!important`、圆角用尺阶）。没用 stylelint：现成规则集会在这份样式文件上刷出几百条格式错误，收益低于成本。
 
 ## 技术栈

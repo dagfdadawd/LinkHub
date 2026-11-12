@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { Input, Tag } from 'antd';
 import { PaperClipOutlined, SendOutlined, UploadOutlined } from '@ant-design/icons';
+import { MsgStatus } from '../../types';
 import type { UnifiedMessage, OutboundAttachment } from '../../types';
 import { FILE_LIMITS } from '../../types';
 import { RippleButton } from '../../components/RippleButton';
@@ -10,6 +11,7 @@ import { filesToAttachments, formatBytes, validateFiles } from '../../utils/atta
 const { TextArea } = Input;
 
 export function ReplyComposer({
+  message,
   value,
   sending,
   onChange,
@@ -28,6 +30,12 @@ export function ReplyComposer({
   const [fileError, setFileError] = useState('');
   const canSend = (value.trim().length > 0 || attachments.length > 0) && !sending;
   const enterToSend = prefs.sendKey === 'enter';
+
+  // 发送按钮状态色：以「是否已有回写内容」为准，而不是追 WebSocket 推来的状态——
+  // reply 是落库事实，WS 可能丢包导致状态滞后；进死信队列时保留明亮态，
+  // 让用户一眼看出还能修改后重试。
+  const delivered = Boolean(message.reply) && message.status !== MsgStatus.FAILED;
+  const sendState = delivered ? 'sent' : 'ready';
 
   async function pickFiles(picked: File[]): Promise<void> {
     setFileError('');
@@ -127,7 +135,10 @@ export function ReplyComposer({
           loading={sending}
           disabled={!canSend}
           onClick={send}
+          className={`ripple-btn--${sendState}`}
           data-testid="send-reply"
+          data-send-state={sendState}
+          title={delivered ? '该消息已有回写内容，可继续编辑后再次发送' : '发送回复'}
         >
           <SendOutlined />
           发送回复

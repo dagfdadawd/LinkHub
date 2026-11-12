@@ -16,12 +16,14 @@ const message: UnifiedMessage = {
   updatedAt: new Date().toISOString(),
 };
 
-function setup(overrides: { value?: string; sending?: boolean } = {}) {
+function setup(
+  overrides: { value?: string; sending?: boolean; message?: Partial<UnifiedMessage> } = {},
+) {
   const onSend = vi.fn();
   const onChange = vi.fn();
   render(
     <ReplyComposer
-      message={message}
+      message={{ ...message, ...overrides.message }}
       value={overrides.value ?? ''}
       sending={overrides.sending ?? false}
       onChange={onChange}
@@ -62,5 +64,46 @@ describe('ReplyComposer', () => {
     const { textarea } = setup({ value: '收到' });
     expect(screen.queryByText(/格式转换/)).not.toBeInTheDocument();
     expect(textarea.placeholder).toContain('输入回复内容');
+  });
+
+  it('未回写的消息：发送按钮为明亮待发态', () => {
+    setup({ value: '收到' });
+    const btn = screen.getByTestId('send-reply');
+    expect(btn).toHaveClass('ripple-btn--ready');
+    expect(btn).toHaveAttribute('data-send-state', 'ready');
+  });
+
+  it('回写成功后按钮切换为暗色已发态（replied / sent / synced 同理）', () => {
+    for (const status of [MsgStatus.REPLIED, MsgStatus.SENT, MsgStatus.SYNCED]) {
+      const { unmount } = render(
+        <ReplyComposer
+          message={{ ...message, status, reply: '已收到，马上处理' }}
+          value="收到"
+          sending={false}
+          onChange={vi.fn()}
+          onSend={vi.fn()}
+        />,
+      );
+      const btn = screen.getByTestId('send-reply');
+      expect(btn).toHaveClass('ripple-btn--sent');
+      expect(btn).toHaveAttribute('data-send-state', 'sent');
+      unmount();
+    }
+  });
+
+  it('状态滞后但已有回写内容时也判定为已发送（不依赖 WS 推送）', () => {
+    setup({
+      value: '收到',
+      message: { status: MsgStatus.RECEIVED, reply: '落库已有回复' },
+    });
+    expect(screen.getByTestId('send-reply')).toHaveClass('ripple-btn--sent');
+  });
+
+  it('进死信队列时保持明亮态，提示可修改后重试', () => {
+    setup({
+      value: '再试一次',
+      message: { status: MsgStatus.FAILED, reply: '上次失败的内容' },
+    });
+    expect(screen.getByTestId('send-reply')).toHaveClass('ripple-btn--ready');
   });
 });

@@ -49,6 +49,15 @@
   --on-accent: #ffffff;
   --send-wave: rgba(255, 255, 255, 0.58);
 
+  /* 发送按钮状态色：未回写 = 明亮品牌蓝；回写成功 = 沉静深石墨。
+     由 .ripple-btn--ready / --sent 局部重绑 --send*，波纹与 spinner 自动跟随。 */
+  --send-ready: #0071e3;
+  --send-ready-hover: #0058b0;
+  --send-ready-ink: #ffffff;
+  --send-sent: #3a4450;
+  --send-sent-hover: #2c3540;
+  --send-sent-ink: #ffffff;
+
   /* 形状与层级：软角、细边、极轻阴影（无发光）
      圆角尺阶：四档 + 胶囊。6 小控件 / 8 控件 / 10 输入 / 12 卡片 / 16 大容器
      旧名 --radius* 保留为别名，避免一次性重命名把 diff 拉长 */
@@ -135,6 +144,14 @@
   --send-hover: #9db1c0;
   --send-ink: #0b1014;
   --send-wave: rgba(255, 255, 255, 0.5);
+
+  /* 暗色主题：亮蓝配深墨字才保得住对比度；「暗」态沉到接近容器的石墨灰 */
+  --send-ready: #0a84ff;
+  --send-ready-hover: #3d9bff;
+  --send-ready-ink: #04182b;
+  --send-sent: #3a3a3c;
+  --send-sent-hover: #48484a;
+  --send-sent-ink: #f5f5f7;
 
   /* 三级灰阶：页面 #000 → 容器/抽屉 #141416 → 卡片 #1D1D1F。
      纯黑底上如果容器与卡片同色，整页会糊成一片没有纵深。 */
@@ -1456,7 +1473,7 @@ button {
 .ai-card__source {
   margin-left: 2px;
   padding: 0 6px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   border: 1px solid var(--border);
   font-size: 0.6563rem;
   line-height: 1.6;
@@ -1695,16 +1712,34 @@ button {
     transform 360ms var(--ease-spring), opacity var(--dur-base) var(--ease-out);
 }
 
+/* 状态色只做「令牌重绑」：在按钮元素上覆盖 --send*，下面的底色、hover、
+   光晕、波纹与 spinner 全部复用同一套规则，不必为两种状态各写一遍。
+   设置页的保存按钮仍用全局 --send，不受影响。 */
+.ripple-btn--ready {
+  --send: var(--send-ready);
+  --send-hover: var(--send-ready-hover);
+  --send-ink: var(--send-ready-ink);
+}
+
+.ripple-btn--sent {
+  --send: var(--send-sent);
+  --send-hover: var(--send-sent-hover);
+  --send-ink: var(--send-sent-ink);
+}
+
 .ripple-btn--solid {
   background: var(--send);
   color: var(--send-ink);
-  box-shadow: 0 1px 2px rgba(17, 17, 19, 0.05), 0 10px 26px -18px rgba(79, 96, 112, 0.9);
+  /* 光晕跟随当前按钮色，避免明亮蓝底下压着一层雾蓝灰的旧阴影 */
+  box-shadow: 0 1px 2px rgba(17, 17, 19, 0.05),
+    0 10px 26px -18px color-mix(in srgb, var(--send) 90%, transparent);
 }
 
 .ripple-btn--solid:hover:not(:disabled) {
   background: var(--send-hover);
   transform: scale(1.045);
-  box-shadow: 0 2px 6px rgba(17, 17, 19, 0.06), 0 18px 38px -20px rgba(62, 76, 90, 0.9);
+  box-shadow: 0 2px 6px rgba(17, 17, 19, 0.06),
+    0 18px 38px -20px color-mix(in srgb, var(--send-hover) 90%, transparent);
 }
 
 .ripple-btn:active:not(:disabled) {
@@ -3470,7 +3505,20 @@ html.vt-morph .detail {
   *::after {
     animation-duration: 0.001ms !important;
     animation-delay: 0ms !important;
+    /* 只压时长不够：pulse / spin 的 infinite 会变成每秒上千次空转 */
+    animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
+  }
+}
+
+/* ::view-transition-* 挂在根之上的伪树，* 通配选不到；选择器列表里混入
+   不支持的伪元素还会让整条规则失效，所以单独成块。
+   站内 [data-motion='reduced'] 由 ThemeProvider / morph 在触发点掐断。 */
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
   }
 }
 
@@ -3724,6 +3772,8 @@ html.vt-morph .detail {
 :root[data-motion='reduced'] *::after {
   animation-duration: 0.001ms !important;
   animation-delay: 0ms !important;
+  /* 同上：截断无限循环，而不是让它以 0.001ms 反复迭代 */
+  animation-iteration-count: 1 !important;
   transition-duration: 0.001ms !important;
 }
 
