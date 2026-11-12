@@ -348,11 +348,12 @@ describe('PersonalIdentityModal（钉钉本人账号连接引导）', () => {
     expect(screen.getByText(/当前 dws 版本不支持该登录方式/)).toBeInTheDocument();
   });
 
-  it('平台 Mock 模式：明确提示无法登录真实账号，不提供登录按钮', () => {
+  it('平台 Mock 模式：允许先登录本人账号，并如实提示登录后还需启用「仅用本人身份」（P1-1）', async () => {
+    vi.spyOn(store, 'dingtalkPersonalStatus').mockResolvedValue(statusBase());
     renderModal({ mockMode: true });
-    expect(screen.getByText(/当前平台通道是 Mock 模拟，无法登录真实钉钉账号/)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /用浏览器登录/ })).toBeNull();
-    expect(screen.queryByRole('button', { name: /使用设备码登录/ })).toBeNull();
+    expect(await screen.findByText(/钉钉当前是 Mock 运行态：可以先登录本人账号/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /用浏览器登录（推荐）/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /使用设备码登录（远程\/无浏览器）/ })).toBeInTheDocument();
   });
 
   it('后端未返回身份状态：给出刷新按钮，不假装已连接', () => {
@@ -432,3 +433,4 @@ describe('钉钉登录状态工具函数', () => {
     expect(bySeconds?.expiresAt).toBe(NOW + 120_000);
   });
 });
+

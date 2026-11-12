@@ -13,6 +13,7 @@ import {
   LogoutOutlined,
   ReloadOutlined,
   SendOutlined,
+  SettingOutlined,
   WarningOutlined,
 } from '@ant-design/icons';
 import type { DeliveryMode, PlatformIdentityView } from '@unimsg/shared';
@@ -27,13 +28,14 @@ import { IdentityTag } from '../../components/IdentityTag';
 import { Sparkline } from '../../components/Sparkline';
 import { useHealthSeries } from '../../hooks/useHealthSeries';
 import { PersonalIdentityModal } from './PersonalIdentityModal';
+import { AppConfigModal } from '../connect/AppConfigModal';
 import { FEISHU_OAUTH_CHECKLIST, FEISHU_OAUTH_UNFINISHED_HINT } from './feishuOAuthFeedback';
 import { useFeishuOAuth } from './useFeishuOAuth';
 
 /** 本次实际通道：真实接口=绿，Mock 模拟=橙（Mock 结果绝不伪装成真实成功） */
 const MODE_META: Record<DeliveryMode, { label: string; color: 'success' | 'warning' }> = {
   real: { label: '真实接口', color: 'success' },
-  mock: { label: 'Mock 模拟', color: 'warning' },
+  mock: { label: '未配置（演示模式）', color: 'warning' },
 };
 
 /** 通道策略文案（后端 policy 字段；未知值原样展示，避免前端写死后端取值） */
@@ -86,15 +88,21 @@ export function capabilityWarning(
   return action === 'receive' ? '不可接收' : '不可发送';
 }
 
-/** 每个平台的策略环境变量名：让用户知道界面状态由哪个变量决定（可替换性） */
-const IDENTITY_ENV: Record<string, string> = {
-  [Platform.FEISHU]: 'FEISHU_IDENTITY',
-  [Platform.DINGTALK]: 'DINGTALK_IDENTITY',
+/** 平台身份策略的客户可见文案（原始环境变量名只保留在技术详情里） */
+const IDENTITY_POLICY_LABEL: Record<string, string> = {
+  auto: '自动（本人优先）',
+  user: '仅本人',
+  bot: '仅机器人',
 };
+
+/** 每个平台的策略说明：让用户知道界面状态由哪条策略决定（可替换性） */
+const IDENTITY_POLICY_TITLE = '身份策略决定以谁的身份收发；可在「连接账号 → 平台应用配置」修改；凭据类变更需重启后端才生效';
 
 /** 邮箱平台下的单个账号：只展示地址 / host / 监听目录，授权码永不下发 */
 function MailAccountRow({ account }: { account: MailAccountInfo }) {
   const mode = account.mode ? MODE_META[account.mode] : undefined;
+  // P2-5：账号列表里再写「未配置」会自相矛盾，行内只说明通道是演示
+  const modeLabel = account.mode === 'mock' ? '演示模式' : mode?.label;
   return (
     <div className="mail-account">
       <div className="mail-account__head">
@@ -102,7 +110,7 @@ function MailAccountRow({ account }: { account: MailAccountInfo }) {
         <span className="mail-account__key mono">{account.key}</span>
         {mode && (
           <Tag className="mail-account__mode" color={mode.color}>
-            {mode.label}
+            {modeLabel}
           </Tag>
         )}
       </div>
@@ -163,7 +171,11 @@ export function IdentityBlock({
     user.state === 'expired' ||
     user.state === 'error' ||
     (identity.policy === 'user' && !linked);
-  const canStart = actionsEnabled && !mockMode && identity.policy !== 'bot';
+  const canStart =
+    actionsEnabled
+    && identity.policy !== 'bot'
+    // 钉钉：Mock 运行态也允许登录本人账号（白号 P1-1）；登录后需启用「仅用本人身份」
+    && (!mockMode || (platform === Platform.DINGTALK && user.canLink));
   const connectLabel = linked
     ? platform === Platform.FEISHU
       ? '重新授权'
@@ -178,29 +190,43 @@ export function IdentityBlock({
     canStart && (user.canLink || (platform === Platform.DINGTALK && !linked));
 
   const explainWhy = !linked && !mockMode && actionsEnabled && identity.policy !== 'bot';
+  /** 策略固定「仅本人」但未登录：不能显示「发送 本人」又不能接收的矛盾状态 */
+  const userFixedUnlinked = identity.policy === 'user' && !linked;
 
   return (
     <div className="identity-block" data-testid={`identity-block-${platform}`}>
       <div className="identity-block__head">
         <span className="identity-block__title">身份 · 谁在收、谁在发</span>
-        {IDENTITY_ENV[platform] && (
-          <span className="identity-block__policy mono" title="该平台身份策略（.env 可改，改完重启后端生效）">
-            {IDENTITY_ENV[platform]}={identity.policy}
+        {IDENTITY_POLICY_LABEL[identity.policy] && (
+          <span className="identity-block__policy" title={IDENTITY_POLICY_TITLE}>
+            身份策略：{IDENTITY_POLICY_LABEL[identity.policy]}
           </span>
         )}
       </div>
 
       <div className="identity-block__rows">
-        <div className="identity-block__row">
-          <span className="identity-block__row-label">接收</span>
-          <IdentityTag role={receiveRole} action="receive" short />
-          <span className="identity-block__row-text">{identity.receiveHint}</span>
-        </div>
-        <div className="identity-block__row">
-          <span className="identity-block__row-label">发送</span>
-          <IdentityTag role={sendRole} action="send" short />
-          <span className="identity-block__row-text">{identity.sendHint}</span>
-        </div>
+        {userFixedUnlinked ? (
+          <div className="identity-block__row">
+            <span className="identity-block__row-label">状态</span>
+            <Tag color="warning">本人身份（未登录）</Tag>
+            <span className="identity-block__row-text">
+              身份策略已固定为「仅本人」，未登录期间不会以本人身份收发；请点下方按钮重新登录。
+            </span>
+          </div>
+        ) : (
+          <>
+            <div className="identity-block__row">
+              <span className="identity-block__row-label">接收</span>
+              <IdentityTag role={receiveRole} action="receive" short />
+              <span className="identity-block__row-text">{identity.receiveHint}</span>
+            </div>
+            <div className="identity-block__row">
+              <span className="identity-block__row-label">发送</span>
+              <IdentityTag role={sendRole} action="send" short />
+              <span className="identity-block__row-text">{identity.sendHint}</span>
+            </div>
+          </>
+        )}
       </div>
 
       {explainWhy && (
@@ -212,7 +238,9 @@ export function IdentityBlock({
 
       {mockMode && (
         <div className="identity-block__hint">
-          当前平台通道是「Mock 模拟」：不会真实收发。要使用本人账号，请先在 .env 配置该平台凭据并重启后端，再回来连接。
+          {platform === Platform.DINGTALK && user.canLink
+            ? '当前平台是「演示模式」运行态（不会真实收发）：可以先登录本人账号（无需机器人应用）；登录后到「连接账号」启用「仅用本人身份」（热应用、无需重启），才会真实收发。'
+            : '当前平台通道是「演示模式」：不会真实收发。可到「连接账号 → 平台应用配置」填写应用凭据并重启后端，再回来连接。'}
         </div>
       )}
 
@@ -316,7 +344,9 @@ export function AccountCard({
         </div>
         {mode && (
           <Tag className="account-card__mode" color={mode.color}>
-            {mode.label}
+            {account.platform === Platform.MAIL && mailAccounts.length > 0 && account.mode === 'mock'
+              ? `已添加 ${mailAccounts.length} 个账号（演示模式）`
+              : mode.label}
           </Tag>
         )}
       </div>
@@ -325,6 +355,11 @@ export function AccountCard({
         {account.configured ? (
           <Tag icon={<CheckCircleFilled />} color="success">
             {realMode ? '已配置（未验证）' : '已配置'}
+          </Tag>
+        ) : mailAccounts.length > 0 ? (
+          // P2-5：已添加本地邮箱账号 ≠ 未配置；卡片头如实写「已添加 N 个账号」
+          <Tag icon={<CheckCircleFilled />} color="warning">
+            已添加 {mailAccounts.length} 个账号（未验证）
           </Tag>
         ) : (
           <Tag icon={<CloseCircleFilled />} color="default">
@@ -417,6 +452,7 @@ export function AccountsPage() {
   const health = state.health;
   const [metricsOpen, setMetricsOpen] = useState(false);
   const [dingtalkOpen, setDingtalkOpen] = useState(false);
+  const [appConfigOpen, setAppConfigOpen] = useState(false);
   /** 飞书 OAuth 共用流程：与「连接账号」授权中心同一套回跳/拦截反馈 */
   const feishu = useFeishuOAuth();
   // 只在小抽屉展开时采样（不做后台轮询）；数据不足 3 点不画
@@ -487,9 +523,14 @@ export function AccountsPage() {
             <ApiOutlined /> 平台账号
           </h1>
         </div>
-        <Button icon={<LinkOutlined />} onClick={() => navigate('/connect')}>
-          打开「连接账号」向导
-        </Button>
+        <div className="accounts-head-actions">
+          <Button icon={<SettingOutlined />} onClick={() => setAppConfigOpen(true)}>
+            平台应用配置
+          </Button>
+          <Button icon={<LinkOutlined />} onClick={() => navigate('/connect')}>
+            打开「连接账号」向导
+          </Button>
+        </div>
       </header>
 
       <p className="accounts-intro">
@@ -619,6 +660,16 @@ export function AccountsPage() {
         onClose={() => setDingtalkOpen(false)}
       />
 
+      <AppConfigModal
+        open={appConfigOpen}
+        initialGroup="feishu"
+        onClose={() => setAppConfigOpen(false)}
+        onSaved={() => {
+          void store.refreshHealth();
+          void store.refreshAccounts();
+        }}
+      />
+
       <DrawerSection
         title="运行指标 · 本次启动以来"
         summary={
@@ -671,4 +722,5 @@ export function AccountsPage() {
     </div>
   );
 }
+
 

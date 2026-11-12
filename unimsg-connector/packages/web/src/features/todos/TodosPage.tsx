@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { Checkbox } from 'antd';
+import { App as AntApp, Button, Checkbox } from 'antd';
 import {
   CheckCircleFilled,
   CheckSquareOutlined,
@@ -66,6 +66,17 @@ function TodoCard({ todo, onOpen }: { todo: UnifiedMessage; onOpen: (traceId: st
 export function TodosPage() {
   const state = useAppState();
   const navigate = useNavigate();
+  const { message: toast } = AntApp.useApp();
+
+  /** 空态也能直接产出一条待办：Mock 走本地模拟；真实后端去收件箱注入示例 */
+  const injectDemo = async (): Promise<void> => {
+    try {
+      await store.simulateIncoming();
+      toast.success('已注入一条示例消息（模拟），稍后可在收件箱看到');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '注入失败，请到收件箱注入示例');
+    }
+  };
 
   const todos = state.messages.filter((m) => m.type === 'todo');
   const pending = todos.filter((m) => !m.done);
@@ -85,7 +96,27 @@ export function TodosPage() {
       </header>
 
       {todos.length === 0 ? (
-        <EmptyState title="暂无待办" description="当消息被识别为「待办」类型时，会出现在这里。" />
+        <EmptyState
+          title="暂无待办"
+          description="当消息被识别为「待办」类型时，会出现在这里。先去看看收件箱，或连接你的账号。"
+          action={
+            (
+              <div className="empty-state__actions">
+                <Button size="small" type="primary" onClick={() => navigate('/inbox')}>
+                  去收件箱
+                </Button>
+                {state.demoMode && (
+                  <Button size="small" onClick={() => void injectDemo()}>
+                    注入示例消息
+                  </Button>
+                )}
+                <Button size="small" type="link" onClick={() => navigate('/connect')}>
+                  连接账号
+                </Button>
+              </div>
+            )
+          }
+        />
       ) : (
         <>
           {groups.length > 0 ? (

@@ -16,6 +16,13 @@ import type {
 import type { TraceEntry, UnifiedMessage } from '../types';
 import type {
   AccountInfo,
+  AppConfigField,
+  AppConfigFieldMap,
+  AppConfigPlatformId,
+  AppConfigSaveResult,
+  AppConfigSource,
+  AppConfigUpdate,
+  AppConfigView,
   DingtalkLoginOptions,
   DingtalkLoginStart,
   DingtalkPersonalStatus,
@@ -30,6 +37,7 @@ import type {
   ReplyAck,
   TraceResult,
 } from './api';
+import { APP_CONFIG_LLM_FIELD_KEYS, APP_CONFIG_PLATFORM_FIELD_KEYS } from './api';
 import { sortMessages } from '../utils/format';
 
 /** 后端业务错误：携带 HTTP 状态码，便于上层按 401/404 等分类处理 */
@@ -182,6 +190,47 @@ export class HttpApi implements MessageApi {
     await this.request(`/api/mail/accounts/${encodeURIComponent(key)}`, { method: 'DELETE' });
   }
 
+  async mailAccountVerify(key: string): Promise<MailAccountTestResult> {
+    // 对已保存账号跑真实 IMAP/SMTP 自检；失败也是 200 + 明细，不能当业务异常吞掉
+    const body = await this.request<Record<string, unknown>>(
+      `/api/mail/accounts/${encodeURIComponent(key)}/verify`,
+      { method: 'POST', body: '{}' },
+      { allowOkFalse: true },
+    );
+    const outer = asRecord(body) ?? {};
+    const payload = asRecord(outer.data) ?? outer;
+    const ok = payload.verified === true;
+    const details: string[] = [];
+    for (const [label, field] of [['IMAP', 'imap'], ['SMTP', 'smtp']] as const) {
+      const item = asRecord(payload[field]);
+      if (!item) continue;
+      const detail = typeof item.detail === 'string' ? item.detail : item.ok === true ? '连接正常' : '连接失败';
+      const hint = typeof item.hint === 'string' && item.hint.trim() ? `（${item.hint.trim()}）` : '';
+      details.push(`${label}：${detail}${hint}`);
+    }
+    return {
+      ok,
+      message: ok
+        ? '验证通过：邮箱账号可以使用'
+        : (typeof payload.error === 'string' ? payload.error : '验证失败：请检查授权码与 IMAP 设置'),
+      ...(details.length > 0 ? { details } : {}),
+    };
+  }
+
+  async getAppConfig(): Promise<AppConfigView> {
+    // 平台应用凭据 / 身份模式 / 重启状态；secret 已在服务端脱敏（前端绝不回显明文）
+    const body = await this.request<Record<string, unknown>>('/api/app-config');
+    return normalizeAppConfig(body);
+  }
+
+  async updateAppConfig(patch: AppConfigUpdate): Promise<AppConfigSaveResult> {
+    const body = await this.request<Record<string, unknown>>('/api/app-config', {
+      method: 'PUT',
+      body: JSON.stringify(patch),
+    });
+    return normalizeAppConfigSaveResult(body);
+  }
+
   async markDone(id: string): Promise<UnifiedMessage> {
     // 后端只回 {ok:true}；完整消息同时经 WS 广播，这里重取一次作为兜底（幂等）
     await this.request(`/api/messages/${encodeURIComponent(id)}/done`, { method: 'POST', body: '{}' });
@@ -238,6 +287,10 @@ export class HttpApi implements MessageApi {
       ...(typeof body.startedAt === 'string' ? { startedAt: body.startedAt } : {}),
       ...(body.envFile === null || (body.envFile && typeof body.envFile === 'object')
         ? { envFile: body.envFile as { path: string; mtime: string } | null }
+        : {}),
+      // 本地配置文件（DATA_DIR/linkhub-config.json）：同样只透传 path+mtime
+      ...(body.settingsFile === null || (body.settingsFile && typeof body.settingsFile === 'object')
+        ? { settingsFile: body.settingsFile as { path: string; mtime: string } | null }
         : {}),
     };
   }
@@ -312,6 +365,8 @@ export function normalizeMailAccounts(raw: unknown): MailAccountView[] {
       ...(typeof rec.provider === 'string' ? { provider: rec.provider } : {}),
       source,
       ...(typeof rec.removable === 'boolean' ? { removable: rec.removable } : {}),
+      ...(typeof rec.verified === 'boolean' ? { verified: rec.verified } : {}),
+      ...(typeof rec.verifiedAt === 'string' ? { verifiedAt: rec.verifiedAt } : {}),
       ...(Array.isArray(rec.folders) ? { folders: rec.folders.filter((f): f is string => typeof f === 'string') } : {}),
       ...(rec.mode === 'real' || rec.mode === 'mock' ? { mode: rec.mode } : {}),
     });
@@ -353,3 +408,187 @@ export function normalizeMailTestResult(body: unknown): MailAccountTestResult {
     ...(details.length > 0 ? { details } : {}),
   };
 }
+
+// ---------------------------------------------------------------------------
+// /api/app-config 归一化（后端字段可能演进：这里把多种包法统一成页面可渲染结构）
+// ---------------------------------------------------------------------------
+
+const APP_CONFIG_PLATFORMS: AppConfigPlatformId[] = ['feishu', 'dingtalk', 'wecom'];
+const PLATFORM_KEY_PREFIX: Record<AppConfigPlatformId, string[]> = {
+  feishu: ['FEISHU_'],
+  dingtalk: ['DINGTALK_'],
+  wecom: ['WECOM_'],
+};
+
+function normalizeConfigSource(value: unknown): AppConfigSource {
+  return value === 'env' || value === 'local' || value === 'none' ? value : 'unknown';
+}
+
+/** 长字符串不当展示值（避免旧后端把明文 secret 放在 value，页面二次泄露） */
+function safeDisplay(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  return trimmed.length > 64 ? `${trimmed.slice(0, 8)}…` : trimmed;
+}
+
+/** 单个字段归一化：{configured,masked,source,key} / 字符串 / 布尔 / null 都能吃 */
+export function normalizeAppConfigField(raw: unknown, key: string): AppConfigField {
+  if (raw === null || raw === undefined) {
+    return { configured: false, source: 'none', key };
+  }
+  if (typeof raw === 'string') {
+    return {
+      configured: raw.trim().length > 0,
+      ...(raw.trim() ? { display: safeDisplay(raw) } : {}),
+      source: 'unknown',
+      key,
+    };
+  }
+  if (typeof raw === 'boolean') {
+    return { configured: raw, ...(raw ? { display: '已配置' } : {}), source: 'unknown', key };
+  }
+  const rec = asRecord(raw);
+  if (!rec) return { configured: false, source: 'none', key };
+  const display = safeDisplay(rec.masked) ?? safeDisplay(rec.maskedValue) ?? safeDisplay(rec.display);
+  const rawValue = rec.value;
+  const enumOrBool = typeof rawValue === 'string' || typeof rawValue === 'boolean';
+  const configured =
+    rec.configured === true || rec.present === true || display !== undefined || enumOrBool;
+  return {
+    configured,
+    ...(configured && display ? { display } : {}),
+    ...(configured && !display ? { display: typeof rawValue === 'boolean' ? String(rawValue) : '已配置' } : {}),
+    source: normalizeConfigSource(rec.source),
+    ...(typeof rawValue === 'string' || typeof rawValue === 'boolean' ? { value: rawValue } : {}),
+    ...(typeof rec.envKey === 'string' && rec.envKey
+      ? { key: rec.envKey }
+      : typeof rec.key === 'string' && rec.key
+        ? { key: rec.key }
+        : { key }),
+  };
+}
+
+function normalizeFieldMap(raw: Record<string, unknown> | undefined, keys: string[]): AppConfigFieldMap {
+  const out: AppConfigFieldMap = {};
+  for (const key of keys) out[key] = normalizeAppConfigField(raw?.[key], key);
+  // 后端若返回了额外字段（未来新增），也保留下来供高级展示
+  for (const [key, value] of Object.entries(raw ?? {})) {
+    if (['missing', 'fields', 'configured', 'label'].includes(key) || key in out) continue;
+    out[key] = normalizeAppConfigField(value, key);
+  }
+  return out;
+}
+
+function normalizeFileInfo(value: unknown): { path: string; mtime: string | null } | null | undefined {
+  if (value === null) return null;
+  const rec = asRecord(value);
+  if (!rec || typeof rec.path !== 'string') return undefined;
+  // 后端 settingsFile.mtime 可为 null（文件不存在/尚未写入）：保留 path，不要整体丢弃
+  return rec.mtime === null || rec.mtime === undefined
+    ? { path: rec.path, mtime: null }
+    : typeof rec.mtime === 'string'
+      ? { path: rec.path, mtime: rec.mtime }
+      : undefined;
+}
+
+function normalizeMissingList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    : [];
+}
+
+/**
+ * 兼容后端两种返回：`{ok:true,data:{...}}` 或直接 `{...}`。
+ * 平台字段以 `platforms.<id>.<field>` 为主，也兼容顶层 `feishu.appId` 的旧写法。
+ */
+export function normalizeAppConfig(body: unknown): AppConfigView {
+  const outer = asRecord(body) ?? {};
+  const payload = asRecord(outer.data) ?? outer;
+  const platformsRaw = asRecord(payload.platforms) ?? {};
+
+  const platforms = {} as AppConfigView['platforms'];
+  for (const id of APP_CONFIG_PLATFORMS) {
+    const group = asRecord(platformsRaw[id]) ?? asRecord(payload[id]) ?? {};
+    // 后端最终契约：platforms.<id> = { fields: Record<string, FieldView>, missing: string[], configured }
+    const fieldsRaw = asRecord(group.fields) ?? group;
+    platforms[id] = {
+      fields: normalizeFieldMap(fieldsRaw, APP_CONFIG_PLATFORM_FIELD_KEYS[id]),
+      missing: normalizeMissingList(group.missing),
+    };
+  }
+
+  // 顶层 missing（环境变量名）按前缀分配到平台，供卡片显示「还缺：飞书 App ID」
+  for (const key of normalizeMissingList(payload.missing)) {
+    const target = APP_CONFIG_PLATFORMS.find((id) =>
+      PLATFORM_KEY_PREFIX[id].some((prefix) => key.toUpperCase().startsWith(prefix)),
+    );
+    if (target && !platforms[target].missing.includes(key)) platforms[target].missing.push(key);
+  }
+
+  const identityRaw = asRecord(payload.identity) ?? {};
+  const identity: Record<string, string | boolean | undefined> = {};
+  const identitySources: Record<string, 'env' | 'local' | 'none'> = {};
+  for (const [key, value] of Object.entries(identityRaw)) {
+    if (typeof value === 'string' || typeof value === 'boolean') {
+      identity[key] = value;
+    } else {
+      const rec = asRecord(value);
+      if (rec && typeof rec.mode === 'string') identity[key] = rec.mode;
+      else if (rec && (typeof rec.value === 'string' || typeof rec.value === 'boolean')) identity[key] = rec.value;
+      else if (rec && typeof rec.identity === 'string') identity[key] = rec.identity;
+      if (rec) {
+        const source = normalizeConfigSource(rec.source);
+        if (source === 'env' || source === 'local' || source === 'none') identitySources[key] = source;
+      }
+    }
+  }
+
+  const modesRaw = asRecord(payload.modes) ?? {};
+  const modes: Record<string, string> = {};
+  for (const [key, value] of Object.entries(modesRaw)) {
+    if (typeof value === 'string') {
+      modes[key] = value;
+      continue;
+    }
+    // 后端也可能把 modes 每项也包成 FieldView
+    const rec = asRecord(value);
+    if (rec && typeof rec.value === 'string') modes[key] = rec.value;
+  }
+
+  return {
+    identity,
+    ...(Object.keys(identitySources).length > 0 ? { identitySources } : {}),
+    platforms,
+    llm: normalizeFieldMap(asRecord(payload.llm), APP_CONFIG_LLM_FIELD_KEYS),
+    modes,
+    restartRequired: payload.restartRequired === true,
+    ...(normalizeFileInfo(payload.envFile) !== undefined ? { envFile: normalizeFileInfo(payload.envFile) ?? null } : {}),
+    ...(normalizeFileInfo(payload.settingsFile) !== undefined
+      ? { settingsFile: normalizeFileInfo(payload.settingsFile) ?? null }
+      : {}),
+  };
+}
+
+/** PUT /api/app-config 返回归一化：后端可能外包一层 data */
+export function normalizeAppConfigSaveResult(body: unknown): AppConfigSaveResult {
+  const outer = asRecord(body) ?? {};
+  const payload = asRecord(outer.data) ?? outer;
+  const changedKeys = Array.isArray(payload.changedKeys)
+    ? payload.changedKeys.filter((key): key is string => typeof key === 'string')
+    : [];
+  const ignoredByEnv = Array.isArray(payload.ignoredByEnv)
+    ? payload.ignoredByEnv.filter((key): key is string => typeof key === 'string')
+    : [];
+  return {
+    saved: payload.saved !== false,
+    restartRequired: payload.restartRequired === true,
+    ...(payload.hotApplied === true ? { hotApplied: true } : {}),
+    ...(ignoredByEnv.length > 0 ? { ignoredByEnv } : {}),
+    ...(typeof payload.message === 'string' && payload.message ? { message: payload.message } : {}),
+    ...(Array.isArray(payload.warnings) ? { warnings: payload.warnings.filter((w): w is string => typeof w === 'string') } : {}),
+    ...(Array.isArray(payload.hotAppliedKeys) ? { hotAppliedKeys: payload.hotAppliedKeys.filter((k): k is string => typeof k === 'string') } : {}),
+    changedKeys,
+  };
+}
+

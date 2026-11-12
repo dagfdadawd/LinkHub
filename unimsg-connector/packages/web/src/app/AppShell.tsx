@@ -60,7 +60,7 @@ function useIsCompact(): boolean {
   return compact;
 }
 
-/** 图标轨导航项：图标常显，文字走 hover Tooltip（右侧弹出），计数以角标呈现 */
+/** 图标轨导航项：图标 + 常驻短文字（客户不用 hover 才知道是什么），计数以角标呈现 */
 function RailLink({
   to,
   icon,
@@ -83,6 +83,8 @@ function RailLink({
         {typeof count === 'number' && count > 0 && (
           <span className="rail-item__badge">{count > 99 ? '99+' : count}</span>
         )}
+        {/* 常驻文字标签：客户不用逐个 hover 才知道每个图标是什么（P2-1） */}
+        <span className="rail-item__label">{label}</span>
       </NavLink>
     </Tooltip>
   );
@@ -276,6 +278,7 @@ export function AppShell() {
               onClick={() => setSettingsOpen(true)}
             >
               <SettingOutlined />
+              <span className="rail-item__label">设置</span>
             </button>
           </Tooltip>
 
@@ -324,7 +327,7 @@ export function AppShell() {
               <kbd className="kbd">⌘K</kbd>
             </button>
 
-            <Tooltip title={state.demoMode ? '实时推送状态（Mock 模拟连接）' : 'WebSocket 实时连接状态'}>
+            <Tooltip title={state.demoMode ? '服务连接状态（演示模式）' : '服务连接状态（本地后端 + 实时推送）'}>
               <span>
                 <ConnectionDot status={state.connection} />
               </span>

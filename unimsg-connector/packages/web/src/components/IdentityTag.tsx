@@ -4,9 +4,9 @@
  * 颜色语义（与账号页、收件箱统一）：
  *  - 本人 = 绿（推荐路径：不必把机器人拉进群）
  *  - 机器人 = 蓝（兼容 / 兜底，仍然可用）
- *  - 模拟 = 橙（Mock，绝不假装真实平台已收到）
+ *  - 演示 = 橙（Mock，绝不假装真实平台已收到；身份叫「演示」、发送叫「模拟发送」）
  *
- * 契约：任何状态都不允许含糊——真实接收/发送必须写清身份，Mock 一律标「模拟」。
+ * 契约：任何状态都不允许含糊——真实接收/发送必须写清身份；演示模式身份标「演示」、发送标「模拟发送」。
  */
 import { Tag } from 'antd';
 import type { IdentityRole } from '../types';
@@ -24,7 +24,7 @@ interface IdentityTagMeta {
 const IDENTITY_TAG_META: Record<IdentityTagRole, IdentityTagMeta> = {
   user: { color: 'success', short: '本人', receive: '本人账号接收', send: '本人发送' },
   bot: { color: 'processing', short: '机器人', receive: '机器人接收', send: '机器人发送' },
-  mock: { color: 'warning', short: '模拟', receive: '模拟接收', send: '模拟发送' },
+  mock: { color: 'warning', short: '演示', receive: '演示接收', send: '模拟发送' },
 };
 
 export function identityTagMeta(role: IdentityTagRole): IdentityTagMeta {

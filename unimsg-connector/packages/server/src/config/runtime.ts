@@ -112,7 +112,11 @@ export function readPlatformCredentials(env: NodeJS.ProcessEnv): PlatformCredent
       appSecret: env.FEISHU_APP_SECRET ?? '',
       verifyToken: env.FEISHU_VERIFY_TOKEN ?? '',
       encryptKey: env.FEISHU_ENCRYPT_KEY ?? '',
-      stream: truthy(env.FEISHU_STREAM),
+      // P2-6：长连接是默认接收方式（未显式 FEISHU_STREAM 时默认 true）；
+      // 只有 HTTP 回调部署才需要显式 FEISHU_STREAM=false + FEISHU_VERIFY_TOKEN
+      stream: env.FEISHU_STREAM === undefined || env.FEISHU_STREAM.trim() === ''
+        ? true
+        : truthy(env.FEISHU_STREAM),
       baseUrl: trimBase(env.FEISHU_BASE_URL, DEFAULT_FEISHU_BASE_URL),
     },
     dingtalk: {
@@ -618,7 +622,7 @@ function capability(platform: Platform, input: RuntimeBuildInput): CapabilityRes
     if (!p.feishu.stream && !p.feishu.verifyToken) missing.push('FEISHU_VERIFY_TOKEN');
     const canSend = Boolean(p.feishu.appId && p.feishu.appSecret);
     // 收：HTTP 回调需 Verification Token；长连接只需 appId/appSecret
-    const canReceive = Boolean(p.feishu.verifyToken || p.feishu.stream);
+    const canReceive = Boolean(p.feishu.appId && p.feishu.appSecret && (p.feishu.verifyToken || p.feishu.stream));
     if (canSend && !canReceive) warnings.push('只能发不能收：缺少 FEISHU_VERIFY_TOKEN（HTTP 回调验签），或开启 FEISHU_STREAM 长连接');
     if (canSend && !p.feishu.stream && !p.feishu.encryptKey) warnings.push('未配置 FEISHU_ENCRYPT_KEY：仅支持未加密回调（若后台开了加密策略会解密失败）');
     if (p.feishu.stream) warnings.push('已开启飞书长连接（FEISHU_STREAM）：本机无需公网回调即可收消息');
@@ -1125,5 +1129,31 @@ export function resolveIdentityConfig(
       authTimeoutMs: clampInt(env.DWS_AUTH_TIMEOUT_MS, DEFAULT_DWS_AUTH_TIMEOUT_MS, 1_000, 120_000),
       sendTimeoutMs: clampInt(env.DWS_SEND_TIMEOUT_MS, DEFAULT_DWS_SEND_TIMEOUT_MS, 1_000, 600_000),
     },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 邮箱运行态重算（P0-3）：本地导入账号是运行期才出现的，启动时按 .env 算好的
+// config.runtime[MAIL] 会一直是 mock/configured=false，导致「界面添加账号后永远收不到信」。
+// 这里按「当前账号」重算一次，由 mailAccounts store 在合并/增删/验证后调用。
+// ---------------------------------------------------------------------------
+export function computeMailRuntimeAfterAccounts(args: {
+  policy: ModePolicy;
+  envAccounts: MailAccount[];
+  verifiedFileKeys: string[];
+}): { mode: 'real' | 'mock'; configured: boolean; canSend: boolean; canReceive: boolean; reason: string } {
+  if (args.policy === 'mock') {
+    return { mode: 'mock', configured: false, canSend: false, canReceive: false, reason: 'MAIL_MODE=mock（显式关闭真实邮箱）' };
+  }
+  const usable = args.envAccounts.length + args.verifiedFileKeys.length;
+  if (usable === 0) {
+    return {
+      mode: 'mock', configured: false, canSend: false, canReceive: false,
+      reason: '没有可用的邮箱账号（在「连接账号」页添加并验证后自动启用真实邮箱）',
+    };
+  }
+  return {
+    mode: 'real', configured: true, canSend: true, canReceive: true,
+    reason: '有 ' + usable + ' 个可用邮箱账号（.env ' + args.envAccounts.length + ' / 已验证本地 ' + args.verifiedFileKeys.length + '）',
   };
 }

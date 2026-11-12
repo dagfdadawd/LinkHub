@@ -18,6 +18,10 @@ import {
 import type { LoginMode } from '../connectors/dingtalkPersonal';
 import { dingtalkUserIdentity, peekDingtalkProfile } from '../services/identity';
 import { reconcileIdentityChannels } from '../services/identityChannels';
+import {
+  maybeAutoEnableDingtalkPersonalIdentity,
+  maybeRevertDingtalkPersonalIdentity,
+} from '../services/personalIdentity';
 
 interface DingtalkPersonalStatusData {
   available: boolean;
@@ -133,6 +137,10 @@ export function dingtalkPersonalRouter(): Router {
       const data = await buildStatus();
       // ③ 运行中登录/注销后，前端轮询这里就会把接收通道对齐（无需重启后端）
       if (before !== undefined && before !== data.authenticated) {
+        if (data.authenticated) {
+          // 一登即用：登录成功才自动热应用「仅本人身份」并持久化（未授权时不动配置）
+          await maybeAutoEnableDingtalkPersonalIdentity('status 检测到钉钉登录成功', { authenticated: true }).catch(() => undefined);
+        }
         reconcileIdentityChannels(data.authenticated ? '检测到钉钉已登录' : '检测到钉钉已注销');
       }
       res.json({ ok: true, data });
@@ -146,6 +154,9 @@ export function dingtalkPersonalRouter(): Router {
     try {
       const client = dingtalkPersonalClient();
       await client.logout();
+      // ④ 注销回退：仅当 identity.dingtalk=user 是「登录成功后自动启用」而来时，自动回退 auto；
+      //    显式手写 user（.env/本地配置）不自动动。
+      maybeRevertDingtalkPersonalIdentity('用户注销 dws');
       // ⑤ 注销后停止本人身份接收通道
       reconcileIdentityChannels('钉钉已注销');
       res.json({ ok: true, data: { ok: true, authenticated: false } });

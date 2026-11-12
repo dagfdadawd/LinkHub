@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Platform } from '@unimsg/shared';
 import { config } from '../config';
 import { createMailAccountFromInput, type MailAccount } from '../config/runtime';
 import {
@@ -26,7 +27,9 @@ const dirs: string[] = [];
 const original = {
   accounts: [...config.mail.accounts],
   enabled: config.mail.enabled,
+  enabledExplicit: config.mail.enabledExplicit,
   issues: [...config.mail.issues],
+  mailRuntime: { ...config.runtime[Platform.MAIL] },
 };
 
 function tempDir(): string {
@@ -65,6 +68,8 @@ after(() => {
   config.mail.accounts.splice(0, config.mail.accounts.length, ...original.accounts);
   config.mail.issues.splice(0, config.mail.issues.length, ...original.issues);
   config.mail.enabled = original.enabled;
+  config.mail.enabledExplicit = original.enabledExplicit;
+  Object.assign(config.runtime[Platform.MAIL], original.mailRuntime);
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
@@ -214,4 +219,54 @@ test('Store：env 来源账号不可删（中文错误）、不存在的 key 404
     (e: unknown) => e instanceof MailAccountsError && e.code === 'validation',
   );
   assert.equal(existsSync(file), false, '校验失败不应写文件');
+});
+test('verifiedAt：未验证→验证→重新保存后验证作废；脱敏视图带 verified', () => {
+  const dir = tempDir();
+  const file = join(dir, 'mail-accounts.json');
+  resetConfig();
+  const store = new MailAccountsStore({ file, log: () => {}, warn: () => {} });
+  store.init();
+  const saved = store.addOrUpdate({ key: 'vmail', address: 'v@qq.com', authCode: 'code' });
+  assert.ok(saved.warnings.some((w) => w.includes('未验证')), saved.warnings.join('|'));
+  let masked = store.snapshot().masked.find((m) => m.key === 'vmail')!;
+  if (masked) {
+    assert.equal(masked.verified, false);
+    assert.equal(masked.verifiedAt, undefined);
+  }
+  const marked = store.markVerified('vmail');
+  assert.ok(marked.account.verifiedAt);
+  masked = store.snapshot().masked.find((m) => m.key === 'vmail')!;
+  assert.equal(masked.verified, true);
+  const persisted = loadMailAccountsFile(file).entries.find((a) => a.key === 'vmail')!;
+  assert.ok(persisted.verifiedAt, 'verifiedAt 已落盘');
+  const updated = store.addOrUpdate({ key: 'vmail', address: 'v@qq.com', authCode: 'code2' });
+  assert.ok(updated.warnings.some((w) => w.includes('验证状态已作废')));
+  assert.equal(store.snapshot().masked.find((m) => m.key === 'vmail')!.verified, false);
+});
+
+test('mail runtime 重算（P0-3）：有 env 或已验证本地账号 → real；未验证/无账号/显式 mock → mock', () => {
+  const dir = tempDir();
+  const file = join(dir, 'mail-accounts.json');
+  const rt = config.runtime[Platform.MAIL];
+  Object.assign(rt, { policy: 'auto', mode: 'mock', configured: false, canSend: false, canReceive: false, reason: 'x' });
+  resetConfig([envAccount()]);
+  const envStore = new MailAccountsStore({ file, log: () => {}, warn: () => {} });
+  envStore.init();
+  assert.equal(rt.mode, 'real', '有 .env 账号 → 自动 real（无需 MAIL_MODE）');
+  assert.equal(rt.configured, true);
+  assert.equal(rt.canReceive, true);
+
+  resetConfig();
+  rmSync(file, { force: true });
+  Object.assign(rt, { policy: 'auto', mode: 'mock', configured: false, canSend: false, canReceive: false });
+  const store = new MailAccountsStore({ file, log: () => {}, warn: () => {} });
+  store.init();
+  store.addOrUpdate({ key: 'pending', address: 'p@qq.com', authCode: 'c' });
+  assert.equal(rt.mode, 'mock', '未验证本地账号不算真实可用');
+  store.markVerified('pending');
+  assert.equal(rt.mode, 'real', '验证后自动切 real（P0-3）');
+  Object.assign(rt, { policy: 'mock', mode: 'mock' });
+  const mockStore = new MailAccountsStore({ file, log: () => {}, warn: () => {} });
+  mockStore.init();
+  assert.equal(rt.mode, 'mock', '显式 MAIL_MODE=mock 时不允许自动 real');
 });

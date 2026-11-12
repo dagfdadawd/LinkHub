@@ -19,6 +19,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Platform, type DeliveryMode } from '@unimsg/shared';
 import { resolveDwsBin } from './connectors/dwsBin';
+import { applyLocalConfigToEnv, captureRestartBaseline, readLocalConfig } from './services/localConfig';
 import {
   buildPlatformRuntime,
   DEFAULT_FEISHU_ACCOUNTS_BASE_URL,
@@ -46,6 +47,27 @@ loadEnv({ path: resolve(process.cwd(), '.env') });
 
 /** monorepo 根（unimsg-connector/）：.env、水位、doctor 工作目录等统一按它定位 */
 export const monorepoRoot = resolve(here, '../../..');
+/** 进程启动时间（近似，用于「配置文件已保存，需重启」提示与 restartRequired 判定） */
+export const processStartedAtMs = Date.now() - Math.floor(process.uptime() * 1000);
+
+// ---------------------------------------------------------------------------
+// 本地应用配置（白号 P0）：GUI 保存的凭据/模式先补进 env，再由下面统一解析。
+// 安全规则：显式 .env 值优先，本地文件只补空（绝不用 GUI 覆盖运维已写的 env）。
+// ---------------------------------------------------------------------------
+// 单测（NODE_TEST_CONTEXT）下忽略本机真实配置：避免开发机上的 DATA_DIR/linkhub-config.json 污染测试；
+// 生产/正常启动仍按「.env 优先 + 本地补空」合并。
+const underTestConfig = Boolean(process.env.NODE_TEST_CONTEXT);
+const realLocalConfig = readLocalConfig(monorepoRoot);
+const localConfigLoaded = underTestConfig
+  ? { ...realLocalConfig, config: { version: 1 } as const, exists: false }
+  : realLocalConfig;
+if (!underTestConfig && localConfigLoaded.error) console.warn("[unimsg] " + localConfigLoaded.error);
+const localConfigApplied = underTestConfig
+  ? { applied: [] as string[] }
+  : applyLocalConfigToEnv(localConfigLoaded.config);
+// P1-1：拍「静态键」启动基线；之后只有静态键变化才要求重启（identity.* 热应用不算）
+captureRestartBaseline(localConfigLoaded.config);
+
 
 /**
  * dws 可执行文件统一解析（个人版内置/自动发现）：

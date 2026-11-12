@@ -58,19 +58,28 @@ export function DetailPanel({
   }, [message.traceId, message.replyDraft]);
 
   const canMarkDone = !message.done;
-  // 投递方式：Mock 必须如实标注，不能显示成真实平台已收到；真实回写带身份时一并展示
-  const delivery = deliveryLabel(message.delivery);
-  // 回复将以哪种身份发出（来自账号页身份视图；Mock 平台整体显示模拟）
+  // 投递方式：Mock 必须如实标注，不能显示成真实平台已收到；真实回写带身份时一并展示。
+  // 发送失败时以失败原因/实际投递为准：不能显示「模拟发送」掩盖未送达（二轮复验收 P1）。
+  const rawDeliveryLabel = deliveryLabel(message.delivery);
+  const delivery = message.status === MsgStatus.FAILED && rawDeliveryLabel.kind === 'mock'
+    ? { text: '发送失败（未送达平台）', kind: 'none' as const }
+    : rawDeliveryLabel;
+  // 回复将以哪种身份发出：只有「平台整体 Mock」才说模拟发送；
+// identity=user 但未登录时发送会失败，提示去登录，不能假称已模拟发送（UI 二轮复验 P2-4）。
   const account = state.accounts.find((a) => a.platform === message.platform);
-  const replyIdentity = account?.mode === 'mock'
-    ? 'mock'
-    : account?.identity?.effectiveSend;
+  const platformMock = account?.identity
+    ? account.identity.effectiveSend === 'mock' && account.identity.effectiveReceive === 'mock'
+    : account?.mode === 'mock';
+  const replyIdentity = platformMock ? 'mock' : account?.identity?.effectiveSend;
+  const replyUserUnlinked = replyIdentity === 'user' && !account?.identity?.user.linked;
   const replyIdentityHint = replyIdentity === 'user'
-    ? '以你本人账号发出'
+    ? replyUserUnlinked
+      ? '本人身份未登录：发送会失败，请先到「连接账号」完成钉钉本人登录'
+      : '以你本人账号发出'
     : replyIdentity === 'bot'
       ? '以机器人身份发出（本人账号未连接时自动兜底）'
       : replyIdentity === 'mock'
-        ? 'Mock 模拟，不会真的发到平台'
+        ? '演示模式：模拟发送，不会真的发到平台'
         : '';
 
   async function handleSend(attachments: OutboundAttachment[] = []) {
@@ -79,11 +88,13 @@ export function DetailPanel({
     setSending(true);
     try {
       await store.reply(message.traceId, content, attachments);
-      // P1-2：「已提交」不等于「已发出」——异步发送结果会经 WS 回流，文案不要写成成功口吻
+      // P1-2：「已提交」不等于「已发出」；演示模式必须显式写「模拟发送」（P2-6）
       toast.success(
-        attachments.length > 0
-          ? `已提交，正在发送（含 ${attachments.length} 个附件）…状态会在消息里实时更新`
-          : '已提交，正在发送…状态会在消息里实时更新',
+        replyIdentity === 'mock'
+          ? '已模拟发送（不会真的发到平台）…状态会在消息里实时更新'
+          : attachments.length > 0
+            ? `已提交，正在发送（含 ${attachments.length} 个附件）…状态会在消息里实时更新`
+            : '已提交，正在发送…状态会在消息里实时更新',
       );
       // P2-2：清空输入框 + 2 秒防重复，避免手滑再点一次重复打扰对方
       setText('');

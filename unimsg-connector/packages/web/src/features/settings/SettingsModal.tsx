@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { App as AntApp, Button, Input, Modal, Popconfirm, Segmented, Switch, Tabs } from 'antd';
 import {
   BgColorsOutlined,
@@ -10,6 +11,7 @@ import {
 } from '@ant-design/icons';
 import type { ReactNode } from 'react';
 import { useAppState } from '../../hooks/useAppState';
+import { resetOnboardingTips } from '../../utils/onboarding';
 import { useTheme, type ThemePreference } from '../../app/ThemeProvider';
 import {
   AVATAR_TONES,
@@ -51,6 +53,7 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
   const state = useAppState();
   const { mode, preference, setPreference } = useTheme();
   const { message } = AntApp.useApp();
+  const navigate = useNavigate();
 
   const [name, setName] = useState(profile.name);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(profile.avatarUrl);
@@ -103,15 +106,17 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
     message.success('已恢复默认设置');
   }
 
-  const connectionText = state.demoMode
-    ? '前端演示模式（未接后端）'
+  const localBackendText = state.demoMode
+    ? '演示模式（未接后端）'
     : state.error
       ? '连接异常'
       : state.connection === 'connected'
-        ? '已连接'
+        ? '服务已连接'
         : state.connection === 'reconnecting'
           ? '重连中'
           : '未连接';
+  const progress = state.onboarding?.overall;
+  const accountsReadyText = `${progress?.ready ?? 0}/${progress?.total ?? 4} 已就绪（不代表已连真实平台）`;
 
   return (
     <Modal
@@ -292,8 +297,12 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
                     <b className="mono">{API_BASE || '未配置（前端演示模式）'}</b>
                   </div>
                   <div>
-                    <span>连接状态</span>
-                    <b>{connectionText}</b>
+                    <span>本地后端</span>
+                    <b>{localBackendText}</b>
+                  </div>
+                  <div>
+                    <span>账号</span>
+                    <b>{accountsReadyText}</b>
                   </div>
                 </div>
 
@@ -317,6 +326,16 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
                     <Button danger>清除本地数据</Button>
                   </Popconfirm>
                   <Button onClick={handleResetAll}>恢复默认设置</Button>
+                  <Button
+                    onClick={() => {
+                      resetOnboardingTips();
+                      onClose();
+                      navigate('/inbox');
+                      message.success('已重新打开首次使用引导');
+                    }}
+                  >
+                    重新显示首次使用引导
+                  </Button>
                 </div>
               </div>
             ),
@@ -333,3 +352,4 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
     </Modal>
   );
 }
+

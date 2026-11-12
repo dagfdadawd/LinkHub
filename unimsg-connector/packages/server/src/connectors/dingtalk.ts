@@ -22,7 +22,7 @@ import { config } from '../config';
 import { genTraceId, mockSend, verifyMock, inferType, inferDueAt, isMock, assertRealSendable } from './base';
 import { dingtalkDecrypt, dingtalkSign, safeEqual } from './crypto';
 import { dingtalkAccessToken, postJson, postMultipart } from './real';
-import { dingtalkPersonalClient, type DwsSendTarget } from './dingtalkPersonal';
+import { DingtalkPersonalError, dingtalkPersonalClient, type DwsSendTarget } from './dingtalkPersonal';
 import { identityChannelsReal, resolveIdentity } from '../services/identity';
 import { decodeAttachment, describeAttachments, isOutboundComposed } from '../services/outbound';
 
@@ -157,6 +157,16 @@ export async function send(msg: UnifiedMessage, attachments: OutboundAttachment[
 
   // 3) 本人身份：dws 子进程
   if (wanted === 'user') {
+    // 明确防护：身份策略=user 但 dws 尚未登录时，给可操作的中文原因（进 failureReason/DLQ 也能看懂），
+    // 不落到「缺少会话」/底层英文错误；这是用户操作问题，不重试（避免无谓等待）。
+    if (!view.user.linked) {
+      const err = new DingtalkPersonalError(
+        '钉钉本人身份未登录：请先完成钉钉本人登录（连接账号 → 用钉钉本人账号登录）。',
+        'not-logged-in',
+      );
+      (err as unknown as { noRetry?: boolean }).noRetry = true;
+      throw err;
+    }
     return sendViaPersonal(msg, text, attachments);
   }
 

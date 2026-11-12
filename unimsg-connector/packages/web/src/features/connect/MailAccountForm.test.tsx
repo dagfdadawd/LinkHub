@@ -96,11 +96,17 @@ describe('邮箱添加表单（个人版核心）', () => {
     expect(screen.getAllByText(/授权码无效或已过期/).length).toBeGreaterThan(0);
   });
 
-  it('保存：调用创建接口并回调 onSaved（授权码只在请求体里）', async () => {
+  it('保存：未测试时需二次确认；调用创建接口并回调 onSaved（授权码只在请求体里）', async () => {
     const onSaved = vi.fn();
     renderForm({ onSaved });
     fillBasic('me@163.com', 'auth-code-123');
     fireEvent.click(screen.getByRole('button', { name: /保存账号/ }));
+
+    // P2-3：未测试/测试失败的账号保存前必须二次确认（会标记「未验证」）
+    expect(await screen.findAllByDisplayValue('me@163.com')).toBeTruthy();
+    expect((await screen.findAllByText('还没有通过连接测试')).length).toBeGreaterThan(0);
+    expect(hoisted.store.mailAccountCreate).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: /仍然保存/ }));
 
     await waitFor(() => expect(hoisted.store.mailAccountCreate).toHaveBeenCalledTimes(1));
     expect(hoisted.store.mailAccountCreate).toHaveBeenCalledWith(
@@ -113,6 +119,21 @@ describe('邮箱添加表单（个人版核心）', () => {
     await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
     // 提交后表单重置，不在界面上回显授权码
     await waitFor(() => expect(screen.getByLabelText('邮箱地址')).toHaveValue(''));
+  });
+
+  it('测试通过后保存不再二次确认，并提示已保存生效', async () => {
+    renderForm();
+    fillBasic('me@qq.com', 'auth-code-123');
+    fireEvent.click(screen.getByRole('button', { name: /测试连接/ }));
+    await waitFor(() => expect(hoisted.store.mailAccountTest).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole('button', { name: /保存账号/ }));
+
+    await waitFor(() => expect(hoisted.store.mailAccountCreate).toHaveBeenCalledTimes(1));
+    expect(hoisted.store.mailAccountCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ verify: true }),
+    );
+    expect(screen.queryByText('还没有通过连接测试')).not.toBeInTheDocument();
+    expect(await screen.findByText(/已通过测试验证，可直接真实收信/)).toBeInTheDocument();
   });
 
   it('必填校验：地址 / 授权码为空时不调用后端', async () => {
@@ -179,3 +200,4 @@ describe('buildMailAccountInput', () => {
     });
   });
 });
+

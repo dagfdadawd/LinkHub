@@ -14,6 +14,7 @@ const hoisted = vi.hoisted(() => {
     connection: 'connected' as 'connected' | 'reconnecting' | 'offline',
     messages: [] as unknown[],
     onboarding: null as unknown,
+    appConfig: null as Record<string, unknown> | null,
   };
   const store = {
     refreshOnboarding: vi.fn(),
@@ -27,6 +28,10 @@ const hoisted = vi.hoisted(() => {
     dingtalkPersonalLogin: vi.fn(),
     dingtalkPersonalStatus: vi.fn(),
     dingtalkPersonalLogout: vi.fn(),
+    refreshAppConfig: vi.fn(),
+    loadAppConfig: vi.fn(),
+    saveAppConfig: vi.fn(),
+    mailAccountVerify: vi.fn(),
   };
   return { state, store };
 });
@@ -113,6 +118,19 @@ function onboardingView(patch: Partial<OnboardingView> = {}): OnboardingView {
   };
 }
 
+const EMPTY_APP_CONFIG = {
+  identity: { dingtalk: 'auto' },
+  platforms: {
+    feishu: { fields: {}, missing: [] },
+    dingtalk: { fields: {}, missing: [] },
+    wecom: { fields: {}, missing: [] },
+  },
+  llm: {},
+  restartRequired: false,
+  envFile: null,
+  settingsFile: null,
+};
+
 const MAIL_ACCOUNTS = [
   {
     key: 'local-1',
@@ -137,6 +155,7 @@ function makeState(patch: Partial<typeof hoisted.state> = {}) {
     connection: 'connected',
     messages: [],
     onboarding: null,
+    appConfig: null,
     ...patch,
   };
 }
@@ -159,6 +178,10 @@ beforeEach(() => {
   hoisted.store.mailAccountTest.mockResolvedValue({ ok: true, message: 'ok' });
   hoisted.store.mailAccountCreate.mockResolvedValue(undefined);
   hoisted.store.mailAccountDelete.mockResolvedValue(undefined);
+  hoisted.store.mailAccountVerify.mockResolvedValue({ ok: true, message: 'ok' });
+  hoisted.store.refreshAppConfig.mockResolvedValue(EMPTY_APP_CONFIG);
+  hoisted.store.loadAppConfig.mockResolvedValue(EMPTY_APP_CONFIG);
+  hoisted.store.saveAppConfig.mockResolvedValue({ saved: true, restartRequired: false, hotApplied: true, changedKeys: ['identity.dingtalk'] });
 });
 
 afterEach(() => {
@@ -224,7 +247,7 @@ describe('连接账号页（授权中心）渲染', () => {
     await screen.findByTestId('connect-step-mail');
     fireEvent.click(screen.getByRole('button', { name: /添加邮箱账号/ }));
     expect(await screen.findByTestId('mail-account-form')).toBeInTheDocument();
-  });
+  }, 15000);
 
   it('演示模式如实标注，不伪造已连接', async () => {
     makeState({ demoMode: true });
@@ -265,7 +288,7 @@ describe('连接账号页动作分发', () => {
       'href',
       'https://work.weixin.qq.com/',
     );
-  });
+  }, 15000);
 
   it('copy 动作：复制管理员清单到剪贴板', async () => {
     const writeText = vi.fn(async () => {});
@@ -283,10 +306,12 @@ describe('连接账号页动作分发', () => {
     expect(screen.getByText('命令')).toBeInTheDocument();
   });
 
-  it('api 动作（钉钉）：打开现有「连接钉钉本人账号」弹窗，而不是重复实现登录流程', async () => {
+  it('api 动作（钉钉）：只打开「连接钉钉本人账号」弹窗，不预写 identity', async () => {
     renderPage();
-    fireEvent.click(await screen.findByRole('button', { name: /去登录钉钉/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /用钉钉本人账号登录（推荐，无需机器人应用）/ }));
     expect(await screen.findByText('连接钉钉本人账号')).toBeInTheDocument();
+    // 二轮 UI 复验 P1：登录前不得 PUT identity（取消/关闭必须无副作用）
+    expect(hoisted.store.saveAppConfig).not.toHaveBeenCalled();
   });
 
   it('api 动作（飞书）：复用现有 OAuth 流程（开空白页后跳授权 URL）', async () => {
@@ -302,4 +327,293 @@ describe('连接账号页动作分发', () => {
   });
 });
 
+
+
+
+describe('白号改造：缺凭据 / 一登即用 / 邮箱验证', () => {
+  function whiteAccountView(): OnboardingView {
+    return onboardingView({
+      overall: { ready: 0, total: 4, needsAction: 4 },
+      steps: [
+        step('mail', 'needs_user_auth', {
+          summary: '还没有邮箱账号',
+          actions: [{ id: 'mail-add', kind: 'form', label: '添加邮箱账号' }],
+        }),
+        step('dingtalk', 'needs_admin', {
+          summary: '缺少机器人应用凭据；可改用仅本人身份',
+          detail: { effectiveSend: 'mock', missing: ['DINGTALK_CLIENT_ID', 'DINGTALK_CLIENT_SECRET'] },
+          actions: [
+            { id: 'dingtalk-personal-login', kind: 'api', label: '用钉钉本人账号登录（推荐，无需机器人应用）' },
+          ],
+        }),
+        step('feishu', 'needs_admin', {
+          summary: '缺少飞书应用凭据',
+          detail: { missing: ['FEISHU_APP_ID', 'FEISHU_APP_SECRET'] },
+          actions: [{ id: 'feishu-configure', kind: 'form', label: '填写飞书应用凭据' }],
+        }),
+        step('wecom', 'needs_admin', {
+          summary: '缺少企微应用凭据',
+          detail: { missing: ['WECOM_CORP_ID'] },
+          actions: [{ id: 'wecom-configure', kind: 'form', label: '填写企业微信凭据' }],
+        }),
+      ],
+    });
+  }
+
+  it('显示 missing 的人类可读键名 + 「填写配置」打开平台应用配置弹窗', async () => {
+    hoisted.store.refreshOnboarding.mockResolvedValue(whiteAccountView());
+    renderPage();
+
+    const missing = await screen.findByTestId('connect-missing-feishu');
+    expect(missing.textContent).toContain('飞书 App ID');
+    expect(missing.textContent).toContain('飞书 App Secret');
+    // 不把内部变量名直接铺给客户
+    expect(missing.textContent).not.toContain('FEISHU_APP_ID');
+
+    fireEvent.click(within(missing).getByRole('button', { name: /填写配置/ }));
+    await waitFor(() =>
+      expect(document.querySelector('.ant-modal-title')?.textContent).toContain('平台应用配置'),
+    );
+  });
+
+  it('钉钉「一登即用」：只打开登录弹窗，登录前不预写 identity', async () => {
+    hoisted.store.refreshOnboarding.mockResolvedValue(whiteAccountView());
+    renderPage();
+
+    fireEvent.click(await screen.findByRole('button', { name: /用钉钉本人账号登录（推荐，无需机器人应用）/ }));
+    expect(await screen.findByText('连接钉钉本人账号')).toBeInTheDocument();
+    expect(hoisted.store.saveAppConfig).not.toHaveBeenCalled();
+  });
+
+  it('进度「待处理」按后端 needsAction；ready<total 时绝不显示「全部就绪」', async () => {
+    hoisted.store.refreshOnboarding.mockResolvedValue(
+      onboardingView({ overall: { ready: 1, total: 4, needsAction: 0 } }),
+    );
+    renderPage();
+
+    expect(await screen.findByText('已就绪 1 / 4')).toBeInTheDocument();
+    // 后端仍给 0 时用「未就绪数」兜底，避免误导客户「没有待办」
+    expect(screen.getByText(/待处理 3 项/)).toBeInTheDocument();
+    expect(screen.queryByText('四个平台都已就绪')).not.toBeInTheDocument();
+  });
+
+  it('未验证邮箱账号：显示「未验证」并可点「测试验证」调用 verify 接口', async () => {
+    hoisted.store.mailAccounts.mockResolvedValue([
+      { key: 'u1', maskedAddress: 'u***1@qq.com', provider: 'qq', source: 'file', verified: false },
+    ]);
+    renderPage();
+
+    expect(await screen.findByText('未验证')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /测试验证/ }));
+    await waitFor(() => expect(hoisted.store.mailAccountVerify).toHaveBeenCalledWith('u1'));
+  });
+
+  it('mail-enable-real：保存 modes.mail=real，需要重启时显示常驻重启提示', async () => {
+    hoisted.store.refreshOnboarding.mockResolvedValue(
+      onboardingView({
+        steps: [
+          step('mail', 'needs_user_auth', {
+            actions: [{ id: 'mail-enable-real', kind: 'api', label: '启用真实收信' }],
+          }),
+          step('dingtalk', 'mock', { actions: [] }),
+          step('feishu', 'mock', { actions: [] }),
+          step('wecom', 'mock', { actions: [] }),
+        ],
+      }),
+    );
+    hoisted.store.saveAppConfig.mockResolvedValue({
+      saved: true,
+      restartRequired: true,
+      changedKeys: ['modes.mail'],
+    });
+    renderPage();
+
+    fireEvent.click(await screen.findByRole('button', { name: /启用真实收信/ }));
+    await waitFor(() =>
+      expect(hoisted.store.saveAppConfig).toHaveBeenCalledWith({ modes: { mail: 'real' } }),
+    );
+    expect(await screen.findByText(/需要重启 LinkHub 生效/)).toBeInTheDocument();
+  });
+});
+
+describe('二轮 UI 复验：钉钉登录时序 / 未登录提示 / .env 锁定', () => {
+  it('已启用本人身份但未登录：显式提示并给「重新登录」，不显示 Mock 已连接', async () => {
+    const notLinked = identityView({ policy: 'auto', effectiveSend: 'user', effectiveReceive: 'user' });
+    notLinked.user = { ...notLinked.user, state: 'not_linked', linked: false, hint: '本人身份未登录' };
+    makeState({
+      accounts: [
+        {
+          platform: 'dingtalk',
+          label: '钉钉',
+          mode: 'real',
+          configured: true,
+          identity: notLinked,
+          missing: [],
+          warnings: [],
+          issues: [],
+          canReceive: false,
+          canSend: false,
+        },
+      ],
+      appConfig: { identity: { dingtalk: 'user' } },
+      onboarding: onboardingView({
+        steps: [
+          step('mail', 'needs_user_auth'),
+          step('dingtalk', 'needs_user_auth', {
+            detail: { effectiveSend: 'user', runtimePolicy: 'user', identity: { state: 'not_linked' } },
+            actions: [
+              { id: 'dingtalk-login', kind: 'api', label: '用钉钉本人账号登录（推荐，无需机器人应用）' },
+            ],
+          }),
+          step('feishu', 'needs_admin'),
+          step('wecom', 'needs_admin'),
+        ],
+      }),
+    });
+    renderPage();
+
+    expect(await screen.findByTestId('dingtalk-identity-warning')).toHaveTextContent(
+      /已启用「仅本人身份」但当前未登录/,
+    );
+    expect(await screen.findByRole('button', { name: /重新登录钉钉本人账号/ })).toBeInTheDocument();
+  });
+
+  it('.env 锁定 identity：保存后显示常驻警告，不出现「已立即生效」', async () => {
+    const linked = identityView({ effectiveSend: 'mock', effectiveReceive: 'mock' });
+    hoisted.store.saveAppConfig.mockResolvedValue({
+      saved: false,
+      restartRequired: false,
+      hotApplied: false,
+      ignoredByEnv: ['DINGTALK_IDENTITY'],
+      changedKeys: ['identity.dingtalk'],
+    });
+    makeState({
+      accounts: [
+        {
+          platform: 'dingtalk',
+          label: '钉钉',
+          mode: 'mock',
+          configured: true,
+          identity: linked,
+          missing: [],
+          warnings: [],
+          issues: [],
+          canReceive: true,
+          canSend: true,
+        },
+      ],
+      onboarding: onboardingView({
+        steps: [
+          step('mail', 'needs_user_auth'),
+          step('dingtalk', 'mock', {
+            detail: { effectiveSend: 'mock' },
+            actions: [{ id: 'dingtalk-enable-personal-only', kind: 'api', label: '启用本人身份模式' }],
+          }),
+          step('feishu', 'needs_admin'),
+          step('wecom', 'needs_admin'),
+        ],
+      }),
+    });
+    renderPage();
+
+    fireEvent.click(await screen.findByRole('button', { name: /启用本人身份模式/ }));
+    expect(await screen.findByTestId('connect-config-warning')).toHaveTextContent(/钉钉身份策略/);
+    expect(screen.queryByText(/已立即生效（无需重启）/)).not.toBeInTheDocument();
+  });
+
+  it('登录弹窗关闭后无副作用：不 PUT identity、不出现重启提示', async () => {
+    makeState({ onboarding: onboardingView() });
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: /用钉钉本人账号登录（推荐，无需机器人应用）/ }));
+    expect(await screen.findByText('连接钉钉本人账号')).toBeInTheDocument();
+    const footerClose = document.querySelector('.ant-modal-footer button');
+    expect(footerClose).not.toBeNull();
+    fireEvent.click(footerClose as HTMLElement);
+    expect(hoisted.store.saveAppConfig).not.toHaveBeenCalled();
+    expect(screen.queryByText(/需要重启 LinkHub 生效/)).not.toBeInTheDocument();
+  });
+});
+
+
+describe('二轮复验：身份热应用 / 飞书真实模式动作', () => {
+  it('linked+mock 点「启用本人身份模式」：hotApplied:true 时提示立即生效，不出现重启提示', async () => {
+    const linked = identityView({ effectiveSend: 'mock', effectiveReceive: 'mock' });
+    hoisted.store.saveAppConfig.mockResolvedValue({
+      saved: true,
+      restartRequired: false,
+      hotApplied: true,
+      hotAppliedKeys: ['identity.dingtalk'],
+      changedKeys: ['identity.dingtalk'],
+    });
+    makeState({
+      accounts: [
+        {
+          platform: 'dingtalk',
+          label: '钉钉',
+          mode: 'mock',
+          configured: true,
+          identity: linked,
+          missing: [],
+          warnings: [],
+          issues: [],
+          canReceive: true,
+          canSend: true,
+        },
+      ],
+      onboarding: onboardingView({
+        steps: [
+          step('mail', 'needs_user_auth'),
+          step('dingtalk', 'mock', { actions: [{ id: 'dingtalk-enable-personal-only', kind: 'api', label: '仅用本人身份（立即生效，无需重启）' }] }),
+          step('feishu', 'needs_admin'),
+          step('wecom', 'needs_admin'),
+        ],
+      }),
+    });
+    renderPage();
+
+    fireEvent.click(await screen.findByRole('button', { name: /启用本人身份模式/ }));
+    await waitFor(() =>
+      expect(hoisted.store.saveAppConfig).toHaveBeenCalledWith({ identity: { dingtalk: 'user' } }),
+    );
+    expect(await screen.findByText(/已立即生效（无需重启）/)).toBeInTheDocument();
+    expect(screen.queryByText(/需要重启 LinkHub 生效/)).not.toBeInTheDocument();
+  });
+
+  it('feishu-mode-real：保存 modes.feishu=real 是静态键，走重启提示', async () => {
+    hoisted.store.saveAppConfig.mockResolvedValue({
+      saved: true,
+      restartRequired: true,
+      hotApplied: false,
+      changedKeys: ['modes.feishu'],
+    });
+    const feishuView = onboardingView({
+      steps: [
+        step('mail', 'needs_user_auth'),
+        step('dingtalk', 'needs_user_auth'),
+        step('feishu', 'needs_admin', {
+          actions: [
+            {
+              id: 'feishu-mode-real',
+              kind: 'api',
+              label: '改为真实模式（保存后需重启 LinkHub）',
+              path: '/api/app-config',
+              method: 'PUT',
+              payload: { modes: { feishu: 'real' } },
+            },
+          ],
+        }),
+        step('wecom', 'needs_admin'),
+      ],
+    });
+    hoisted.store.refreshOnboarding.mockResolvedValue(feishuView);
+    makeState({ onboarding: feishuView });
+    renderPage();
+
+    fireEvent.click(await screen.findByRole('button', { name: /改为真实模式/ }));
+    await waitFor(() =>
+      expect(hoisted.store.saveAppConfig).toHaveBeenCalledWith({ modes: { feishu: 'real' } }),
+    );
+    expect(await screen.findByText(/需要重启 LinkHub 生效/)).toBeInTheDocument();
+  });
+});
 

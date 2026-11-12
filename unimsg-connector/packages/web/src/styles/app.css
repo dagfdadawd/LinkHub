@@ -5601,3 +5601,340 @@ html.vt-morph .detail {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* ---------------- 白号客户化：左侧导航常驻文字 / 统一状态词 ---------------- */
+
+:root {
+  --side-w: 88px;
+}
+
+.rail-item {
+  width: calc(var(--side-w) - 16px);
+  height: 58px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  font-size: 1.0625rem;
+}
+
+.rail-item .anticon {
+  line-height: 1;
+}
+
+.rail-item__label {
+  font-size: 0.625rem;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.rail-item.is-active .rail-item__label {
+  color: var(--text);
+}
+
+.rail__glow {
+  width: calc(var(--side-w) - 24px);
+  margin-left: calc((24px - var(--side-w)) / 2);
+}
+
+@media (max-width: 1024px) {
+  :root {
+    --side-w: 80px;
+  }
+}
+
+@media (max-width: 640px) {
+  .rail-item__label {
+    font-size: 0.5938rem;
+  }
+}
+
+/* ---------------- 白号 P0：平台应用配置弹窗 / 缺凭据 CTA / 空态入口 ---------------- */
+
+.accounts-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.app-config-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.app-config-alert {
+  margin-bottom: 12px;
+}
+
+.app-config-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 18px 4px;
+  font-size: 0.8125rem;
+  color: var(--text-2);
+}
+
+.app-config-group__hint {
+  margin: 0 0 12px;
+  font-size: 0.75rem;
+  line-height: 1.65;
+  color: var(--text-2);
+}
+
+.app-config-group__missing {
+  margin-bottom: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--warning);
+  border-radius: var(--r-8);
+  background: var(--warning-soft);
+  font-size: 0.75rem;
+  line-height: 1.6;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.app-config-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 14px;
+}
+
+.app-config-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  margin-bottom: 10px;
+}
+
+.app-config-field__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.app-config-field__label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.app-config-field__optional {
+  font-weight: 400;
+  color: var(--text-3);
+}
+
+.app-config-field__note {
+  font-size: 0.7188rem;
+  line-height: 1.55;
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+
+.app-config-personal {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--brand-line);
+  border-radius: var(--r-10);
+  background: var(--brand-soft);
+}
+
+.app-config-personal__head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.75rem;
+  line-height: 1.6;
+  color: var(--text-2);
+}
+
+.app-config-personal__head strong {
+  font-size: 0.8125rem;
+  color: var(--text);
+}
+
+.app-config-personal__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 0.75rem;
+  color: var(--text);
+}
+
+.app-config-warnings {
+  margin: 0;
+  padding-left: 16px;
+  font-size: 0.75rem;
+  line-height: 1.6;
+}
+
+.app-config-footnote {
+  margin: 10px 0 0;
+  font-size: 0.7188rem;
+  line-height: 1.6;
+  color: var(--text-3);
+}
+
+.app-config-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.restart-notice {
+  margin-bottom: 14px;
+}
+
+.restart-notice__body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.75rem;
+  line-height: 1.6;
+}
+
+.restart-notice__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.connect-card__missing {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  border-radius: var(--r-8);
+  background: var(--surface-2);
+  font-size: 0.75rem;
+  line-height: 1.6;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.connect-card__missing-note {
+  color: var(--text-3);
+}
+
+.mail-accounts__verify-hint {
+  flex-basis: 100%;
+  font-size: 0.7188rem;
+  color: var(--warning);
+}
+
+.mail-form__test-note {
+  font-size: 0.7188rem;
+  color: var(--text-3);
+}
+
+.mail-form__hint-source {
+  margin-top: 4px;
+  font-size: 0.7188rem;
+  color: var(--text-3);
+}
+
+.mail-form__tech {
+  margin-top: 6px;
+  font-size: 0.75rem;
+  color: var(--text-3);
+}
+
+.mail-form__tech summary {
+  cursor: pointer;
+  color: var(--brand-ink);
+}
+
+.empty-state__actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+@media (max-width: 640px) {
+  .app-config-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.connect-card__advanced {
+  margin-top: 6px;
+  font-size: 0.75rem;
+  color: var(--text-3);
+}
+
+.connect-card__advanced summary {
+  cursor: pointer;
+  color: var(--text-2);
+}
+
+.connect-card__advanced summary:hover {
+  color: var(--text);
+}
+
+@media (max-width: 640px) {
+  .restart-notice .ant-alert {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+
+  .restart-notice .ant-alert-content {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .restart-notice .ant-alert-action {
+    flex: 0 0 100%;
+    margin-inline-start: 0;
+    margin-top: 8px;
+  }
+
+  .restart-notice .ant-alert-message,
+  .restart-notice .ant-alert-description,
+  .restart-notice__body {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+}
+
+
+/* 修正：Alert 根节点自身带 .restart-notice，选择器必须是同一元素（.a.b），否则小屏不换行 */
+@media (max-width: 640px) {
+  .restart-notice.ant-alert {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+}
+
+.app-config-field__switch-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+}
+
+.connect-card__identity-warning {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--warning);
+  border-radius: var(--r-8);
+  background: var(--warning-soft);
+  font-size: 0.75rem;
+  line-height: 1.6;
+  color: var(--text);
+}

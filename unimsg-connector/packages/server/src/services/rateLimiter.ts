@@ -30,6 +30,8 @@ export class RateLimiter {
         return await fn();
       } catch (e) {
         lastErr = e;
+        // 明确的用户操作类错误（如「本人身份未登录」）不重试：重试只会延迟可读失败原因
+        if ((e as { noRetry?: boolean } | undefined)?.noRetry) break;
         if (attempt >= this.maxRetry) break;
         attempt += 1;
         await delay(this.baseDelayMs * Math.pow(2, attempt - 1));

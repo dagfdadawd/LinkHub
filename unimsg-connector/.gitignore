@@ -24,3 +24,5 @@ data/
 tools/
 # 本地导入的邮箱账号（含授权码！personal 版「连接账号」页保存，绝不进仓库）
 .linkhub-mail-accounts.json
+# 本地应用配置（GUI 填写的平台凭据/模式，含 App Secret，绝不进仓库；有 DATA_DIR 时在 DATA_DIR 下）
+.linkhub-config.json

@@ -1,15 +1,17 @@
 /**
  * 「连接账号 / 授权中心」聚合视图（个人版首次使用向导的后端数据源）。
  *
- * 只做只读聚合：平台身份视图 + 运行时画像 + 邮箱账号脱敏列表 + dws 来源，
- * 组装成前端可以直接渲染的 steps/actions/hints。**绝不包含任何 token / 授权码 / 密钥**。
+ * 白号审计（docs/qa/white-account/white-auditor-report.md）修正后的状态机：
+ *  - 缺平台应用凭据 → `needs_admin`（给「填写凭据」入口 + 管理员后台深链 + 可复制清单），**不再落进 mock 死胡同**；
+ *  - 平台整体显式 Mock（用户自己选的演示模式）→ `mock`，如实写「不会真实收发」；
+ *  - 钉钉支持「仅本人身份」（personal-only，无需机器人应用）：dws 可用但未登录 → `needs_user_auth`
+ *    + `dingtalk-login`（只发起 dws 登录；登录成功后后端自动热应用 identity.dingtalk=user，未授权不改配置）；
+ *  - **已登录（linked）但通道仍 mock → 不得 ready**（P0-2 假成功红线），给「仅用本人身份」热应用动作；
+ *  - 飞书已授权但通道 mock 同样不得 ready；
+ *  - 邮箱：本地账号未验证不算 ready（需要真实 IMAP+SMTP 登录自检通过）；
+ *  - `overall.needsAction = 非 ready 的数量`（ready<total 时不得为 0）。
  *
- * 判定原则（诚实标注，不假装可用）：
- *  - 真实可用 → ready；
- *  - 需要用户本人授权（飞书 OAuth / 钉钉 dws 登录）→ needs_user_auth；
- *  - 缺 dws → needs_install（给 `pnpm run fetch:dws` 命令）；
- *  - 缺企业管理员配置（App 凭据 / CLI 访问 / 企微可信 IP 等）→ needs_admin（给官方后台深链 + 可复制清单）；
- *  - 平台整体 Mock（演示模式）→ mock（明确写「不会真实收发」）。
+ * 本模块只做只读聚合，**绝不包含任何 token / 授权码 / 密钥**。
  */
 import { Platform, type PlatformIdentityView } from '@unimsg/shared';
 import type { PlatformRuntime } from '../config/runtime';
@@ -20,18 +22,29 @@ export type OnboardingStepId = 'mail' | 'dingtalk' | 'feishu' | 'wecom';
 export type OnboardingState = 'ready' | 'needs_user_auth' | 'needs_install' | 'needs_admin' | 'mock' | 'error';
 export type OnboardingActionKind = 'api' | 'form' | 'link' | 'copy' | 'command';
 
+/** 前端按顺序调用的后续接口（例如：先热应用身份，再发起登录） */
+export interface OnboardingActionStep {
+  path: string;
+  method: 'GET' | 'POST' | 'PUT';
+  payload?: Record<string, unknown>;
+}
+
 export interface OnboardingAction {
   id: string;
   kind: OnboardingActionKind;
   label: string;
   /** kind=api：接口路径（前端用现有 api client 调用） */
   path?: string;
-  method?: 'GET' | 'POST';
+  method?: 'GET' | 'POST' | 'PUT';
+  /** kind=api：请求体（如 {identity:{dingtalk:'user'}} 热应用「仅本人身份」） */
+  payload?: Record<string, unknown>;
+  /** kind=api：主调用完成后需继续执行的步骤（如热应用后再 POST 登录） */
+  then?: OnboardingActionStep[];
   /** kind=link：官方后台/文档深链 */
   url?: string;
   /** kind=copy：可复制清单原文（管理员按此开通） */
   text?: string;
-  /** kind=command：可复制的终端命令 */
+  /** kind=command：可复制的终端命令（已带 cd unimsg-connector） */
   command?: string;
 }
 
@@ -39,12 +52,9 @@ export interface OnboardingStep {
   id: OnboardingStepId;
   label: string;
   state: OnboardingState;
-  /** 一句话现状（前端卡片正文） */
   summary: string;
-  /** 可操作提示（中文） */
   hints: string[];
   actions: OnboardingAction[];
-  /** 明细（邮箱脱敏列表 / identity 摘要 / 运行时缺失项 / dws 来源），不含任何密钥 */
   detail: Record<string, unknown>;
 }
 
@@ -52,7 +62,7 @@ export interface OnboardingView {
   ok: true;
   data: {
     generatedAt: string;
-    /** 首次使用（没有任何平台已就绪；前端用 localStorage 标记是否已展示过向导） */
+    /** 首次使用（全部平台都非 ready；前端另有 localStorage 标记） */
     firstRun: boolean;
     startedAt: string;
     envFile: { path: string; mtime: string } | null;
@@ -76,82 +86,132 @@ export interface OnboardingDeps {
     filePath: string;
     issues: string[];
     mode: 'real' | 'mock';
+    /** 运行模式策略 auto/real/mock（用于区分「显式 mock」与「auto 无账号回退」） */
+    policy?: 'auto' | 'real' | 'mock';
+    /** 邮箱轮询秒数（展示用） */
+    pollSeconds?: number;
   };
   dingtalk: {
     view: PlatformIdentityView;
     runtime: PlatformRuntime;
     dws: { available: boolean; version?: string; source: DwsBinSource; pathHint?: string };
+    /** identityChannelsReal：服务端「本人身份通道是否真实工作」（personal-only 时为 true） */
+    identityChannelsReal: boolean;
   };
   feishu: {
     view: PlatformIdentityView;
     runtime: PlatformRuntime;
-    /** 授权 scope（展示给管理员核对权限用；不含 token） */
     scopes: string[];
     redirectUri: string;
+    identityChannelsReal: boolean;
   };
   wecom: { runtime: PlatformRuntime };
-  /** 服务端口（生成回调地址提示用） */
   port?: number;
 }
 
-const DWS_RELEASE_URL = 'https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli/releases';
+const DWS_RELEASES_URL = 'https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli/releases';
 const DWS_REPO_URL = 'https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli';
 
-/** 飞书管理员可复制清单（开通后用户才能 OAuth；文字会随 docs/personal-identity.md 对齐） */
+type StepPlatform = 'mail' | 'dingtalk' | 'feishu' | 'wecom';
+
+/** 命令统一带工作目录提示（P2-7：pnpm 不在 PATH 时用 corepack pnpm） */
+const CWD_HINT = '在 unimsg-connector/ 目录运行；pnpm 不在 PATH 时用 corepack pnpm run …';
+
+function doctorCommand(platform: StepPlatform): OnboardingAction {
+  return {
+    id: `${platform}-doctor`,
+    kind: 'command',
+    label: `自检 ${platform} 配置（${CWD_HINT}）`,
+    command: `cd unimsg-connector && pnpm run doctor --platform=${platform}`,
+  };
+}
+
+const FETCH_DWS_ACTION: OnboardingAction = {
+  id: 'dws-install',
+  kind: 'command',
+  label: '一键下载 dws 到 tools/（在 unimsg-connector/ 目录运行）',
+  command: 'cd unimsg-connector && pnpm run fetch:dws',
+};
+const DWS_RELEASE_ACTION: OnboardingAction = {
+  id: 'dws-release',
+  kind: 'link',
+  label: '手动下载 dws（GitHub release）',
+  url: DWS_RELEASES_URL,
+};
+
+/** 管理员清单里的登录命令不要暴露本机绝对路径（P3）：尽量转成可移植写法 */
+export function portableDwsLoginCommand(command?: string): string {
+  const raw = (command ?? 'dws auth login').trim();
+  const toolMatch = /(?:^|[\\/])tools[\\/](dws(?:\.exe)?)\s+auth\s+login/i.exec(raw);
+  if (toolMatch) return `tools\\${toolMatch[1]} auth login`;
+  const absMatch = /^[A-Za-z]:[\\/].*?([^\\/]+(?:\.exe)?)\s+auth\s+login/i.exec(raw);
+  if (absMatch) return `${absMatch[1]} auth login`;
+  return raw;
+}
+
+/** 飞书管理员可复制清单（纯文本、无 Markdown 星号；按钮名与前端一致） */
 export function feishuAdminChecklist(redirectUri: string, scopes: string[]): string {
   return [
     '飞书管理员开通清单（LinkHub 个人版需要企业管理员配合）：',
     '1. 打开飞书开放平台 https://open.feishu.cn/app ，创建/选择一个「企业自建应用」；',
     '2. 权限管理：按下面清单开通消息权限（缺权限时 OAuth 后仍读不到消息）：',
-    `   ${scopes.join('、')}`,
-    `3. 安全设置 → 重定向 URL：添加 ${redirectUri}（照抄，含 /api/feishu/oauth/callback）；`,
-    '4. 事件订阅：配置 Encrypt Key / Verification Token（或使用长连接），否则机器人收不到消息；',
-    '5. 发布应用后，回到 LinkHub「连接账号」页点「连接飞书本人账号」，用本人账号完成授权。',
+    '   ' + scopes.join('、') + '',
+    '3. 安全设置 → 重定向 URL：添加 ' + redirectUri + '（照抄，含 /api/feishu/oauth/callback）；',
+    '4. 事件订阅：默认用长连接（FEISHU_STREAM=true）可免公网回调，此时 Verify Token / Encrypt Key 都可不填；只有改用 HTTP 回调模式才必须填 Verification Token；',
+    '5. 发布应用；',
+    '6. 运行模式：FEISHU_MODE=auto/real（显式 mock 会一直演示，不会真实收发）。',
+    '7. 在 LinkHub 点「填写飞书应用凭据（App ID / App Secret）」填入凭据（也可写 .env 的 FEISHU_APP_ID / FEISHU_APP_SECRET），然后重启后端（保存后界面会提示）；',
+    '8. 回到「连接账号」页点「连接飞书本人账号」，用本人账号完成 OAuth 授权。',
   ].join('\n');
 }
 
-/** 钉钉管理员可复制清单（dws 个人身份依赖企业开启 CLI 访问） */
-export function dingtalkAdminChecklist(port?: number): string {
+/** 钉钉管理员可复制清单（纯文本；CLI 访问 + 可移植登录命令） */
+export function dingtalkAdminChecklist(loginCommand?: string): string {
+  const login = portableDwsLoginCommand(loginCommand);
   return [
     '钉钉管理员开通清单（LinkHub 个人版需要企业管理员配合）：',
-    '1. 打开钉钉开发者后台 https://open-dev.dingtalk.com/ ，创建「企业内部应用」，记录 Client ID / Client Secret；',
-    '2. 为应用开通机器人发送消息等权限；机器人接收需配置「事件订阅」的 AES Token / AES Key；',
-    '3. 如用「本人账号」收发，需企业管理员在钉钉开放平台开启「CLI 访问管理」（dws 个人身份依赖）；',
-    `4. dws 官方 CLI 与文档：${DWS_REPO_URL} ；`,
-    `5. 个人登录：回到 LinkHub「连接账号」页点「用浏览器登录（推荐）」，本机浏览器扫码/登录即可${port ? `（回调地址在本机 127.0.0.1，需在运行 LinkHub 的机器上打开）` : ''}。`,
+    '1. 打开钉钉开发者后台 https://open-dev.dingtalk.com/ ；',
+    '2. 如用「本人账号」收发（推荐，无需机器人应用）：企业管理员在钉钉开放平台开启「CLI 访问管理」（dws 个人身份依赖）；',
+    '3. 如用机器人：创建「企业内部应用」，记录 Client ID / Client Secret，开通机器人发消息权限并配置事件订阅；',
+    '4. 个人登录（本机推荐）：打开 LinkHub「连接账号」→ 钉钉 →「用钉钉本人账号登录（推荐）」；',
+    `   或在本机终端执行：${login} --recommend（登录成功后无交互批量授权推荐权限）；`,
+    '5. 机器人凭据可写回 LinkHub「填写钉钉应用凭据」或 .env 的 DINGTALK_CLIENT_ID / DINGTALK_CLIENT_SECRET / DINGTALK_ROBOT_CODE，然后重启后端；',
+    `6. dws 官方 CLI 与文档：${DWS_REPO_URL} 。`,
   ].join('\n');
 }
 
-/** 企业微信管理员可复制清单（自建应用 + 可信 IP） */
+/** 企业微信管理员可复制清单（纯文本；凭据写回 + 重启） */
 export function wecomAdminChecklist(port?: number): string {
   return [
     '企业微信管理员开通清单（LinkHub 个人版需要企业管理员配合）：',
     '1. 打开企业微信管理后台 https://work.weixin.qq.com/ → 应用管理 → 自建，创建应用并记录 AgentId / Secret / 企业 CorpID；',
-    '2. 应用「接收消息」：设置 Token 与 EncodingAESKey，回调 URL 指向 LinkHub 的 /api/wecom/callback（需公网可达）',
-    `   ${port ? `本机演示端口：http://127.0.0.1:${port}/api/wecom/callback（公网需用域名/内网穿透）` : ''}`,
+    '2. 应用「接收消息」：设置 Token 与 EncodingAESKey，回调 URL 指向 LinkHub 的 /api/wecom/callback（需公网可达）；',
+    port ? '   本机演示端口：http://127.0.0.1:' + port + '/api/wecom/callback（公网需用域名/内网穿透）' : '',
     '3. 应用「企业可信 IP」：添加运行 LinkHub 的机器的公网出口 IP（否则发送会报 60020）；',
-    '4. 把 WECOM_CORP_ID / WECOM_AGENT_ID / WECOM_SECRET / WECOM_TOKEN / WECOM_AES_KEY 填到 .env 后重启 LinkHub。',
+    '4. 把凭据写回 LinkHub：点「填写企业微信凭据」，或写入 .env 的 WECOM_CORP_ID / WECOM_AGENT_ID / WECOM_SECRET / WECOM_TOKEN / WECOM_AES_KEY，然后重启后端。',
   ].join('\n');
 }
-
 function mailStep(deps: OnboardingDeps): OnboardingStep {
   const { accounts, mode } = deps.mail;
-  const fileCount = accounts.filter((a) => a.source === 'file').length;
-  const envCount = accounts.length - fileCount;
-  const actions: OnboardingAction[] = [
-    { id: 'mail-add-account', kind: 'form', label: '添加邮箱账号' },
-    {
-      id: 'mail-provider-help',
-      kind: 'link',
-      label: '去邮箱网页版开启 IMAP/SMTP（QQ 邮箱示例）',
-      url: 'https://mail.qq.com',
-    },
-  ];
+  const envCount = accounts.filter((a) => a.source === 'env').length;
+  const verified = accounts.filter((a) => a.verified);
+  const unverified = accounts.length - verified.length;
+  const pollSeconds = deps.mail.pollSeconds ?? 45;
+  const policy = deps.mail.policy ?? 'auto';
+  const addAction: OnboardingAction = { id: 'mail-add-account', kind: 'form', label: '添加邮箱账号' };
+  const providerHelp: OnboardingAction = {
+    id: 'mail-provider-help',
+    kind: 'link',
+    label: '去邮箱网页版开启 IMAP/SMTP（QQ 邮箱示例）',
+    url: 'https://mail.qq.com',
+  };
   const detail = {
     accounts,
     filePath: deps.mail.filePath,
     issues: deps.mail.issues,
     mode,
+    verifiedCount: verified.length,
+    unverifiedCount: unverified,
   };
 
   if (accounts.length === 0) {
@@ -162,44 +222,84 @@ function mailStep(deps: OnboardingDeps): OnboardingStep {
       summary: '还没有邮箱账号。个人版可直接在页面添加（需要邮箱授权码）。',
       hints: [
         '先到邮箱网页版「设置 → POP3/SMTP/IMAP」开启服务并生成授权码（16 位左右，不是网页登录密码）。',
-        mode === 'mock' ? '当前邮箱通道为模拟模式（MAIL_MODE=mock）：添加账号后改 MAIL_MODE=auto/real 才会真实收信。' : '',
-        '保存后会热加载（无需重启），首轮只建立 UID 基线、不导入历史邮件。',
-      ].filter(Boolean),
-      actions,
+        // P2-1：白号（auto 因无账号回退 mock）不能说成「显式 MAIL_MODE=mock / 改 .env + 重启」
+        policy === 'mock'
+          ? '邮箱通道被显式设为演示模式（MAIL_MODE=mock）：改 .env 或 LinkHub 配置里的邮箱模式并重启后才会真实收发。'
+          : '添加账号并点「测试连接」验证通过后会自动启用真实收信（无需改 .env、无需重启）。',
+        '首轮只建立 UID 基线、不导入历史邮件；测试连接会真实连接一次邮箱服务器（只做 IMAP/SMTP 登录，不发信）。',
+      ],
+      actions: [addAction, providerHelp, doctorCommand('mail')],
       detail,
     };
   }
-  const summaryBase = `已配置 ${accounts.length} 个邮箱账号（.env ${envCount} / 本地导入 ${fileCount}）`;
-  if (mode === 'mock') {
+
+  if (verified.length === 0) {
     return {
       id: 'mail',
       label: '邮箱',
-      state: 'mock',
-      summary: `${summaryBase}，但当前为演示模式：不会真实连 IMAP 收信。`,
-      hints: ['邮箱通道当前为 Mock（MAIL_MODE=mock）：去掉 MAIL_MODE 或设为 auto/real 后重启即可真实收发。'],
-      actions: [
-        { id: 'mail-doctor', kind: 'command', label: '自检邮箱配置', command: 'pnpm run doctor --platform=mail' },
-        ...actions,
+      state: 'needs_user_auth',
+      summary: `已保存 ${accounts.length} 个邮箱账号，但还没有验证通过：请点「测试连接」验证。`,
+      hints: [
+        '未验证的账号不会真实收信，也不算「已就绪」。',
+        '「测试连接」会真实连接一次 IMAP/SMTP 服务器并做登录（不发信）；验证通过后自动启用轮询。',
+        unverified > 0 ? `还有 ${unverified} 个账号未验证。` : '',
+      ].filter(Boolean),
+      actions: [addAction, doctorCommand('mail')],
+      detail,
+    };
+  }
+
+  if (mode === 'real') {
+    return {
+      id: 'mail',
+      label: '邮箱',
+      state: 'ready',
+      summary: `邮箱已就绪：${verified.length} 个已验证账号（.env ${envCount} 个），每 ${pollSeconds}s 自动收信。`,
+      hints: [
+        'IMAP 只拉新邮件（UID 增量），不会把历史邮件灌进收件箱，也不会改动邮箱已读状态。',
+        unverified > 0 ? `另有 ${unverified} 个账号未验证，暂不参与收信。` : '',
+        '测试连接会真实连接一次服务器（只登录，不发信）。',
+      ].filter(Boolean),
+      actions: [addAction, doctorCommand('mail')],
+      detail,
+    };
+  }
+
+  // 有已验证账号但邮箱通道仍为 mock：
+  // P2-2：`modes.mail=real` 是静态键（保存后需重启），且显式 .env 优先；白号场景已验证账号会自动重算为 real，
+  // 走到这里通常说明是「显式 MAIL_MODE=mock」或其它配置把通道锁成了演示，因此不下发误导性的「一键无需重启」动作。
+  if (policy === 'mock') {
+    return {
+      id: 'mail',
+      label: '邮箱',
+      state: 'needs_admin',
+      summary: '邮箱通道被显式设为演示模式（MAIL_MODE=mock）：账号已验证，但需要改为 auto/real 并重启后才会真实收发。',
+      hints: [
+        '显式 .env 优先：请修改 .env 的 MAIL_MODE，或在 LinkHub 配置页把邮箱模式改为 real（保存后需重启 LinkHub）。',
+        '改完重启后再点「重新检测」，已验证账号会自动开始收信。',
       ],
+      actions: [addAction, doctorCommand('mail')],
       detail,
     };
   }
   return {
     id: 'mail',
     label: '邮箱',
-    state: 'ready',
-    summary: `${summaryBase}，轮询每 ${Math.max(5, Number(process.env.MAIL_POLL_SECONDS ?? 45))}s 自动收信。`,
-    hints: ['IMAP 只拉新邮件（UID 增量），不会把历史邮件灌进收件箱，也不会改动邮箱已读状态。'],
-    actions: [
-      { id: 'mail-doctor', kind: 'command', label: '自检邮箱配置', command: 'pnpm run doctor --platform=mail' },
-      ...actions,
+    state: 'needs_admin',
+    summary: '账号已验证，但邮箱通道尚未启用真实收信（配置未生效）：请检查 MAIL_MODE / MAIL_ENABLED 后重启。',
+    hints: [
+      '在 LinkHub 配置页把邮箱模式改为 auto/real（保存后需重启 LinkHub），或直接修改 .env 的 MAIL_MODE。',
+      '若是界面添加的账号：验证通过后应自动启用真实收信；仍显示模拟时请点「重新检测」或重启后端。',
     ],
+    actions: [addAction, doctorCommand('mail')],
     detail,
   };
 }
 
 function dingtalkStep(deps: OnboardingDeps): OnboardingStep {
   const { view, runtime, dws } = deps.dingtalk;
+  const real = deps.dingtalk.identityChannelsReal;
+  const dwsMissing = !dws.available;
   const detail = {
     identity: {
       state: view.user.state,
@@ -208,41 +308,113 @@ function dingtalkStep(deps: OnboardingDeps): OnboardingStep {
       hint: view.user.hint,
     },
     dws,
+    identityChannelsReal: real,
     botAvailable: view.botAvailable,
+    runtimeMode: runtime.mode,
+    runtimePolicy: runtime.policy,
     effectiveSend: view.effectiveSend,
     effectiveReceive: view.effectiveReceive,
     missing: runtime.missing,
   };
-  const installActions: OnboardingAction[] = [
-    {
-      id: 'dws-install',
-      kind: 'command',
-      label: '一键下载 dws 到 tools/',
-      command: 'pnpm run fetch:dws',
-    },
-    {
-      id: 'dws-release',
-      kind: 'link',
-      label: '手动下载 dws（GitHub release）',
-      url: DWS_RELEASE_URL,
-    },
-  ];
 
-  if (runtime.mode === 'mock' && !view.user.linked) {
+  // 「一登即用」时序：点击时**不预先改配置**，只发起 dws 登录；
+  // 登录成功后后端（personalIdentity）才自动热应用 identity.dingtalk=user 并持久化；
+  // 未完成授权 → 配置完全不改变（避免「已启用本人身份但未登录」导致发送失败/进 DLQ）。
+  const personalLoginLabel = '用钉钉本人账号登录（推荐，无需机器人应用）';
+  const personalLoginAction: OnboardingAction = {
+    id: 'dingtalk-login',
+    kind: 'api',
+    label: personalLoginLabel,
+    path: '/api/dingtalk/personal/login',
+    method: 'POST',
+    payload: { mode: 'browser' },
+  };
+  const enablePersonalOnlyAction: OnboardingAction = {
+    id: 'dingtalk-enable-personal-only',
+    kind: 'api',
+    label: '仅用本人身份（立即生效，无需重启）',
+    path: '/api/app-config',
+    method: 'PUT',
+    payload: { identity: { dingtalk: 'user' } },
+  };
+  const loginAction: OnboardingAction = {
+    id: 'dingtalk-login',
+    kind: 'api',
+    label: '用浏览器登录（推荐）',
+    path: '/api/dingtalk/personal/login',
+    method: 'POST',
+    payload: { mode: 'browser' },
+  };
+  const configureAction: OnboardingAction = {
+    id: 'dingtalk-configure',
+    kind: 'form',
+    label: '填写钉钉应用凭据（可选，用机器人时）',
+    path: '/api/app-config',
+    method: 'PUT',
+  };
+  const adminActions: OnboardingAction[] = [
+    { id: 'dingtalk-admin', kind: 'link', label: '打开钉钉开发者后台', url: 'https://open-dev.dingtalk.com/' },
+    {
+      id: 'dingtalk-admin-checklist',
+      kind: 'copy',
+      label: '复制管理员开通清单（CLI 访问 + 登录命令 + .env 键名）',
+      text: dingtalkAdminChecklist(view.user.loginCommand),
+    },
+    doctorCommand('dingtalk'),
+  ];
+  const installActions: OnboardingAction[] = [FETCH_DWS_ACTION, DWS_RELEASE_ACTION, ...adminActions];
+
+  // 已登录但通道仍 mock：P0-2 假成功红线 —— 绝不 ready
+  if (view.user.linked && !real) {
     return {
       id: 'dingtalk',
       label: '钉钉',
-      state: 'mock',
-      summary: '钉钉当前为演示模式（Mock）：不会连真实钉钉；连接本人账号后可真实收发。',
-      hints: [view.receiveHint, view.sendHint],
-      actions: [
-        ...(dws.available ? [] : installActions),
-        { id: 'dingtalk-doctor', kind: 'command', label: '自检钉钉配置', command: 'pnpm run doctor --platform=dingtalk' },
-      ],
+      state: 'needs_admin',
+      summary: '已登录 dws，但钉钉整体仍是模拟模式：点「仅用本人身份」后立即生效（无需重启），就能真实收发。',
+      hints: [
+        '当前 effectiveSend/Receive 仍是 mock：外部不会真的收到消息。',
+        '点下面的按钮把钉钉切到「仅本人身份」（热应用 identity.dingtalk=user），然后重新检测。',
+        view.user.hint,
+      ].filter(Boolean),
+      actions: [enablePersonalOnlyAction, ...adminActions],
       detail,
     };
   }
-  if (view.user.linked) {
+
+  if (dwsMissing) {
+    return {
+      id: 'dingtalk',
+      label: '钉钉',
+      state: 'needs_install',
+      summary: '未找到钉钉官方 CLI（dws）：个人版可一键下载到 tools/，无需自己配 PATH。',
+      hints: [
+        dws.pathHint ?? '运行 `pnpm run fetch:dws` 下载 dws（约 25MB），或把 dws 放到 PATH。',
+        '桌面版会内置 dws，无需此步骤。',
+      ],
+      actions: installActions,
+      detail,
+    };
+  }
+
+  // personal-only 已生效（或机器人真实通道）：只差本人登录
+  if (real && !view.user.linked) {
+    return {
+      id: 'dingtalk',
+      label: '钉钉',
+      state: 'needs_user_auth',
+      summary: '用钉钉本人账号登录即可，无需机器人应用（需企业已开 CLI 访问）。',
+      hints: [
+        '点「用浏览器登录（推荐）」：浏览器打开钉钉授权页，扫码/登录并确认；授权成功会自动刷新。',
+        '浏览器授权地址是 127.0.0.1 本机回调，必须在运行 LinkHub 的机器上打开；服务器/容器请用设备码登录。',
+        view.user.hint,
+      ].filter(Boolean),
+      // 只要 dws 可用就给登录入口（探测尚未完成时 canLink 可能为 false；白号审计 P1-1：入口必须可达）
+      actions: [loginAction, ...adminActions],
+      detail,
+    };
+  }
+
+  if (real && view.user.linked && view.effectiveSend !== 'mock') {
     return {
       id: 'dingtalk',
       label: '钉钉',
@@ -257,72 +429,50 @@ function dingtalkStep(deps: OnboardingDeps): OnboardingStep {
           path: '/api/dingtalk/personal/status',
           method: 'GET',
         },
+        doctorCommand('dingtalk'),
       ],
       detail,
     };
   }
-  if (!dws.available) {
+
+  // 显式演示模式（用户自己设了 DINGTALK_MODE=mock）：如实标注，给恢复真实的方式
+  if (runtime.policy === 'mock') {
     return {
       id: 'dingtalk',
       label: '钉钉',
-      state: 'needs_install',
-      summary: '未找到钉钉官方 CLI（dws）：个人版可一键下载到 tools/，无需自己配 PATH。',
+      state: 'mock',
+      summary: '钉钉当前为演示模式（你显式设置了 DINGTALK_MODE=mock）：不会连真实钉钉。',
       hints: [
-        dws.pathHint ?? '运行 `pnpm run fetch:dws` 下载 dws（约 25MB），或把 dws 放到 PATH。',
-        '桌面版会内置 dws，无需此步骤。',
+        '想真实收发：点「用钉钉本人账号登录（推荐）」完成授权（登录成功后自动启用本人身份，无需重启），或去掉 .env 的 DINGTALK_MODE=mock 后重启。',
+        '显式 mock 时不会探测 dws、也不会启动本人身份收发；登录本身不受影响。',
       ],
-      actions: installActions,
+      actions: [personalLoginAction, ...adminActions],
       detail,
     };
   }
-  if (view.user.canLink) {
-    return {
-      id: 'dingtalk',
-      label: '钉钉',
-      state: 'needs_user_auth',
-      summary: 'dws 已就绪，还差你本人用钉钉授权（浏览器登录，推荐）。',
-      hints: [
-        '点「用浏览器登录（推荐）」后在弹出的钉钉页面扫码/登录并确认；授权成功会自动刷新。',
-        '浏览器授权地址是 127.0.0.1 本机回调，必须在运行 LinkHub 的机器上打开；服务器/容器请用设备码登录。',
-        view.user.hint,
-      ].filter(Boolean),
-      actions: [
-        {
-          id: 'dingtalk-login',
-          kind: 'api',
-          label: '用浏览器登录（推荐）',
-          path: '/api/dingtalk/personal/login',
-          method: 'POST',
-        },
-        {
-          id: 'dingtalk-device-login',
-          kind: 'copy',
-          label: '复制终端登录命令（备用）',
-          text: view.user.loginCommand ?? 'dws auth login',
-        },
-      ],
-      detail,
-    };
-  }
+
+  // 白号：没有机器人凭据、dws 可用、未登录 —— 最顺路径是「仅本人身份」
   return {
     id: 'dingtalk',
     label: '钉钉',
-    state: 'needs_admin',
-    summary: 'dws 已安装但还不能连接：需要企业管理员开通 CLI 访问/应用权限。',
-    hints: [view.user.hint, '管理员开通后，回到本页刷新，再点「用浏览器登录」。'],
+    state: 'needs_user_auth',
+    summary: '用钉钉本人账号登录即可，无需机器人应用（需企业已开 CLI 访问）。',
+    hints: [
+      '点「用钉钉本人账号登录（推荐）」：登录成功后会自动启用本人身份（无需重启），个人事件接收自动启动。',
+      '未完成授权不会改变任何配置（不会出现「已启用但未登录」的状态）；若企业未开 CLI 访问，请联系管理员（清单可复制）。',
+      '登录用的是本机 dws CLI：浏览器授权/设备码确认一次即可，凭据只留在本机。',
+    ],
     actions: [
-      {
-        id: 'dingtalk-admin',
-        kind: 'link',
-        label: '打开钉钉开发者后台',
-        url: 'https://open-dev.dingtalk.com/',
-      },
+      personalLoginAction,
+      configureAction,
+      { id: 'dingtalk-admin', kind: 'link', label: '打开钉钉开发者后台', url: 'https://open-dev.dingtalk.com/' },
       {
         id: 'dingtalk-admin-checklist',
         kind: 'copy',
-        label: '复制管理员开通清单',
-        text: dingtalkAdminChecklist(deps.port),
+        label: '复制管理员开通清单（CLI 访问 + 登录命令）',
+        text: dingtalkAdminChecklist(view.user.loginCommand),
       },
+      doctorCommand('dingtalk'),
     ],
     detail,
   };
@@ -330,6 +480,7 @@ function dingtalkStep(deps: OnboardingDeps): OnboardingStep {
 
 function feishuStep(deps: OnboardingDeps): OnboardingStep {
   const { view, runtime } = deps.feishu;
+  const real = deps.feishu.identityChannelsReal;
   const detail = {
     identity: {
       state: view.user.state,
@@ -342,60 +493,117 @@ function feishuStep(deps: OnboardingDeps): OnboardingStep {
     scopes: deps.feishu.scopes,
     missing: runtime.missing,
     warnings: runtime.warnings,
+    identityChannelsReal: real,
     effectiveSend: view.effectiveSend,
     effectiveReceive: view.effectiveReceive,
   };
+  const configureAction: OnboardingAction = {
+    id: 'feishu-configure',
+    kind: 'form',
+    label: '填写飞书应用凭据（App ID / App Secret）',
+    path: '/api/app-config',
+    method: 'PUT',
+  };
   const adminActions: OnboardingAction[] = [
-    {
-      id: 'feishu-admin',
-      kind: 'link',
-      label: '打开飞书开放平台（应用后台）',
-      url: 'https://open.feishu.cn/app',
-    },
+    configureAction,
+    { id: 'feishu-admin', kind: 'link', label: '打开飞书开放平台（应用后台）', url: 'https://open.feishu.cn/app' },
     {
       id: 'feishu-admin-checklist',
       kind: 'copy',
-      label: '复制管理员开通清单（含回调 URL / 权限）',
+      label: '复制管理员开通清单（权限 + 回调 URL + .env 键名 + 重启）',
       text: feishuAdminChecklist(deps.feishu.redirectUri, deps.feishu.scopes),
     },
+    doctorCommand('feishu'),
   ];
 
-  if (runtime.mode === 'mock' && !view.user.linked) {
+  // 已授权但通道仍 mock：不得 ready；且按 configured 区分「缺凭据」vs「演示模式」（P2-3）
+  if (view.user.linked && !real) {
+    if (runtime.configured) {
+      return {
+        id: 'feishu',
+        label: '飞书',
+        state: 'needs_admin',
+        summary: '飞书应用凭据已配置，但当前是演示模式：改为 auto/real 并重启后才会真实收发。',
+        hints: [
+          '不是缺凭据：凭据已配置（见「设置 → 应用配置」或 /api/app-config）。',
+          '在 LinkHub 配置页把飞书模式改为 auto/real，或去掉 .env 的 FEISHU_MODE=mock 后重启。',
+          view.user.hint,
+        ].filter(Boolean),
+        actions: [
+          {
+            id: 'feishu-mode-real',
+            kind: 'api',
+            label: '改为真实模式（保存后需重启 LinkHub）',
+            path: '/api/app-config',
+            method: 'PUT',
+            payload: { modes: { feishu: 'real' } },
+          },
+          ...adminActions,
+        ],
+        detail,
+      };
+    }
     return {
       id: 'feishu',
       label: '飞书',
-      state: 'mock',
-      summary: '飞书当前为演示模式（Mock）：不会连真实飞书；企业管理员配好应用后可连接本人账号。',
-      hints: [view.receiveHint, view.sendHint],
+      state: 'needs_admin',
+      summary: '已授权飞书本人身份，但缺少飞书应用凭据：填入 App ID / App Secret 并重启后才会真实收发。',
+      hints: [
+        '当前 effectiveSend/Receive 仍是 mock：外部不会真的收到消息。',
+        '点「填写飞书应用凭据」填入 App ID / App Secret，重启后重新检测。',
+        view.user.hint,
+      ].filter(Boolean),
       actions: adminActions,
       detail,
     };
   }
-  if (view.user.linked) {
+
+  if (!runtime.configured) {
     return {
       id: 'feishu',
       label: '飞书',
-      state: 'ready',
-      summary: `已连接飞书本人账号${view.user.displayName ? `：${view.user.displayName}` : ''}，消息以本人身份收发。`,
-      hints: [view.receiveHint, view.sendHint],
-      actions: [
-        {
-          id: 'feishu-status',
-          kind: 'api',
-          label: '刷新连接状态',
-          path: '/api/feishu/oauth/status',
-          method: 'GET',
-        },
+      state: 'needs_admin',
+      summary: '缺少飞书应用凭据：个人用户需企业管理员创建自建应用；拿到 App ID / Secret 后在 LinkHub 填写（或写 .env）并重启。',
+      hints: [
+        runtime.missing.length > 0 ? `还缺：${runtime.missing.join(' / ')}（填到 LinkHub 配置或 .env 后重启）` : '应用凭据未就绪。',
+        '用长连接时 Verify Token 可不填（默认 FEISHU_STREAM=true，免公网回调）；只有改用 HTTP 回调模式才需要 Verification Token。',
+        `重定向 URL 必须是：${deps.feishu.redirectUri}（与飞书后台逐字一致）。`,
+        '个人版通常需要企业管理员操作；配好后回到本页刷新。',
       ],
+      actions: adminActions,
       detail,
     };
   }
-  if (view.user.canLink) {
+
+  if (!real) {
+    if (runtime.policy === 'mock') {
+      return {
+        id: 'feishu',
+        label: '飞书',
+        state: 'mock',
+        summary: '飞书当前为演示模式（你显式设置了 FEISHU_MODE=mock）：不会连真实飞书。',
+        hints: ['想真实收发：去掉 .env 的 FEISHU_MODE=mock 并重启（或改为 auto）。'],
+        actions: adminActions,
+        detail,
+      };
+    }
+    return {
+      id: 'feishu',
+      label: '飞书',
+      state: 'needs_admin',
+      summary: '飞书凭据已配置，但通道未启用真实收发：检查安全配置（重定向 URL / 事件订阅）后重启。',
+      hints: [runtime.reason, ...runtime.warnings.slice(0, 2)],
+      actions: adminActions,
+      detail,
+    };
+  }
+
+  if (!view.user.linked) {
     return {
       id: 'feishu',
       label: '飞书',
       state: 'needs_user_auth',
-      summary: '飞书应用凭据已配置，还差你用本人账号授权。',
+      summary: '飞书应用已就绪，还差你用本人账号授权（OAuth）。',
       hints: [
         '点「连接飞书本人账号」，在浏览器里用飞书账号登录并同意授权；完成后回到 LinkHub 自动刷新。',
         view.user.hint,
@@ -408,61 +616,95 @@ function feishuStep(deps: OnboardingDeps): OnboardingStep {
           path: '/api/feishu/oauth/start',
           method: 'POST',
         },
-        {
-          id: 'feishu-doctor',
-          kind: 'command',
-          label: '自检飞书配置',
-          command: 'pnpm run doctor --platform=feishu',
-        },
+        doctorCommand('feishu'),
       ],
       detail,
     };
   }
+
   return {
     id: 'feishu',
     label: '飞书',
-    state: 'needs_admin',
-    summary: '需要企业管理员先创建飞书自建应用、开通消息权限并配置重定向 URL，之后才能连接本人账号。',
-    hints: [
-      runtime.missing.length > 0 ? `还缺应用凭据：${runtime.missing.join(' / ')}（填到 .env 后重启）` : '应用凭据未就绪。',
-      `重定向 URL 必须是：${deps.feishu.redirectUri}（与飞书后台逐字一致）。`,
-      '个人版通常需要企业管理员操作；配好后回到本页刷新。',
+    state: 'ready',
+    summary: `已连接飞书本人账号${view.user.displayName ? `：${view.user.displayName}` : ''}，消息以本人身份收发。`,
+    hints: [view.receiveHint, view.sendHint],
+    actions: [
+      {
+        id: 'feishu-status',
+        kind: 'api',
+        label: '刷新连接状态',
+        // 原 /api/feishu/oauth/status 不存在（P1-6 404）；统一用 /api/accounts 读身份视图
+        path: '/api/accounts',
+        method: 'GET',
+      },
+      doctorCommand('feishu'),
     ],
-    actions: adminActions,
     detail,
   };
 }
 
 function wecomStep(deps: OnboardingDeps): OnboardingStep {
   const { runtime } = deps.wecom;
-  const detail = { missing: runtime.missing, warnings: runtime.warnings, configured: runtime.configured };
-  if (runtime.mode === 'real' && runtime.configured) {
+  const detail = {
+    missing: runtime.missing,
+    warnings: runtime.warnings,
+    configured: runtime.configured,
+    mode: runtime.mode,
+    policy: runtime.policy,
+  };
+  const configureAction: OnboardingAction = {
+    id: 'wecom-configure',
+    kind: 'form',
+    label: '填写企业微信凭据（Corp ID / Agent ID / Secret）',
+    path: '/api/app-config',
+    method: 'PUT',
+  };
+  const adminActions: OnboardingAction[] = [
+    configureAction,
+    { id: 'wecom-admin', kind: 'link', label: '打开企业微信管理后台', url: 'https://work.weixin.qq.com/' },
+    {
+      id: 'wecom-admin-checklist',
+      kind: 'copy',
+      label: '复制管理员开通清单（凭据 + 可信 IP + 重启）',
+      text: wecomAdminChecklist(deps.port),
+    },
+    doctorCommand('wecom'),
+  ];
+
+  if (!runtime.configured) {
     return {
       id: 'wecom',
       label: '企业微信',
-      state: 'ready',
-      summary: '企业微信自建应用已配置，机器人通道可用。',
-      hints: ['如发送报 60020（IP 不在白名单），请管理员把本机公网 IP 加入「企业可信 IP」。'],
-      actions: [
-        { id: 'wecom-doctor', kind: 'command', label: '自检企业微信配置', command: 'pnpm run doctor --platform=wecom' },
+      state: 'needs_admin',
+      summary: '缺少企业微信自建应用凭据：需要企业管理员创建应用并提供 Corp ID / Agent ID / Secret。',
+      hints: [
+        runtime.missing.length > 0 ? `缺少变量：${runtime.missing.join(' / ')}` : '未配置企业微信自建应用。',
+        '个人版无法自行开通企业微信，需要企业管理员配合；拿到凭据后在 LinkHub 填写或写 .env 并重启。',
       ],
+      actions: adminActions,
       detail,
     };
   }
-  const actions: OnboardingAction[] = [
-    { id: 'wecom-admin', kind: 'link', label: '打开企业微信管理后台', url: 'https://work.weixin.qq.com/' },
-    { id: 'wecom-admin-checklist', kind: 'copy', label: '复制管理员开通清单（含可信 IP）', text: wecomAdminChecklist(deps.port) },
-  ];
+
+  if (runtime.mode !== 'real') {
+    return {
+      id: 'wecom',
+      label: '企业微信',
+      state: 'mock',
+      summary: '企业微信当前为演示模式：凭据已配置，但运行模式不是 real。',
+      hints: ['去掉 .env 的 WECOM_MODE=mock（或设为 auto/real）后重启即可真实收发。'],
+      actions: adminActions,
+      detail,
+    };
+  }
+
   return {
     id: 'wecom',
     label: '企业微信',
-    state: 'mock',
-    summary: '企业微信当前为演示模式（Mock）：需要企业管理员配好自建应用与可信 IP 才能真实收发。',
-    hints: [
-      runtime.missing.length > 0 ? `缺少变量：${runtime.missing.join(' / ')}` : '未配置企业微信自建应用。',
-      '个人版无法自行开通企业微信，需要企业管理员配合。',
-    ],
-    actions,
+    state: 'ready',
+    summary: '企业微信自建应用已配置，机器人通道可用。',
+    hints: ['如发送报 60020（IP 不在白名单），请管理员把本机公网 IP 加入「企业可信 IP」。'],
+    actions: [doctorCommand('wecom'), configureAction],
     detail,
   };
 }
@@ -479,13 +721,15 @@ export function buildOnboarding(deps: OnboardingDeps): OnboardingView {
     wecomStep(deps),
   ];
   const ready = steps.filter((s) => s.state === 'ready').length;
-  const needsAction = steps.filter((s) => s.state === 'needs_user_auth' || s.state === 'needs_install' || s.state === 'needs_admin').length;
+  // 白号审计 P1-2：非 ready 就是待处理（ready<total 时不得为 0）；mock 也是「未真实可用」，同样计入
+  const needsAction = steps.filter((s) => s.state !== 'ready').length;
   const startedAt = deps.startedAt ?? new Date(Date.now() - process.uptime() * 1000).toISOString();
   return {
     ok: true,
     data: {
       generatedAt,
-      firstRun: ready === 0,
+      // 白号：全部平台都非 ready 才算首次使用
+      firstRun: steps.every((s) => s.state !== 'ready'),
       startedAt,
       envFile: deps.envFile ?? null,
       dws: {
@@ -499,3 +743,11 @@ export function buildOnboarding(deps: OnboardingDeps): OnboardingView {
     },
   };
 }
+
+/** 供路由推导 Platform 常量（避免路由到处 import Platform） */
+export const ONBOARDING_PLATFORMS = {
+  mail: Platform.MAIL,
+  dingtalk: Platform.DINGTALK,
+  feishu: Platform.FEISHU,
+  wecom: Platform.WECOM,
+} as const;

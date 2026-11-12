@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  isSelfComposedMock,
   conversationLabel,
   deliveryLabel,
   formatRelative,
@@ -92,5 +93,32 @@ describe('format utils', () => {
     expect(conversationLabel(msg({ conversation: { id: 'cid2', type: 'group' } }))).toBe('群聊');
     expect(conversationLabel(msg({ conversation: { id: 'u1', type: 'p2p' } }))).toBe('单聊');
     expect(conversationLabel(msg({}))).toBe('—');
+  });
+});
+
+
+describe('isSelfComposedMock（Mock 下自己新建发送的模拟消息）', () => {
+  it('LinkHub 统一入口 + mock 投递 = 我自己发出的；真实投递/收到的 mock 不算', () => {
+    expect(
+      isSelfComposedMock({
+        delivery: { mode: 'mock', at: '2026-01-01T00:00:00Z' },
+        sender: { id: 'linkhub' },
+        externalId: 'compose:t1',
+      }),
+    ).toBe(true);
+    expect(
+      isSelfComposedMock({
+        delivery: { mode: 'mock', at: '2026-01-01T00:00:00Z' },
+        sender: { id: 'u1' },
+        externalId: 'demo_ext_1',
+      }),
+    ).toBe(false);
+    expect(
+      isSelfComposedMock({
+        delivery: { mode: 'real', at: '2026-01-01T00:00:00Z' },
+        sender: { id: 'linkhub' },
+        externalId: 'compose:t1',
+      }),
+    ).toBe(false);
   });
 });

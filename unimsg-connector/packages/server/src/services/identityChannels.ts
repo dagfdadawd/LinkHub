@@ -25,6 +25,7 @@ import {
   warmIdentityProbes,
 } from './identity';
 import { dingtalkPersonalClient } from '../connectors/dingtalkPersonal';
+import { maybeAutoEnableDingtalkPersonalIdentity } from './personalIdentity';
 import { startFeishuUserPoller, type FeishuUserPollerHandle } from '../stream/feishuUserPoller';
 import { startDingtalkPersonalStream, type DingtalkPersonalStream } from '../stream/dingtalkPersonalStream';
 
@@ -118,6 +119,11 @@ export class IdentityChannelsCoordinator {
   private async reconcileDingtalk(): Promise<void> {
     // 登录态可能刚变化（浏览器授权成功 / 外部终端登录）：强制探一次（客户端自带单飞与超时）
     await this.refreshDingtalkStatus().catch(() => undefined);
+    // 「一登即用」：已登录 + 没有机器人凭据 + 身份策略 auto → 自动热应用仅本人身份（持久化）
+    const auth = dingtalkPersonalClient().lastKnownStatus();
+    if (auth?.authenticated) {
+      await maybeAutoEnableDingtalkPersonalIdentity('定时对齐检测到钉钉已登录', { authenticated: true }).catch(() => undefined);
+    }
     const view = this.resolveView(Platform.DINGTALK);
     const want = view.effectiveReceive === 'user';
     if (want && !this.dingtalkStream) {

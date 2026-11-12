@@ -547,3 +547,143 @@ describe('邮箱测试结果：后端真实形状（200 + ok:false + imap/smtp d
     ]);
   });
 });
+
+describe('平台应用配置 / 邮箱 verify 接口（白号 P0-1 / 邮箱 P0-3）', () => {
+  it('getAppConfig：解包 data，FieldView 的 masked/source/envKey 与 platforms.missing 正确归一化', async () => {
+    const fn = mockFetch(jsonResponse({
+      ok: true,
+      data: {
+        version: 1,
+        identity: {
+          feishu: { source: 'none', configured: false, envKey: 'FEISHU_IDENTITY', label: '身份' },
+          dingtalk: { source: 'local', configured: true, value: 'user', envKey: 'DINGTALK_IDENTITY', label: '身份' },
+        },
+        modes: {
+          feishu: { source: 'none', configured: false, value: 'mock' },
+          mail: { source: 'local', configured: true, value: 'real' },
+        },
+        llm: { provider: { source: 'none', configured: false, envKey: 'LLM_PROVIDER', label: '提供方' } },
+        platforms: {
+          feishu: {
+            configured: false,
+            fields: {
+              appId: { source: 'env', configured: true, masked: 'cli_****abcd', envKey: 'FEISHU_APP_ID', label: 'App ID' },
+              appSecret: { source: 'none', configured: false, envKey: 'FEISHU_APP_SECRET', label: 'App Secret' },
+            },
+            missing: ['FEISHU_APP_SECRET', 'FEISHU_VERIFY_TOKEN'],
+          },
+          dingtalk: { configured: false, fields: {}, missing: [] },
+          wecom: { configured: false, fields: {}, missing: [] },
+        },
+        restartRequired: true,
+        envFile: { path: '.env', mtime: '2026-11-12T10:00:00.000Z' },
+        settingsFile: { path: 'linkhub-config.json', present: true, mtime: '2026-11-12T10:05:00.000Z' },
+      },
+    }));
+    const api = new HttpApi(BASE, TOKEN);
+
+    const view = await api.getAppConfig();
+
+    expect(callArgs(fn)[0]).toBe(`${BASE}/api/app-config`);
+    expect(view.identity.dingtalk).toBe('user');
+    expect(view.identitySources?.dingtalk).toBe('local');
+    expect(view.modes?.mail).toBe('real');
+    expect(view.platforms.feishu.missing).toEqual(['FEISHU_APP_SECRET', 'FEISHU_VERIFY_TOKEN']);
+    expect(view.platforms.feishu.fields.appId).toEqual({
+      configured: true,
+      display: 'cli_****abcd',
+      source: 'env',
+      key: 'FEISHU_APP_ID',
+    });
+    expect(view.platforms.feishu.fields.appSecret.configured).toBe(false);
+    expect(view.restartRequired).toBe(true);
+    expect(view.envFile?.path).toBe('.env');
+    expect(view.settingsFile?.mtime).toBe('2026-11-12T10:05:00.000Z');
+  });
+
+  it('updateAppConfig：PUT 部分更新，解析 hotApplied / ignoredByEnv / warnings', async () => {
+    const fn = mockFetch(jsonResponse({
+      ok: true,
+      data: {
+        saved: true,
+        hotApplied: true,
+        restartRequired: false,
+        changedKeys: ['identity.dingtalk'],
+        ignoredByEnv: ['FEISHU_APP_ID'],
+        warnings: ['账号已保存但未验证'],
+      },
+    }));
+    const api = new HttpApi(BASE, TOKEN);
+
+    const result = await api.updateAppConfig({ identity: { dingtalk: 'user' } });
+
+    expect(result).toMatchObject({
+      saved: true,
+      hotApplied: true,
+      restartRequired: false,
+      changedKeys: ['identity.dingtalk'],
+      ignoredByEnv: ['FEISHU_APP_ID'],
+      warnings: ['账号已保存但未验证'],
+    });
+    const [url, init] = callArgs(fn);
+    expect(url).toBe(`${BASE}/api/app-config`);
+    expect(init.method).toBe('PUT');
+    expect(JSON.parse(String(init.body))).toEqual({ identity: { dingtalk: 'user' } });
+  });
+
+  it('mailAccountVerify：POST :key/verify；失败 200 也能拿到 IMAP/SMTP 明细', async () => {
+    const fn = mockFetch(jsonResponse({
+      ok: false,
+      verified: false,
+      imap: { detail: 'AUTHENTICATIONFAILED', hint: '请重新生成授权码' },
+      smtp: { detail: '连接成功' },
+    }));
+    const api = new HttpApi(BASE, TOKEN);
+
+    const result = await api.mailAccountVerify('local-1');
+
+    expect(result.ok).toBe(false);
+    expect(result.details).toEqual([
+      'IMAP：AUTHENTICATIONFAILED（请重新生成授权码）',
+      'SMTP：连接成功',
+    ]);
+    const [url, init] = callArgs(fn);
+    expect(url).toBe(`${BASE}/api/mail/accounts/local-1/verify`);
+    expect(init.method).toBe('POST');
+  });
+});
+
+describe('GET /api/app-config 契约对齐（二轮审计 P3 #8）', () => {
+  it('settingsFile.mtime 允许 null：保留 path，不整体丢弃；stream 布尔 value 保留', async () => {
+    const fn = mockFetch(jsonResponse({
+      ok: true,
+      data: {
+        identity: {},
+        modes: {},
+        llm: {},
+        platforms: {
+          feishu: {
+            fields: {
+              stream: { source: 'local', configured: true, value: true, envKey: 'FEISHU_STREAM', label: '长连接' },
+            },
+            missing: [],
+          },
+          dingtalk: { fields: {}, missing: [] },
+          wecom: { fields: {}, missing: [] },
+        },
+        restartRequired: false,
+        envFile: { path: '.env', mtime: null },
+        settingsFile: { path: 'linkhub-config.json', present: false, mtime: null },
+      },
+    }));
+    const api = new HttpApi(BASE, TOKEN);
+
+    const view = await api.getAppConfig();
+
+    expect(callArgs(fn)[0]).toBe(`${BASE}/api/app-config`);
+    expect(view.envFile).toEqual({ path: '.env', mtime: null });
+    expect(view.settingsFile).toEqual({ path: 'linkhub-config.json', mtime: null });
+    expect(view.platforms.feishu.fields.stream.value).toBe(true);
+    expect(view.platforms.feishu.fields.stream.configured).toBe(true);
+  });
+});
