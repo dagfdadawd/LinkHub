@@ -50,5 +50,9 @@ export default defineConfig({
     setupFiles: ['./src/test/setup.ts'],
     css: false,
     include: ['src/**/*.test.{ts,tsx}'],
+    // 授权中心（ConnectPage）等重型 antd 交互用例在单核/慢速 CI runner 上单测 5–6s 很常见，
+    // 默认 5s 会随机超时（本地快、CI 挂）。放宽到 15s，避免把「机器慢」误报成用例失败。
+    testTimeout: 15_000,
+    hookTimeout: 15_000,
   },
 });
