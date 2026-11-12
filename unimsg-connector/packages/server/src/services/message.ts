@@ -404,6 +404,45 @@ export class MessageService {
     this.broadcast({ type: 'message.updated', data: m });
   }
 
+  /**
+   * 标记已读 / 未读。
+   *
+   * 阅读状态独立于业务状态（status）：收到不等于看过，回写成功也不等于看过。
+   * 首次已读写入时间戳（而不是布尔），既方便「最近已读」排序，也能在回放里看清时序。
+   */
+  async markRead(id: string, read = true): Promise<UnifiedMessage> {
+    const cur = this.repo.get(id);
+    if (!cur) throw new Error('message not found');
+    // 已读时间只记第一次：重复标记不刷新时间戳
+    const readAt = read ? (cur.readAt ?? new Date().toISOString()) : undefined;
+    const m = this.repo.update(id, { readAt });
+    if (!m) throw new Error('message not found');
+    // 阅读是高频轻操作，不写闭环日志；只在状态真正变化时广播
+    if (cur.readAt !== readAt) this.broadcast({ type: 'message.updated', data: m });
+    return m;
+  }
+
+  /**
+   * 一键全部已读：返回实际改动的条数（已读的跳过，避免无意义广播）。
+   * `ids` 用于「只标记当前筛选范围」，不传则全量。
+   */
+  async markAllRead(ids?: string[]): Promise<number> {
+    const now = new Date().toISOString();
+    const pool = ids
+      ? this.repo.list().filter((m) => ids.includes(m.traceId))
+      : this.repo.list();
+    let changed = 0;
+    for (const cur of pool) {
+      if (cur.readAt) continue;
+      const m = this.repo.update(cur.traceId, { readAt: now });
+      if (m) {
+        changed += 1;
+        this.broadcast({ type: 'message.updated', data: m });
+      }
+    }
+    return changed;
+  }
+
   // ---------- 回流 ----------
   /**
    * 平台状态回流。接口永远成功返回（路由照常 200），但只有「前进」才改状态：
