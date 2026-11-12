@@ -61,10 +61,15 @@ export function isSelfEcho(raw: unknown): boolean {
   return Date.now() - at <= ECHO_TTL_MS;
 }
 
-/** 按 FEISHU_SEND_AS 选出本次发送的身份与令牌 */
-async function resolveSendToken(): Promise<{ token: string; identity: 'bot' | 'user' }> {
+/**
+ * 按本次要用的身份选出令牌：
+ *  - 显式 `msg.sendIdentity`（统一入口指定）优先级最高：user 强制本人、bot 强制机器人；
+ *  - 未指定才按 FEISHU_IDENTITY（旧 FEISHU_SEND_AS）与授权状态解析（auto：连过就用本人）。
+ * 显式 user 但未授权/失效时**绝不悄悄回退机器人**，直接中文报错。
+ */
+async function resolveSendToken(requested?: 'bot' | 'user'): Promise<{ token: string; identity: 'bot' | 'user' }> {
   const auth = feishuUserAuth();
-  const identity = auth.effectiveIdentity();
+  const identity = requested ?? auth.effectiveIdentity();
   if (identity === 'user') {
     try {
       return { token: await auth.accessToken(), identity };
@@ -136,6 +141,8 @@ export function receive(raw: unknown): UnifiedMessage {
     type,
     body: text,
     dueAt: type === 'todo' ? inferDueAt(text) : undefined,
+    // 机器人 webhook / 长连接收到的消息：如实标注来源身份（Mock 演示不写）
+    ...(isMock(Platform.FEISHU) ? {} : { receivedAs: 'bot' as const }),
     status: MsgStatus.RECEIVED,
     createdAt: now,
     updatedAt: now,
@@ -192,7 +199,7 @@ export async function send(msg: UnifiedMessage, attachments: OutboundAttachment[
   const chatId = msg.conversation?.id;
   if (!chatId) throw new Error('飞书真实发送缺少 conversation.id（需先收到该会话的消息）');
 
-  const { token, identity } = await resolveSendToken();
+  const { token, identity } = await resolveSendToken(msg.sendIdentity);
   const auth = { Authorization: `Bearer ${token}` };
   const base = config.platforms.feishu.baseUrl;
   const receiveIdType = feishuReceiveIdType(chatId);

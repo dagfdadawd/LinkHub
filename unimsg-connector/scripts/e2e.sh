@@ -39,9 +39,12 @@ echo "[e2e] 启动后端服务 (port=$PORT, 强制 mock 模式，与本地 .env 
 # smoke.py 从 LINKHUB_API_TOKEN 读取令牌，故单独 export 给同脚本后续的 python 进程
 export LINKHUB_API_TOKEN=dev-token
 : > "$LOG"
+# DATA_DIR/DATA_FILE 也清空：用户 .env 若设了快照目录，后端会恢复历史消息，
+# smoke.py 固定 externalId 全被判 duplicate → received=0 假失败。e2e 必须纯内存。
 SERVER_PORT="$PORT" API_TOKEN=dev-token \
 FEISHU_MODE=mock DINGTALK_MODE=mock WECOM_MODE=mock MAIL_MODE=mock \
 DINGTALK_STREAM=false MAIL_ENABLED=false \
+DATA_DIR= DATA_FILE= \
 pnpm --filter @unimsg/server start > "$LOG" 2>&1 &
 SERVER_PID=$!
 

@@ -212,7 +212,9 @@ echo  ===============================================================
 echo   LinkHub is running
 echo     Web      http://127.0.0.1:5173
 echo     API      http://127.0.0.1:%BACKEND_PORT%/api/health
-echo     Token    %DEMO_TOKEN%
+rem 不打印完整令牌：启动器窗口常被截图/投屏，完整值见 unimsg-connector/.env 的 API_TOKEN
+set "TOKEN_MASK=%DEMO_TOKEN:~0,4%******"
+echo     Token    %TOKEN_MASK%  ^(full value: unimsg-connector\.env API_TOKEN^)
 echo     Accounts %ACCT% credential group^(s^) in .env  ^(0 = all MOCK^)
 if defined FORCED_MOCK echo     Channel  FORCED MOCK ^(offline, no real API calls^)
 echo.

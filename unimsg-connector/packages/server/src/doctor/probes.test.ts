@@ -31,6 +31,8 @@ import {
   type PlatformProbeRuntime,
   type ProbeInput,
   type WecomProbeInput,
+  probeFeishuIdentity,
+  probeDingtalkIdentity,
 } from './probes';
 
 // ---------------------------------------------------------------------------
@@ -673,4 +675,91 @@ test('LLM 探针：网络错误 → FAIL 并附排查建议', async () => {
   );
   assert.equal(check.status, 'FAIL');
   assert.ok((check.hint ?? '').length > 0);
+});
+
+
+// ---------------------------------------------------------------------------
+// 本人身份探针（只读；未配置一律 SKIP/FAIL 可操作）
+// ---------------------------------------------------------------------------
+
+test('probeFeishuIdentity：Mock 模式 SKIP；未连接 auto SKIP、显式 user FAIL', async () => {
+  const mock = await probeFeishuIdentity({ mode: 'mock', policy: 'auto', receiveEnabled: true, baseUrl: 'https://open.feishu.cn' });
+  assert.equal(mock[0]!.status, 'SKIP');
+  assert.match(mock[0]!.detail, /模拟模式/);
+
+  const notLinked = await probeFeishuIdentity(
+    { mode: 'real', policy: 'auto', receiveEnabled: true, baseUrl: 'https://open.feishu.cn' },
+    { feishu: { status: () => ({ state: 'none', accessExpiresAt: undefined }), canAuthorize: () => true } },
+  );
+  assert.equal(notLinked[0]!.status, 'SKIP');
+  assert.match(notLinked[0]!.hint ?? '', /连接本人账号/);
+
+  const forced = await probeFeishuIdentity(
+    { mode: 'real', policy: 'user', receiveEnabled: true, baseUrl: 'https://open.feishu.cn' },
+    { feishu: { status: () => ({ state: 'none' }), canAuthorize: () => true } },
+  );
+  assert.equal(forced[0]!.status, 'FAIL');
+  assert.match(forced[0]!.detail, /发送会显式失败/);
+});
+
+test('probeFeishuIdentity：已连接时只读拉一次 chats；权限错误给出 scope 修复提示', async () => {
+  const status = () => ({ state: 'active' as const, accessExpiresAt: '2026-11-12T10:00:00.000Z' });
+  const okFetch = (async () => new Response(JSON.stringify({ code: 0, data: { items: [] } }), { status: 200 })) as unknown as typeof fetch;
+  const pass = await probeFeishuIdentity(
+    { mode: 'real', policy: 'auto', receiveEnabled: true, baseUrl: 'https://open.feishu.cn' },
+    { feishu: { status, canAuthorize: () => true, accessToken: async () => 'tok', fetchImpl: okFetch } },
+  );
+  assert.equal(pass[0]!.status, 'PASS');
+  assert.equal(pass[1]!.status, 'PASS');
+  assert.match(pass[1]!.detail, /轮询延迟 5–30s/);
+
+  const denyFetch = (async () => new Response(JSON.stringify({ code: 99991672, msg: 'denied' }), { status: 200 })) as unknown as typeof fetch;
+  const denied = await probeFeishuIdentity(
+    { mode: 'real', policy: 'auto', receiveEnabled: true, baseUrl: 'https://open.feishu.cn' },
+    { feishu: { status, canAuthorize: () => true, accessToken: async () => 'tok', fetchImpl: denyFetch } },
+  );
+  assert.equal(denied[1]!.status, 'FAIL');
+  assert.match(denied[1]!.hint ?? '', /im:message\.p2p_msg:get_as_user/);
+});
+
+test('probeDingtalkIdentity：dws 未安装 auto SKIP / user FAIL；未登录给出登录命令；已登录 PASS', async () => {
+  const notInstalled = await probeDingtalkIdentity(
+    { mode: 'real', policy: 'auto', receiveEnabled: true },
+    { dingtalk: { version: async () => ({ error: '未找到 dws' }) } },
+  );
+  assert.equal(notInstalled[0]!.status, 'SKIP');
+  assert.match(notInstalled[0]!.hint ?? '', /DWS_BIN|dingtalk-workspace-cli/);
+
+  const forced = await probeDingtalkIdentity(
+    { mode: 'real', policy: 'user', receiveEnabled: true },
+    { dingtalk: { version: async () => ({ error: '未找到 dws' }) } },
+  );
+  assert.equal(forced[0]!.status, 'FAIL');
+
+  const notLogged = await probeDingtalkIdentity(
+    { mode: 'real', policy: 'auto', receiveEnabled: true },
+    {
+      dingtalk: {
+        version: async () => ({ version: 'v1.0.68-beta.1' }),
+        authStatus: async () => ({ available: true, authenticated: false, checkedAt: Date.now(), message: '未登录' }),
+        loginCommand: () => 'dws auth login --device',
+      },
+    },
+  );
+  assert.equal(notLogged[0]!.status, 'SKIP');
+  assert.match(notLogged[0]!.hint ?? '', /dws auth login --device/);
+
+  const linked = await probeDingtalkIdentity(
+    { mode: 'real', policy: 'auto', receiveEnabled: true },
+    {
+      dingtalk: {
+        version: async () => ({ version: 'v1.0.68-beta.1' }),
+        authStatus: async () => ({ available: true, authenticated: true, checkedAt: Date.now() }),
+        eventListAvailable: async () => ({ ok: true, detail: 'dws event list 可用' }),
+      },
+    },
+  );
+  assert.equal(linked[0]!.status, 'PASS');
+  assert.match(linked[0]!.detail, /本人身份已登录/);
+  assert.equal(linked[1]!.status, 'PASS');
 });

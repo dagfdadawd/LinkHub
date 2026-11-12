@@ -46,3 +46,14 @@ export function footerState(
       return { badge: '真实后端', text: '后端未连接（检查后端是否启动）', tone: 'error' };
   }
 }
+
+/**
+ * 页脚可见短文案（小白看不到「aria-label」，断线时却能看到「已离线」会不对称）。
+ * 侧栏只有 76px，短文案控制在 2–4 个汉字；完整说明仍放在 Tooltip / aria-label。
+ */
+export function footerShortLabel(footer: FooterState): string {
+  if (footer.tone === 'demo') return '演示';
+  if (footer.tone === 'ok') return '已连接';
+  if (footer.tone === 'pending') return '重连中';
+  return footer.badge === '连接异常' ? '异常' : '未连接';
+}

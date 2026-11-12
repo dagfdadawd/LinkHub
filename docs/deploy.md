@@ -64,6 +64,17 @@ curl -H "Authorization: Bearer linkhub-local-demo-2026-change-me" \
 消息立刻进入收件箱，状态经 WebSocket 从 `replied` 推进到 `sent` / `synced`，
 在「全链路回放」里可逐条查看 `composed → processing → replied → sent → synced`。
 
+**账号自检（只读，判断"填对了没有 / 平台连不连得通"）**——账号页的「已配置 / 真实接口」只代表变量填齐，**以 doctor 的 PASS/FAIL 为准**：
+
+```bash
+# 容器内执行（使用容器里注入的环境变量；只读，不发业务消息）
+docker compose exec app pnpm --filter @unimsg/server run doctor
+# 只查某平台：
+docker compose exec app pnpm --filter @unimsg/server run doctor --platform=feishu,dingtalk
+```
+
+> ⚠️ 不要写 `pnpm doctor`（pnpm 9 内置同名命令会抢占，实测无输出、退出码 0）。容器里改完 `.env` 后要 `docker compose up -d` 重建容器让它生效；宿主机 `.env` 的修改不影响已运行容器。
+
 ---
 
 ## 3. 入口令牌（必读）
@@ -87,6 +98,8 @@ docker compose up -d --build
 `.env` 中的 `API_TOKEN=dev-token` 会被 compose 的 `environment` 覆盖，不会导致启动失败。
 其余 `FEISHU_*` / `DINGTALK_*` / `WECOM_*` / `MAIL_*` / `LLM_*` 变量通过 `env_file` 注入容器，
 换账号只改 `.env` 后 `docker compose up -d`（无需重新构建）。
+本人身份变量（`FEISHU_IDENTITY` / `FEISHU_USER_RECEIVE` / `DINGTALK_IDENTITY` / `DWS_*` 等）同样走 `env_file`；
+改 `FEISHU_REDIRECT_URI` 后重启容器即可生效（无需重建镜像）。容器内本人身份的额外步骤与限制见第 5 节。
 
 ---
 
@@ -114,7 +127,49 @@ docker compose up -d
 
 ---
 
-## 5. 离线 / 无外网服务器
+## 5. 本人身份（可选）：容器内的额外步骤与限制
+
+> 容器部署默认保证「机器人通道 + Mock」开箱即用；**本人身份（飞书 / 钉钉）需要额外的平台配置与真人授权**，不配置时按 `auto` 回退机器人，不影响闭环演示。
+> 完整的平台前提见 [personal-identity.md](personal-identity.md)。
+
+### 5.1 飞书本人身份（容器内）
+
+1. **回调地址要与浏览器实际访问的地址一致**：OAuth 授权在浏览器里完成，飞书会跳回 `FEISHU_REDIRECT_URI`。
+   - 浏览器在宿主机、容器端口映射为 `HOST_PORT`（默认 3001）：设 `FEISHU_REDIRECT_URI=http://localhost:<HOST_PORT>/api/feishu/oauth/callback`；
+   - 直接访问服务器 IP：用 `http://<服务器IP>:<端口>/api/feishu/oauth/callback`（或反向代理域名），并保证该地址从浏览器可达；
+   - **先把同一个值填进飞书后台「安全设置 → 重定向 URL」，再重启容器**（协议 / 域名 / 端口 / 路径 / 斜杠逐字符一致）。
+2. **令牌持久化**：飞书令牌文件默认落在 `DATA_DIR`（容器为 `/app/data/feishu-user-token.json`），已挂 `linkhub-data` 卷——容器重建后授权不丢，除非删除数据卷。
+3. **接收水位**：建议显式把水位文件放到数据卷，例如 `FEISHU_USER_STATE_FILE=/app/data/.feishu-user-receive.json`（默认路径以 `.env.example` 注释为准），避免容器重建后重新立基线。
+4. **网络**：授权完成后浏览器需要能访问回调地址；反向代理场景把 `/api` 整体转发到容器 3001 即可。
+
+### 5.2 钉钉本人身份（dws，容器内限制更多）
+
+- dws 必须安装在**LinkHub 进程所在的容器内部**（后端以子进程调用本机 `dws`），宿主机装的不行；**默认镜像不包含 dws**——它是外部 CLI 且首次登录需要真人 OAuth 授权，容器默认没有浏览器与系统凭据，本项目不把"容器开箱即用本人身份"写进承诺。
+- **推荐**：个人 / 小团队的钉钉本人身份用**本机部署**（`pnpm --filter @unimsg/server start`，见 [personal-identity.md §5](personal-identity.md#5-钉钉本人身份配置dws-cli)）；容器部署主打机器人通道 + Mock，二者不冲突。
+- 确需容器内本人身份时，**自建镜像**（或进入容器安装）：
+  1. 基础镜像换成 glibc 发行版（如 `node:22-bookworm-slim`）——官方 dws 的 Linux 产物依赖 glibc，**当前基于 Alpine（musl）的默认镜像不能直接运行**；
+  2. 在镜像里安装 dws（官方 `install.sh`，或从官方 Releases 页面下载对应平台的 dws 二进制放到 `PATH`）；
+  3. 把 dws 的配置与凭据目录挂到数据卷做持久化（Linux 下通常为 `~/.dws` 与 `~/.local/share/dws-cli`；以 dws 官方文档为准），否则容器重建需要重新登录；
+  4. 容器内无浏览器，登录必须用 device flow：
+
+     ```bash
+     docker compose exec app sh
+     dws auth login --device     # 在另一台有浏览器的设备上打开提示的 URL / 输入 code 完成授权
+     ```
+
+- **离线演示**：`scripts/` 会复制进镜像，容器内可用本地桩做本人身份闭环演示（不连接真实钉钉）：
+
+  ```dotenv
+  DWS_BIN=node /app/scripts/fake-dws.mjs
+  ```
+
+  演示时必须说明这是本地桩、不是真实钉钉登录（见 [demo-script.md](demo-script.md)）。
+- 不装 dws 时：`auto` 回退机器人、`user` 显式报错；离线演示与真实收发都不会假成功。
+- **如实标注**：容器内钉钉本人身份的真实端到端**待实测**（本机 dws 未登录、官方处于共创阶段），详见 [personal-identity.md §11](personal-identity.md#11-验证状态诚实标注)。
+
+---
+
+## 6. 离线 / 无外网服务器
 
 若指定服务器不能联网，可在有网机器上先构建镜像再搬运：
 
@@ -133,7 +188,7 @@ docker compose up -d          # 不要加 --build
 
 ---
 
-## 6. 常用运维命令
+## 7. 常用运维命令
 
 | 目的 | 命令 |
 |---|---|
@@ -146,7 +201,7 @@ docker compose up -d          # 不要加 --build
 
 ---
 
-## 7. 与赛题提交项的对应
+## 8. 与赛题提交项的对应
 
 | 决赛提交项 | 本方案 |
 |---|---|
@@ -157,9 +212,10 @@ docker compose up -d          # 不要加 --build
 
 ---
 
-## 8. 如实说明的边界
+## 9. 如实说明的边界
 
 - **未使用 PostgreSQL / Redis**：当前为单实例 + 文件快照，多实例水平扩展时限流、token 缓存、消息不共享（`001_init.sql` 与仓储接口已预留切换点）。
 - **高可用未实现**：没有负载均衡 / 容灾，附加分项不申领。
 - **真实平台文件通道未端到端验证**：飞书 / 企微 / 邮箱的媒体上传与 MIME 附件已按官方接口实现并有单测，但受租户策略、可信 IP 限制，现场演示默认走 Mock 通道（界面会明确标注「模拟发送」）。
+- **本人身份不是容器开箱能力**：飞书需管理员开用户身份权限 + 重定向 URL 与容器访问地址一致；钉钉 dws 需自建 glibc 镜像安装并在容器内 device-flow 登录，**默认镜像不包含 dws**——不配置时自动回退机器人，不会假成功（详见第 5 节）。
 - 前端令牌进 bundle 是演示级取舍，见 README「已知限制」。

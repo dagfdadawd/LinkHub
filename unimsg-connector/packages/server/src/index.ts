@@ -16,6 +16,10 @@ import { MessageService } from './services/message';
 import { startDingtalkStream } from './stream/dingtalkStream';
 import { startFeishuStream } from './stream/feishuStream';
 import { startMailPoller } from './stream/mailPoller';
+import { startFeishuUserPoller, type FeishuUserPollerHandle } from './stream/feishuUserPoller';
+import { startDingtalkPersonalStream, type DingtalkPersonalStream } from './stream/dingtalkPersonalStream';
+import { identityStartupLines, warmIdentityProbes } from './services/identity';
+import { dingtalkPersonalClient } from './connectors/dingtalkPersonal';
 import { initWs, wsBroadcast } from './ws';
 
 // 空 API_TOKEN 视同未配置 → 回退 dev-token（绝不因此关闭鉴权）
@@ -135,3 +139,45 @@ if (config.platforms.feishu.stream) {
 }
 
 startMailPoller(svc);
+
+// ---------------------------------------------------------------------------
+// 本人身份通道（飞书用户轮询 / 钉钉 dws 个人事件）
+//
+// 先异步预热身份探测（钉钉 auth status 实测 1–3s，绝不阻塞 listen），再决定是否启动：
+//  - 平台为模拟模式 / 未连接本人身份 → 只打印中文原因，不启动任何真实通道；
+//  - 只有真实可用的本人身份才起轮询/子进程（契约 §1、§10.2）。
+// ---------------------------------------------------------------------------
+let feishuUserPoller: FeishuUserPollerHandle | null = null;
+let dingtalkPersonalStream: DingtalkPersonalStream | null = null;
+
+void (async () => {
+  await warmIdentityProbes().catch((e) => {
+    console.warn('[unimsg] 身份探测失败（不影响其他平台）：', e instanceof Error ? e.message : e);
+  });
+  for (const line of identityStartupLines()) console.log(line);
+  feishuUserPoller = startFeishuUserPoller(svc);
+  dingtalkPersonalStream = startDingtalkPersonalStream(svc);
+})().catch((e) => {
+  console.error('[unimsg] 本人身份通道启动失败（其他平台不受影响）：', e instanceof Error ? e.message : e);
+});
+
+/** 优雅关闭：先停个人身份子进程/轮询（Windows 下 taskkill 树），再关 HTTP/WS，绝不残留子进程 */
+let shuttingDown = false;
+async function shutdown(reason: string): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[unimsg] 收到 ${reason}，正在停止本人身份接收器与子进程…`);
+  try {
+    await dingtalkPersonalStream?.stop();
+    feishuUserPoller?.stop();
+    dingtalkPersonalClient().dispose();
+  } catch (e) {
+    console.warn('[unimsg] 停止身份接收器时出错（继续关闭）：', e instanceof Error ? e.message : e);
+  }
+  server.close(() => process.exit(0));
+  // 兜底：5s 内没退干净就强制退出（例如平台长连接卡住）
+  const forced = setTimeout(() => process.exit(0), 5_000);
+  forced.unref?.();
+}
+process.on('SIGINT', () => void shutdown('SIGINT'));
+process.on('SIGTERM', () => void shutdown('SIGTERM'));

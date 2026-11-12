@@ -371,7 +371,7 @@ export function renderTextReport(input: DoctorReportInput): string {
   const lines: string[] = [];
   lines.push('LinkHub 自检报告（doctor）');
   lines.push(`生成时间：${input.generatedAt}`);
-  lines.push(`工作目录：${input.cwd}`);
+  lines.push(`工作目录：${input.cwd}（项目根；pnpm --filter 的脚本执行目录可能不同，不影响结论）`);
   if (input.platformFilter && input.platformFilter.length > 0) {
     lines.push(`平台过滤：${input.platformFilter.join(', ')}`);
   }

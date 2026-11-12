@@ -20,7 +20,8 @@ import {
 import { useAppState } from '../hooks/useAppState';
 import { store } from '../store';
 import { ConnectionDot } from '../components/ConnectionDot';
-import { footerState } from '../utils/footerState';
+import { footerShortLabel, footerState } from '../utils/footerState';
+import { clamp } from '../utils/format';
 import { initialOf, useProfile } from '../features/settings/profile';
 import { usePreferences } from '../features/settings/preferences';
 import { SettingsModal } from '../features/settings/SettingsModal';
@@ -98,6 +99,38 @@ export function AppShell() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [composeOpen, setComposeOpen] = useState(false);
+
+  /**
+   * 发送失败要「上浮」到用户眼前：之前失败原因只在回放日志里，
+   * 用户看到消息变成「发送失败」却不知道原因。这里用 error toast 带一句可读原因，
+   * 并提供「查看详情」直接跳到该消息（详情页同样展示失败原因 + 重试按钮）。
+   */
+  const sendFailure = state.sendFailure;
+  useEffect(() => {
+    if (!sendFailure) return;
+    const reason = sendFailure.reason
+      ? clamp(sendFailure.reason, 60)
+      : '具体原因见消息详情或全链路回放';
+    message.error(
+      <span className="failure-toast">
+        <span>发送失败：{reason}</span>
+        <Button
+          type="link"
+          size="small"
+          className="failure-toast__link"
+          onClick={() => {
+            store.dismissSendFailure();
+            navigate(`/inbox/${sendFailure.traceId}`);
+          }}
+        >
+          查看详情
+        </Button>
+      </span>,
+      8,
+    );
+    // 已弹出即清掉，避免同一次失败在重渲染时重复提示
+    store.dismissSendFailure();
+  }, [sendFailure, message, navigate]);
 
   // —— 图标轨滑动高光 ——
   const navRef = useRef<HTMLElement | null>(null);
@@ -238,6 +271,8 @@ export function AppShell() {
               aria-label={`${footer.badge}：${footer.text}`}
             >
               <span className="rail-status__dot" />
+              {/* 小白看不到 aria-label：给一颗绿点配可见短文案，断线时至少对称 */}
+              <span className="rail-status__text">{footerShortLabel(footer)}</span>
             </span>
           </Tooltip>
         </div>

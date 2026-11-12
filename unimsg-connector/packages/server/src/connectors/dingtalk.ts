@@ -1,12 +1,19 @@
 /**
- * 钉钉连接器（企业内部机器人）。
+ * 钉钉连接器（企业内部机器人 + 本人身份）。
  *
  * receive：解析钉钉回调（conversationId / senderStaffId / msgId）→ 统一消息。
  * convert：统一消息 → 机器人发送参数。
- * send   ：Mock 模式写入 sentBox 并返回 mode='mock'；否则换取 accessToken 调机器人接口。
+ * send   ：按身份分流——
+ *           · 本人身份（effectiveSend/sendIdentity = user）→ 走官方 dws CLI 以当前登录用户发送；
+ *           · 机器人身份 → 现有企业内部机器人接口；
+ *           · Mock 模式（显式 mock 或 auto 无凭据且未固定本人）→ 本地模拟，绝不外呼。
  * verify ：Mock 模式宽松验签；否则校验 timestamp + HMAC 签名。
  * decrypt：AES 解密 encrypt 字段。
  */
+import { randomUUID } from 'node:crypto';
+import { unlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { extname, join } from 'node:path';
 import {
   Platform, MsgStatus, UnifiedMessage, PlatformConnector,
   type SendResult, type OutboundAttachment,
@@ -15,6 +22,8 @@ import { config } from '../config';
 import { genTraceId, mockSend, verifyMock, inferType, inferDueAt, isMock, assertRealSendable } from './base';
 import { dingtalkDecrypt, dingtalkSign, safeEqual } from './crypto';
 import { dingtalkAccessToken, postJson, postMultipart } from './real';
+import { dingtalkPersonalClient, type DwsSendTarget } from './dingtalkPersonal';
+import { identityChannelsReal, resolveIdentity } from '../services/identity';
 import { decodeAttachment, describeAttachments, isOutboundComposed } from '../services/outbound';
 
 /** 媒体上传固定在 oapi 老域名（新域名只有机器人发消息/下载，没有 upload） */
@@ -77,6 +86,8 @@ export function receive(raw: unknown): UnifiedMessage {
     type,
     body: String(text),
     dueAt: type === 'todo' ? inferDueAt(String(text)) : undefined,
+    // 机器人 Stream / 回调收到的消息：如实标注来源（Mock 演示不写）
+    ...(isMock(Platform.DINGTALK) ? {} : { receivedAs: 'bot' as const }),
     status: MsgStatus.RECEIVED,
     createdAt: now,
     updatedAt: now,
@@ -117,19 +128,119 @@ export function verify(
 }
 
 /**
- * 发送：文本沿用 sampleText；文件走「oapi media/upload → sampleFile(mediaId)」。
- * 群聊 / 单聊两个端点由 sendOne 统一收敛，文件与文本复用同一目标会话，
- * 保证「向指定平台/会话发送文件」也落在同一条闭环里。
+ * 发送：按「本次身份」分流（契约 §4）。
+ *
+ * 优先级（顺序不可调换）：
+ *  1) 显式 `*_MODE=mock`（或 auto 无机器人凭据且未固定本人）→ 本地模拟，绝不外呼 dws；
+ *  2) 显式 `msg.sendIdentity` 优先，否则用平台 effectiveSend；
+ *  3) 本人身份 → dws CLI（真实接口，返回 identity='user'）；
+ *  4) 机器人身份 → 既有企业内部机器人接口（identity='bot'）。
+ *
+ * 本人身份附件：dws 只接受本地文件路径，因此把 base64 写临时文件 → 发送 → 立即删除；
+ * 发送失败也要清理，绝不残留明文附件。
  */
 export async function send(msg: UnifiedMessage, attachments: OutboundAttachment[] = []): Promise<SendResult> {
   const text = msg.reply ?? msg.body;
   const payload = convert(msg) as any;
-  if (isMock(Platform.DINGTALK)) {
+  const personalReal = identityChannelsReal(Platform.DINGTALK);
+
+  // 1) 不真实：本地模拟（显式 mock 绝不触发 dws 外呼）
+  if (!personalReal) {
     return mockSend(
       Platform.DINGTALK,
       attachments.length > 0 ? { ...payload, attachments: describeAttachments(attachments) } : payload,
     );
   }
+
+  const view = resolveIdentity(Platform.DINGTALK);
+  const wanted: 'bot' | 'user' = msg.sendIdentity ?? (view.effectiveSend === 'user' ? 'user' : 'bot');
+
+  // 3) 本人身份：dws 子进程
+  if (wanted === 'user') {
+    return sendViaPersonal(msg, text, attachments);
+  }
+
+  // 4) 机器人身份：保持既有行为
+  return sendViaBot(msg, text, payload, attachments);
+}
+
+/** 解析本人身份发送目标：有会话 ID 用 --conversation-id；只有单聊对方时退回 --user */
+function personalSendTarget(msg: UnifiedMessage): DwsSendTarget {
+  const convId = msg.conversation?.id;
+  if (convId) return { conversationId: convId };
+  const peer = msg.sender.id;
+  if (msg.conversation?.type === 'p2p' && peer && peer !== 'linkhub' && peer !== 'unknown') {
+    return { userId: peer };
+  }
+  throw new Error(
+    '钉钉本人身份发送缺少目标会话：请先收到该会话的一条消息，或在「新建发送」里填写 conversationId（openConversationId）。',
+  );
+}
+
+/** 以本人身份发送（dws CLI）。文本先发、再逐个发文件；任一失败整笔抛错（由中枢置 failed + 死信） */
+async function sendViaPersonal(
+  msg: UnifiedMessage,
+  text: string,
+  attachments: OutboundAttachment[],
+): Promise<SendResult> {
+  const client = dingtalkPersonalClient();
+  // 幂等键：同一 traceId 重试时 dws 侧 24h 内不会重复发送
+  const idempotencyKey = `linkhub-${msg.traceId}`;
+  const receipts: string[] = [];
+  const target = personalSendTarget(msg);
+
+  // 引用回复语义：个人事件带 openMessageId（externalId 去掉前缀）+ 发送者 openDingTalkId 时用 reply
+  const refMessageId = /^dingtalk:(.+)$/.exec(msg.externalId)?.[1];
+  const canReply = msg.receivedAs === 'user'
+    && Boolean(refMessageId)
+    && Boolean(msg.conversation?.id)
+    && msg.sender.id !== 'unknown'
+    && msg.sender.id !== 'linkhub';
+
+  if (text) {
+    const outcome = canReply && refMessageId && msg.conversation?.id
+      ? await client.reply({
+        conversationId: msg.conversation.id,
+        refMessageId,
+        refSenderOpenDingtalkId: msg.sender.id,
+        text,
+        idempotencyKey,
+      })
+      : await client.sendText({ target, text, idempotencyKey });
+    if (outcome.platformReply) receipts.push(outcome.platformReply);
+  }
+
+  for (const a of attachments) {
+    const ext = extname(a.name) || '.bin';
+    const filePath = join(tmpdir(), `linkhub-dws-${randomUUID()}${ext}`);
+    try {
+      writeFileSync(filePath, decodeAttachment(a));
+      const outcome = await client.sendFile({ target, filePath, idempotencyKey: `${idempotencyKey}-${ext}` });
+      if (outcome.platformReply) receipts.push(outcome.platformReply);
+    } finally {
+      try {
+        unlinkSync(filePath);
+      } catch {
+        // 临时文件清理失败不影响已发送结果
+      }
+    }
+  }
+
+  return {
+    ok: true,
+    mode: 'real',
+    platformReply: receipts.join(',') || undefined,
+    identity: 'user',
+  };
+}
+
+/** 机器人身份发送：文本沿用 sampleText；文件走「oapi media/upload → sampleFile(mediaId)」 */
+async function sendViaBot(
+  msg: UnifiedMessage,
+  text: string,
+  payload: any,
+  attachments: OutboundAttachment[],
+): Promise<SendResult> {
   assertRealSendable(Platform.DINGTALK);
 
   const { robotCode } = config.platforms.dingtalk;
@@ -186,7 +297,7 @@ export async function send(msg: UnifiedMessage, attachments: OutboundAttachment[
     if (data?.processQueryKey) receipts.push(String(data.processQueryKey));
   }
 
-  return { ok: true, mode: 'real', platformReply: receipts.join(',') || undefined };
+  return { ok: true, mode: 'real', platformReply: receipts.join(',') || undefined, identity: 'bot' };
 }
 
 export const dingtalkConnector: PlatformConnector = { verify, decrypt, receive, send, convert };
