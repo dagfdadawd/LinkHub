@@ -243,6 +243,11 @@ export interface UnifiedMessage {
    */
   receivedAs?: IdentityRole;
   /**
+   * 阅读状态：用户第一次在统一入口打开这条消息的时间（ISO）。
+   * 未设置 = 未读。与 status（业务流转）正交——「已同步」不代表「我看过」。
+   */
+  readAt?: string;
+  /**
    * 待办截止时间（ISO）。演示环境由服务端从正文做启发式推断（"明天 18:00"/"周三"/"12月3日"），
    * 解析不出就是 undefined —— 前端归入"未设置截止"，不伪造时间。
    */

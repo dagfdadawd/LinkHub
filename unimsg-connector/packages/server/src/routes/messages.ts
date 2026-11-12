@@ -122,5 +122,39 @@ export function messagesRouter(svc: MessageService) {
     }
   });
 
+  /**
+   * 阅读状态：POST /api/messages/:id/read 与 /unread。
+   * 返回完整消息，前端可直接 upsert（WS 也会广播同一条，幂等）。
+   */
+  r.post('/messages/read-all', async (req, res) => {
+    try {
+      // ids 可选：前端只想标记「当前筛选范围内」的未读时传入
+      const raw = (req.body ?? {}) as { ids?: unknown };
+      const ids = Array.isArray(raw.ids) ? raw.ids.filter((v): v is string => typeof v === 'string') : undefined;
+      const changed = await svc.markAllRead(ids);
+      res.json({ ok: true, changed });
+    } catch {
+      res.status(500).json({ ok: false, error: 'mark all read failed' });
+    }
+  });
+
+  r.post('/messages/:id/read', async (req, res) => {
+    try {
+      const message = await svc.markRead(req.params.id, true);
+      res.json({ ok: true, data: message });
+    } catch {
+      res.status(404).json({ ok: false, error: 'not found' });
+    }
+  });
+
+  r.post('/messages/:id/unread', async (req, res) => {
+    try {
+      const message = await svc.markRead(req.params.id, false);
+      res.json({ ok: true, data: message });
+    } catch {
+      res.status(404).json({ ok: false, error: 'not found' });
+    }
+  });
+
   return r;
 }

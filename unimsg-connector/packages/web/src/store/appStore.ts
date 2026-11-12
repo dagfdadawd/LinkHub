@@ -21,6 +21,8 @@ export interface Filters {
   type?: MsgType;
   keyword: string;
   onlyReview: boolean;
+  /** 只看未读（阅读状态，与业务状态正交） */
+  onlyUnread: boolean;
 }
 
 export interface AppState {
@@ -47,6 +49,7 @@ export const DEFAULT_FILTERS: Filters = {
   type: undefined,
   keyword: '',
   onlyReview: false,
+  onlyUnread: false,
 };
 
 export function filterMessages(messages: UnifiedMessage[], filters: Filters): UnifiedMessage[] {
@@ -56,6 +59,7 @@ export function filterMessages(messages: UnifiedMessage[], filters: Filters): Un
     if (filters.status && m.status !== filters.status) return false;
     if (filters.type && m.type !== filters.type) return false;
     if (filters.onlyReview && !m.needsReview) return false;
+    if (filters.onlyUnread && m.readAt) return false;
     if (keyword) {
       const hit =
         m.body.toLowerCase().includes(keyword) ||
@@ -177,6 +181,26 @@ export class AppStore {
   async markDone(id: string): Promise<void> {
     const updated = await this.api.markDone(id);
     this.upsert(updated);
+  }
+
+  /** 标记已读 / 未读：只更新阅读状态，不动业务状态 */
+  async markRead(id: string, read: boolean): Promise<void> {
+    const updated = await this.api.markRead(id, read);
+    this.upsert(updated);
+  }
+
+  /** 全部标为已读：可传 ids 只标记当前筛选范围；后端负责广播，这里同步本地避免闪烁 */
+  async markAllRead(ids?: string[]): Promise<number> {
+    const changed = await this.api.markAllRead(ids);
+    if (changed === 0) return 0;
+    const now = new Date().toISOString();
+    const scope = ids && ids.length > 0 ? new Set(ids) : undefined;
+    this.set({
+      messages: this.state.messages.map((m) =>
+        m.readAt || (scope && !scope.has(m.traceId)) ? m : { ...m, readAt: now },
+      ),
+    });
+    return changed;
   }
 
   getTrace(id: string) {

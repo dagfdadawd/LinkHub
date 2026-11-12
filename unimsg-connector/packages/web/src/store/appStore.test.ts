@@ -86,6 +86,8 @@ describe('AppStore', () => {
       }),
       dingtalkPersonalLogout: async () => Promise.resolve(),
       markDone: async () => Promise.reject(new Error('unused')),
+      markRead: async () => Promise.reject(new Error('unused')),
+      markAllRead: async () => 0,
       trace: async () => ({ data: [], log: [] }),
       accounts: async () => [],
       health: async () => ({ received: 0, deduped: 0, sent: 0, failed: 0, dlq: 0 }),
