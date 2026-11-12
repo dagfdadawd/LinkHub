@@ -1,13 +1,21 @@
 import { Router } from 'express';
-import { Platform, MsgStatus } from '@unimsg/shared';
+import { Platform, MsgStatus, type IdentityRole } from '@unimsg/shared';
 import { MessageService } from '../services/message';
 import { listAccounts } from '../services/account';
+import { IdentityUnavailableError } from '../services/identity';
 import {
   InvalidOutboundRequest,
   normalizeAttachments,
   normalizeCompose,
   sendCapabilities,
 } from '../services/outbound';
+
+/** 从请求体里取可选的发送身份（bot | user）；非法值返回错误信息 */
+function parseIdentity(raw: unknown): { value?: IdentityRole; error?: string } {
+  if (raw === undefined || raw === null || raw === '') return {};
+  if (raw === 'bot' || raw === 'user') return { value: raw };
+  return { error: 'identity 只能是 bot（机器人）或 user（本人账号）；不传则按平台当前策略' };
+}
 
 export function messagesRouter(svc: MessageService) {
   const r = Router();
@@ -44,13 +52,21 @@ export function messagesRouter(svc: MessageService) {
 
   // 异步回写：202 + 入队即返回 processing，结果经 WS 推送。
   // 文本与附件可同时携带；只有附件（没有文本）也是合法的一次回写。
+  // body 可选 identity: 'bot' | 'user'，不可用时 400 中文错误（绝不悄悄换身份）。
   r.post('/messages/:id/reply', async (req, res) => {
     let text: string;
     let attachments;
+    let identity: IdentityRole | undefined;
     try {
-      const body = (req.body ?? {}) as { text?: unknown; attachments?: unknown };
+      const body = (req.body ?? {}) as { text?: unknown; attachments?: unknown; identity?: unknown };
       text = typeof body.text === 'string' ? body.text.trim() : '';
       attachments = normalizeAttachments(body.attachments);
+      const parsed = parseIdentity(body.identity);
+      if (parsed.error) {
+        res.status(400).json({ ok: false, error: parsed.error });
+        return;
+      }
+      identity = parsed.value;
     } catch (e) {
       const msg = e instanceof InvalidOutboundRequest ? e.message : '请求体不合法';
       res.status(400).json({ ok: false, error: msg });
@@ -61,9 +77,14 @@ export function messagesRouter(svc: MessageService) {
       return;
     }
     try {
-      const ack = await svc.reply(req.params.id, text, attachments);
+      const ack = await svc.reply(req.params.id, text, attachments, identity);
       res.status(202).json({ ok: true, ...ack });
-    } catch {
+    } catch (e) {
+      // 身份不可用是可修复的入参问题 → 400（中文可操作）；消息不存在 → 404
+      if (e instanceof IdentityUnavailableError) {
+        res.status(400).json({ ok: false, error: e.message });
+        return;
+      }
       res.status(404).json({ ok: false, error: 'not found' });
     }
   });

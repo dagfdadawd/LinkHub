@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { App as AntApp } from 'antd';
+import type { PlatformIdentityView, UserIdentityStatus } from '@unimsg/shared';
 import { ComposeModal } from './ComposeModal';
 import { Platform } from '../../types';
 import { services, store } from '../../store';
@@ -14,6 +15,53 @@ function setup() {
     </AntApp>,
   );
   return { compose, onClose };
+}
+
+/** 模拟后端 /api/accounts 下发的飞书身份视图（两种身份可用 / 仅一种 / Mock） */
+function feishuIdentity(
+  patch: Partial<PlatformIdentityView> = {},
+  userPatch: Partial<UserIdentityStatus> = {},
+): PlatformIdentityView {
+  return {
+    policy: 'auto',
+    effectiveSend: 'user',
+    effectiveReceive: 'user',
+    user: {
+      state: 'linked',
+      linked: true,
+      displayName: '陈晓',
+      hint: '本人身份已连接',
+      canLink: true,
+      linkMethod: 'oauth',
+      ...userPatch,
+    },
+    botAvailable: true,
+    botHint: '机器人凭据齐全',
+    receiveHint: '本人身份：飞书用户轮询（20s）',
+    sendHint: '本人身份：user_access_token 发送',
+    ...patch,
+  };
+}
+
+function mockFeishuIdentity(identity: PlatformIdentityView) {
+  vi.spyOn(services.api, 'accounts').mockResolvedValue([
+    {
+      platform: Platform.FEISHU,
+      label: '飞书',
+      configured: true,
+      policy: 'auto',
+      mode: 'real',
+      canReceive: true,
+      canSend: true,
+      identity,
+    },
+  ]);
+}
+
+async function fillAndSend(conversationId = 'oc_demo_1', text = '请查收周报') {
+  fireEvent.change(screen.getByLabelText('目标会话'), { target: { value: conversationId } });
+  fireEvent.change(screen.getByLabelText('发送文本'), { target: { value: text } });
+  fireEvent.click(screen.getByTestId('compose-send'));
 }
 
 afterEach(() => vi.restoreAllMocks());
@@ -74,5 +122,88 @@ describe('ComposeModal（统一入口主动发送）', () => {
       mailAccount: '163',
       text: '请查收发件账号测试',
     });
+  });
+});
+
+describe('ComposeModal 发送身份（本人 / 机器人）', () => {
+  it('两种身份都可用：出现单选并默认跟随后端 effectiveSend（本人），提交 identity=user', async () => {
+    mockFeishuIdentity(feishuIdentity());
+    const { compose } = setup();
+
+    const userRadio = await screen.findByRole('radio', { name: /本人/ });
+    expect(userRadio).toBeChecked();
+    expect(screen.getByRole('radio', { name: '机器人' })).not.toBeChecked();
+    expect(screen.getByText(/默认跟随后端策略（当前是本人）/)).toBeInTheDocument();
+
+    await fillAndSend();
+    await waitFor(() => expect(compose).toHaveBeenCalledTimes(1));
+    expect(compose.mock.calls[0][0]).toMatchObject({
+      platform: Platform.FEISHU,
+      identity: 'user',
+    });
+  });
+
+  it('两种身份都可用：可手动改选机器人，提交 identity=bot', async () => {
+    mockFeishuIdentity(feishuIdentity());
+    const { compose } = setup();
+
+    expect(await screen.findByRole('radio', { name: /本人/ })).toBeChecked();
+    fireEvent.click(screen.getByRole('radio', { name: '机器人' }));
+
+    await fillAndSend();
+    await waitFor(() => expect(compose).toHaveBeenCalledTimes(1));
+    expect(compose.mock.calls[0][0]).toMatchObject({ identity: 'bot' });
+  });
+
+  it('只有机器人可用：不给单选，明确提示「只能以机器人身份发送」并提交 bot', async () => {
+    mockFeishuIdentity(
+      feishuIdentity(
+        { effectiveSend: 'bot', effectiveReceive: 'bot' },
+        { state: 'not_linked', linked: false, displayName: undefined, hint: '本人账号未连接，点击账号页连接。' },
+      ),
+    );
+    const { compose } = setup();
+
+    expect(await screen.findByText('机器人发送')).toBeInTheDocument();
+    expect(screen.queryByRole('radio')).toBeNull();
+    expect(screen.getByText(/当前只能以机器人身份发送/)).toBeInTheDocument();
+
+    await fillAndSend();
+    await waitFor(() => expect(compose).toHaveBeenCalledTimes(1));
+    expect(compose.mock.calls[0][0]).toMatchObject({ identity: 'bot' });
+  });
+
+  it('只有本人可用：不给单选，说明机器人通道不可用并提交 user', async () => {
+    mockFeishuIdentity(
+      feishuIdentity({ botAvailable: false, botHint: '机器人凭据缺失' }),
+    );
+    const { compose } = setup();
+
+    expect(await screen.findByText('本人发送')).toBeInTheDocument();
+    expect(screen.queryByRole('radio')).toBeNull();
+    expect(screen.getByText(/当前只能以本人身份发送/)).toBeInTheDocument();
+    expect(screen.getByText(/机器人凭据缺失/)).toBeInTheDocument();
+
+    await fillAndSend();
+    await waitFor(() => expect(compose).toHaveBeenCalledTimes(1));
+    expect(compose.mock.calls[0][0]).toMatchObject({ identity: 'user' });
+  });
+
+  it('平台整体 Mock：标「模拟发送」，不能选身份，提交时不带 identity', async () => {
+    mockFeishuIdentity(
+      feishuIdentity(
+        { effectiveSend: 'mock', effectiveReceive: 'mock' },
+        { state: 'unavailable', linked: false, canLink: false },
+      ),
+    );
+    const { compose } = setup();
+
+    expect(await screen.findByText('模拟发送')).toBeInTheDocument();
+    expect(screen.queryByRole('radio')).toBeNull();
+    expect(screen.getByText(/当前平台通道为 Mock 模拟/)).toBeInTheDocument();
+
+    await fillAndSend();
+    await waitFor(() => expect(compose).toHaveBeenCalledTimes(1));
+    expect(compose.mock.calls[0][0]).not.toHaveProperty('identity');
   });
 });

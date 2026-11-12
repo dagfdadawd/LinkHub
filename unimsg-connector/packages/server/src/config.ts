@@ -14,6 +14,7 @@
  */
 import 'dotenv/config';
 import { config as loadEnv } from 'dotenv';
+import { statSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Platform, type DeliveryMode } from '@unimsg/shared';
@@ -21,12 +22,14 @@ import {
   buildPlatformRuntime,
   DEFAULT_FEISHU_ACCOUNTS_BASE_URL,
   MODE_ENV_KEYS,
-  parseFeishuSendAs,
   parseMailAccounts,
   readPlatformCredentials,
+  resolveFeishuScopes,
+  resolveIdentityConfig,
   resolveLlmRuntime,
   resolveModePolicies,
   type FeishuSendAs,
+  type IdentityRuntimeConfig,
   type LlmRuntime,
   type MailAccount,
   type MailAccountIssue,
@@ -40,9 +43,25 @@ const here = dirname(fileURLToPath(import.meta.url));
 loadEnv({ path: resolve(here, '../../../.env') });
 loadEnv({ path: resolve(process.cwd(), '.env') });
 
+/** monorepo 根（unimsg-connector/）：.env、水位、doctor 工作目录等统一按它定位 */
+export const monorepoRoot = resolve(here, '../../..');
+
+/**
+ * 磁盘上 .env 的快照（只返回路径与修改时间，绝不返回内容）：
+ * 前端用它和服务启动时间对比，提示「.env 已修改，需重启后端生效」（P1-5）。
+ */
+export function envFileSnapshot(): { path: string; mtime: string } | null {
+  const path = resolve(monorepoRoot, '.env');
+  try {
+    return { path, mtime: statSync(path).mtime.toISOString() };
+  } catch {
+    return null;
+  }
+}
+
 export type LlmProvider = LlmRuntime['policy'];
 export type OcrProvider = 'mock' | 'tencent';
-export type { LlmRuntime, MailAccount, MailAccountIssue, ModePolicy, PlatformRuntime };
+export type { IdentityRuntimeConfig, LlmRuntime, MailAccount, MailAccountIssue, ModePolicy, PlatformRuntime };
 export { MODE_ENV_KEYS };
 
 function bool(v: string | undefined, def = false): boolean {
@@ -75,8 +94,12 @@ const runtime = buildPlatformRuntime({
 // 模式相关的全局警告（旧 MOCK 变量、非法 *_MODE 值等），启动日志与 doctor 会打印
 const modeWarnings = resolveModePolicies(process.env, { underTest }).warnings;
 
+// 身份能力配置（本人 / 机器人）：解析结果同时供账号页、启动日志、doctor、发送分流共用
+const identityConfig: IdentityRuntimeConfig = resolveIdentityConfig(process.env, modeWarnings);
+
 const port = Number(process.env.SERVER_PORT ?? 3001);
-const feishuSendAs: FeishuSendAs = parseFeishuSendAs(process.env.FEISHU_SEND_AS, modeWarnings);
+// 飞书发送身份沿用旧字段名（FeishuSendAs 与 IdentityPolicy 同构），由统一身份配置解析
+const feishuSendAs: FeishuSendAs = identityConfig.feishu.policy;
 
 const dataDir = (process.env.DATA_DIR ?? '').trim();
 
@@ -94,6 +117,15 @@ const feishuRedirectUri = (process.env.FEISHU_REDIRECT_URI ?? '').trim()
 if (!/^https?:\/\//i.test(feishuRedirectUri)) {
   modeWarnings.push(`FEISHU_REDIRECT_URI=${feishuRedirectUri} 不是 http(s) 地址；飞书 OAuth 回调必须与开放平台登记值完全一致`);
 }
+
+// 飞书本人身份接收的会话水位文件（已 gitignore）：默认 unimsg-connector/.feishu-user-receive.json，
+// 设了 DATA_DIR 时放进数据目录（容器重建后不漏消息）。
+const feishuUserStateRaw = (process.env.FEISHU_USER_STATE_FILE ?? '').trim();
+const feishuUserStateFile = feishuUserStateRaw
+  ? (isAbsolute(feishuUserStateRaw) ? feishuUserStateRaw : resolve(here, '../../../', feishuUserStateRaw))
+  : dataDir
+    ? join(dataDir, 'feishu-user-receive.json')
+    : resolve(here, '../../../.feishu-user-receive.json');
 
 // 入口令牌：空串不能当"未配置"处理——那会让鉴权中间件拿到空 token，
 // 历史上可能被误判成"跳过鉴权"。这里统一归一化：空 → dev-token + 启动警告。
@@ -191,6 +223,24 @@ export const config = {
   },
 
   /**
+   * 身份能力（本人账号 收 / 发）：
+   *  - policy：auto | bot | user（FEISHU_IDENTITY / DINGTALK_IDENTITY，飞书兼容旧 FEISHU_SEND_AS）；
+   *  - receive：auto | true | false（本人身份接收开关）；
+   *  - 飞书 stateFile：用户轮询的会话水位（重启不漏消息，已 gitignore）；
+   *  - 钉钉 bin/profile/timeout：dws 子进程调用参数（DWS_BIN 可指向 scripts/fake-dws.mjs 离线演示）。
+   */
+  identity: {
+    feishu: {
+      ...identityConfig.feishu,
+      stateFile: feishuUserStateFile,
+      tokenFile: feishuTokenFile,
+    },
+    dingtalk: {
+      ...identityConfig.dingtalk,
+    },
+  },
+
+  /**
    * 飞书用户身份（user_access_token）授权配置。
    * 令牌文件只存服务端，绝不下发前端；status/account/doctor 只读过期时间与状态。
    */
@@ -200,12 +250,16 @@ export const config = {
     tokenFile: feishuTokenFile,
     accountsBaseUrl: ((process.env.FEISHU_ACCOUNTS_BASE_URL ?? '').trim() || DEFAULT_FEISHU_ACCOUNTS_BASE_URL).replace(/\/+$/, ''),
     /** 用户身份权限 + offline_access（refresh_token 必需）；顺序固定，便于排错 */
-    scopes: ['im:message', 'im:message.send_as_user', 'im:resource', 'offline_access'],
+    // scope 必须与身份配置联动：本人接收开启时一并申请用户身份读消息权限，
+    // 否则授权后的 token 不带该权限，轮询会一直 99991672 且「重新授权」也修不好（契约 §0 平台事实）。
+    scopes: resolveFeishuScopes(identityConfig.feishu),
   },
 
   // 邮箱数据源：IMAP 轮询收信 + SMTP 回写。授权码只存服务端。可配任意数量/任意服务商。
   mail: {
     enabled: mailEnabled,
+    /** 用户是否显式设置了 MAIL_ENABLED（区分「用户关闭」与「没配账号」，避免误导日志） */
+    enabledExplicit: process.env.MAIL_ENABLED !== undefined,
     pollMs: Math.max(5, Number(process.env.MAIL_POLL_SECONDS ?? 45)) * 1000,
     accounts: mailParsed.accounts,
     issues: mailParsed.issues,

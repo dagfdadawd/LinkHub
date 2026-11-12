@@ -6,6 +6,8 @@ import type {
 import type {
   AccountInfo,
   DemoApi,
+  DingtalkLoginStart,
+  DingtalkPersonalStatus,
   FeishuOAuthStart,
   HealthInfo,
   MessageFilter,
@@ -109,7 +111,16 @@ export class MockApi implements DemoApi {
     window.setTimeout(() => {
       if (shouldFail) {
         this.metrics.failed += 1;
-        this.patch(id, { status: MsgStatus.FAILED }, 'failed', 'platform 500：重试 3 次仍失败，已写入死信队列');
+        this.patch(
+          id,
+          {
+            status: MsgStatus.FAILED,
+            // 与真实后端 failureReason 同语义：详情页直接展示可读原因，不用去回放里翻
+            failureReason: 'platform 500：重试 3 次仍失败，已写入死信队列',
+          },
+          'failed',
+          'platform 500：重试 3 次仍失败，已写入死信队列',
+        );
         return;
       }
       this.patch(
@@ -206,6 +217,22 @@ export class MockApi implements DemoApi {
     throw new Error('演示模式未接入真实后端，无法发起飞书用户授权');
   }
 
+  async dingtalkPersonalLogin(): Promise<DingtalkLoginStart> {
+    throw new Error('演示模式未接入真实后端，无法连接钉钉本人账号');
+  }
+
+  async dingtalkPersonalStatus(): Promise<DingtalkPersonalStatus> {
+    return {
+      available: false,
+      authenticated: false,
+      hint: '演示模式（纯前端 Mock）不连接本机 dws；启动真实后端并配置钉钉凭据后即可登录本人账号。',
+    };
+  }
+
+  async dingtalkPersonalLogout(): Promise<void> {
+    throw new Error('演示模式未接入真实后端，无需注销钉钉本人账号');
+  }
+
   async markDone(id: string): Promise<UnifiedMessage> {
     await this.wait();
     return this.patch(id, { done: true }, 'done');
@@ -219,11 +246,14 @@ export class MockApi implements DemoApi {
 
   async accounts(): Promise<AccountInfo[]> {
     await this.wait();
-    // 深拷贝到嵌套的邮箱账号 / 目录数组，避免调用方(或页面)修改返回值污染种子数据
+    // 深拷贝到嵌套的邮箱账号 / 目录数组 / 身份视图，避免调用方(或页面)修改返回值污染种子数据
     return ACCOUNTS.map((a) => ({
       ...a,
       missing: a.missing ? [...a.missing] : undefined,
       accounts: a.accounts?.map((m) => ({ ...m, folders: [...m.folders] })),
+      identity: a.identity
+        ? { ...a.identity, user: { ...a.identity.user } }
+        : undefined,
     }));
   }
 

@@ -16,6 +16,8 @@ import type {
 import type { TraceEntry, UnifiedMessage } from '../types';
 import type {
   AccountInfo,
+  DingtalkLoginStart,
+  DingtalkPersonalStatus,
   FeishuOAuthStart,
   HealthInfo,
   MessageApi,
@@ -118,6 +120,28 @@ export class HttpApi implements MessageApi {
     return body.data;
   }
 
+  async dingtalkPersonalLogin(): Promise<DingtalkLoginStart> {
+    // 后端会立即返回（后台拉起 dws 登录），不会阻塞 HTTP 线程
+    const body = await this.request<{ data?: DingtalkLoginStart }>(
+      '/api/dingtalk/personal/login',
+      { method: 'POST', body: '{}' },
+    );
+    if (!body.data) throw new ApiError('后端未返回钉钉登录指引', 0);
+    return body.data;
+  }
+
+  async dingtalkPersonalStatus(): Promise<DingtalkPersonalStatus> {
+    const body = await this.request<{ data?: DingtalkPersonalStatus }>(
+      '/api/dingtalk/personal/status',
+    );
+    if (!body.data) throw new ApiError('后端未返回钉钉身份状态', 0);
+    return body.data;
+  }
+
+  async dingtalkPersonalLogout(): Promise<void> {
+    await this.request('/api/dingtalk/personal/logout', { method: 'POST', body: '{}' });
+  }
+
   async markDone(id: string): Promise<UnifiedMessage> {
     // 后端只回 {ok:true}；完整消息同时经 WS 广播，这里重取一次作为兜底（幂等）
     await this.request(`/api/messages/${encodeURIComponent(id)}/done`, { method: 'POST', body: '{}' });
@@ -139,7 +163,7 @@ export class HttpApi implements MessageApi {
   }
 
   async health(): Promise<HealthInfo> {
-    // /api/health 为公共接口，返回 { ok, ts, received, deduped, sent, failed, dlq, sentMock? }
+    // /api/health 为公共接口，返回 { ok, ts, received, deduped, sent, failed, dlq, sentMock?, startedAt?, envFile? }
     const body = await this.request<Partial<HealthInfo>>('/api/health');
     return {
       received: body.received ?? 0,
@@ -149,6 +173,11 @@ export class HttpApi implements MessageApi {
       dlq: body.dlq ?? 0,
       // 仅在后端返回时透传：旧后端没有该字段时不要伪装成 0 次模拟发送
       ...(typeof body.sentMock === 'number' ? { sentMock: body.sentMock } : {}),
+      // 指标口径与「.env 改动需重启」提示依赖这两个字段；旧后端缺失时前端不提示
+      ...(typeof body.startedAt === 'string' ? { startedAt: body.startedAt } : {}),
+      ...(body.envFile === null || (body.envFile && typeof body.envFile === 'object')
+        ? { envFile: body.envFile as { path: string; mtime: string } | null }
+        : {}),
     };
   }
 

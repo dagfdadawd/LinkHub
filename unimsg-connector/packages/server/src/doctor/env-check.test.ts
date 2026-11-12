@@ -85,3 +85,27 @@ test('回归：.env.example 里出现的每个键（含注释示例）都必须�
   const unknown = keys.filter((k) => !isKnownEnvKey(k));
   assert.deepEqual(unknown, [], `这些 .env.example 键未被认作合法：${unknown.join(', ')}`);
 });
+
+
+test('拼写提示文案：不承诺"会回退 Mock"（取决于同平台其他变量）', () => {
+  const found = findSuspiciousEnvVars({ FEISHU_APPID: 'x' });
+  assert.equal(found.length, 1);
+  assert.match(found[0]!.reason, /不会被读取/);
+  assert.match(found[0]!.reason, /是否回退 Mock 取决于同平台其他变量/);
+  assert.ok(!/会静默回退 Mock/.test(found[0]!.reason));
+});
+
+test('身份能力新变量进入已知白名单（不会被误报为拼写错误）', () => {
+  for (const key of [
+    'FEISHU_IDENTITY', 'FEISHU_USER_RECEIVE', 'FEISHU_USER_RECEIVE_SECONDS',
+    'FEISHU_USER_CHAT_LIMIT', 'FEISHU_USER_BACKFILL_HOURS', 'FEISHU_USER_STATE_FILE',
+    'DINGTALK_IDENTITY', 'DINGTALK_USER_RECEIVE', 'DINGTALK_USER_EVENT_KINDS',
+    'DWS_BIN', 'DWS_PROFILE', 'DWS_AUTH_TIMEOUT_MS', 'DWS_SEND_TIMEOUT_MS',
+  ]) {
+    assert.equal(isKnownEnvKey(key), true, `${key} 应在已知变量白名单里`);
+  }
+  // 拼错的 DWS 变量仍能被提示
+  const typo = findSuspiciousEnvVars({ DWS_BINN: 'dws' });
+  assert.equal(typo.length, 1);
+  assert.equal(typo[0]!.suggestion, 'DWS_BIN');
+});

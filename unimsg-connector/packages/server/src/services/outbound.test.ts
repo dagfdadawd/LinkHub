@@ -113,3 +113,17 @@ test('sendCapabilities：四个平台都声明文本 + 文件能力并带上体�
     assert.ok(c.mode === 'mock' || c.mode === 'real');
   }
 });
+
+
+test('normalizeCompose 身份字段：只有飞书/钉钉可用 bot|user，其余平台或非法值 400 类错误', () => {
+  const feishu = normalizeCompose({ platform: 'feishu', text: 'hi', identity: 'user' });
+  assert.equal(feishu.identity, 'user');
+  const dingtalk = normalizeCompose({ platform: 'dingtalk', text: 'hi', identity: 'bot' });
+  assert.equal(dingtalk.identity, 'bot');
+  // 不传 / 空值 → undefined
+  assert.equal(normalizeCompose({ platform: 'feishu', text: 'hi' }).identity, undefined);
+  assert.equal(normalizeCompose({ platform: 'feishu', text: 'hi', identity: '' }).identity, undefined);
+  // 非法取值
+  assert.throws(() => normalizeCompose({ platform: 'feishu', text: 'hi', identity: 'robot' }), /identity 只能是 bot/);
+  assert.throws(() => normalizeCompose({ platform: 'wecom', text: 'hi', identity: 'user' }), /仅适用于飞书/);
+});

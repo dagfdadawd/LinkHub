@@ -11,7 +11,7 @@
  *     `/api/accounts`、启动日志、doctor 都直接消费它，绝不静默假装成功。
  *  3. 旧的全局 `MOCK` 降级为「未显式配置 *_MODE 时的默认策略」，并给出废弃警告。
  */
-import { Platform, type DeliveryMode } from '@unimsg/shared';
+import { IdentityPolicy, Platform, type DeliveryMode } from '@unimsg/shared';
 
 export type ModePolicy = 'auto' | 'real' | 'mock';
 
@@ -475,6 +475,8 @@ export interface RuntimeBuildInput {
   mailAccounts: MailAccount[];
   mailIssues: MailAccountIssue[];
   mailEnabled: boolean;
+  /** 用户是否显式设置了 MAIL_ENABLED（区分「用户关闭」与「没配账号」的文案） */
+  mailEnabledExplicit?: boolean;
   underTest?: boolean;
 }
 
@@ -560,10 +562,13 @@ function reasonFor(
   mode: DeliveryMode,
   cap: CapabilityResult,
   mailEnabled: boolean,
+  mailEnabledExplicit = false,
 ): string {
   const label = PLATFORM_LABELS[platform];
   if (platform === Platform.MAIL && policy === 'auto' && !mailEnabled && cap.configured) {
-    return 'MAIL_ENABLED=false：邮箱轮询已关闭 → 回退本地模拟（回写会标注"模拟发送"）';
+    return mailEnabledExplicit
+      ? 'MAIL_ENABLED=false：邮箱轮询已关闭 → 回退本地模拟（回写会标注"模拟发送"）'
+      : '邮箱轮询未启用（未配置任何账号 / 未显式开启 MAIL_ENABLED）→ 回退本地模拟（回写会标注"模拟发送"）';
   }
   if (mode === 'real') {
     if (policy === 'real') return `已显式指定 ${MODE_ENV_KEYS[platform]}=real，强制走真实接口`;
@@ -575,6 +580,18 @@ function reasonFor(
 }
 
 /** 由凭据 + 策略解析出每平台运行时画像（纯函数，供 config / 测试 / doctor 使用） */
+/**
+ * Mock 模式下把「已开启长连接」改成如实口径：配置了但当前不会真的连接。
+ * 否则账号页会同时显示「Mock 模拟」+「已开启长连接」，误导小白（frontend 联调反馈）。
+ */
+function mockModeWarnings(warnings: string[]): string[] {
+  return warnings.map((w) => {
+    if (!/已开启.*长连接/.test(w)) return w;
+    const channel = w.includes('飞书') ? '飞书长连接（FEISHU_STREAM）' : '钉钉 Stream 长连接（DINGTALK_STREAM）';
+    return `已配置${channel}，但当前为 Mock 模拟、不会实际连接`;
+  });
+}
+
 export function buildPlatformRuntime(input: RuntimeBuildInput): Record<Platform, PlatformRuntime> {
   const { policies } = resolveModePolicies(input.env, { underTest: input.underTest });
   const out = {} as Record<Platform, PlatformRuntime>;
@@ -599,8 +616,9 @@ export function buildPlatformRuntime(input: RuntimeBuildInput): Record<Platform,
       canReceive: cap.canReceive,
       canSend: cap.canSend,
       missing: cap.missing,
-      warnings: cap.warnings,
-      reason: reasonFor(platform, policy, mode, cap, input.mailEnabled),
+      // Mock 模式下「已开启长连接」是假话（实际不会连接），改成如实口径
+      warnings: mode === 'mock' ? mockModeWarnings(cap.warnings) : cap.warnings,
+      reason: reasonFor(platform, policy, mode, cap, input.mailEnabled, input.mailEnabledExplicit),
     };
   }
   return out;
@@ -711,5 +729,267 @@ export function resolveLlmRuntime(env: NodeJS.ProcessEnv): LlmRuntime {
     ready: true,
     missing: [],
     reason: `真实大模型已就绪：${model} @ ${endpoint}`,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 身份能力配置（本人账号 收 / 发，机器人保留兜底）
+// ---------------------------------------------------------------------------
+//
+// 设计原则与平台模式一致：纯函数解析，启动日志 / 账号页 / doctor / 发送路径
+// 共用同一份解析结果（单一事实来源），绝不各自读 env 各猜一套。
+//
+// 状态语义（任何情况下都如实标注，见 docs/personal-identity.md）：
+//  - policy=auto：已连接本人身份就用本人，否则机器人（升级不破坏现有行为）；
+//  - policy=bot ：固定机器人；
+//  - policy=user：固定本人，未连接/失效时显式报错，绝不悄悄回退。
+
+/** 本人身份接收开关：auto = 身份解析为本人时自动开启；true/false 强制开关 */
+export type ReceiveToggle = 'auto' | boolean;
+
+export const FEISHU_IDENTITY_ENV = 'FEISHU_IDENTITY';
+/** 旧变量（飞书发送身份），保留为别名：未写 FEISHU_IDENTITY 时继承并给废弃提示 */
+export const FEISHU_IDENTITY_ALIAS_ENV = 'FEISHU_SEND_AS';
+export const DINGTALK_IDENTITY_ENV = 'DINGTALK_IDENTITY';
+
+export const DEFAULT_FEISHU_USER_RECEIVE_SECONDS = 20;
+/** 轮询间隔下限：飞书按会话轮询，太快会撞平台限频，也毫无意义（无推送事件） */
+export const MIN_FEISHU_USER_RECEIVE_SECONDS = 5;
+export const DEFAULT_FEISHU_USER_CHAT_LIMIT = 20;
+export const MAX_FEISHU_USER_CHAT_LIMIT = 100;
+export const DEFAULT_FEISHU_USER_BACKFILL_HOURS = 0;
+export const MAX_FEISHU_USER_BACKFILL_HOURS = 720;
+export const DEFAULT_DWS_AUTH_TIMEOUT_MS = 15_000;
+export const DEFAULT_DWS_SEND_TIMEOUT_MS = 30_000;
+
+/**
+ * dws 个人事件监听意图（与 `dws event +listen-im --kind` 取值一致）。
+ * 说明：all-direct=全部单聊、at-me=@我、all-group=全部群消息。
+ * group（指定群）/ sender（指定发送人）需要额外目标参数（--chat-id / --user），
+ * LinkHub 目前不提供这些目标配置，因此**配置了也会被忽略并告警**，避免子进程反复失败重启。
+ */
+export const DINGTALK_EVENT_KINDS = ['at-me', 'sender', 'group', 'all-direct', 'all-group'] as const;
+export type DingtalkEventKind = (typeof DINGTALK_EVENT_KINDS)[number];
+/** LinkHub 实际能独立启动（不需要额外目标参数）的范围 */
+export const SUPPORTED_DINGTALK_EVENT_KINDS = ['at-me', 'all-direct', 'all-group'] as const;
+export const DEFAULT_DINGTALK_EVENT_KINDS: string[] = ['all-direct', 'at-me'];
+
+export interface FeishuIdentityConfig {
+  policy: IdentityPolicy;
+  /** FEISHU_USER_RECEIVE */
+  receive: ReceiveToggle;
+  /** 轮询间隔（毫秒，最小 5s） */
+  pollMs: number;
+  /** 每轮最多检查的会话数 */
+  chatLimit: number;
+  /** 首轮回溯小时数：0 = 只立基线不灌历史 */
+  backfillHours: number;
+}
+
+export interface DingtalkIdentityConfig {
+  policy: IdentityPolicy;
+  /** DINGTALK_USER_RECEIVE */
+  receive: ReceiveToggle;
+  /** 个人事件订阅范围（已归一化，顺序保留） */
+  eventKinds: string[];
+  /** DWS_BIN 原样保留（可带参数，如 `node scripts/fake-dws.mjs`） */
+  bin: string;
+  /** DWS_PROFILE */
+  profile: string;
+  authTimeoutMs: number;
+  sendTimeoutMs: number;
+}
+
+export interface IdentityRuntimeConfig {
+  feishu: FeishuIdentityConfig;
+  dingtalk: DingtalkIdentityConfig;
+}
+
+// ---------------------------------------------------------------------------
+// 飞书 OAuth scope（必须与「本人身份接收」能力联动，否则授权后仍读不到消息）
+// ---------------------------------------------------------------------------
+//
+// 血泪教训（verifier 静态发现）：读消息权限只在错误 hint 里提示、授权时没申请，
+// 用户 token 永远不带读消息权限 → 轮询一直 99991672 → hint 让"重新授权" → 授权 scope 不变 → 死循环。
+// 因此 scope 必须由身份配置动态生成：本人接收开启时一并申请读消息权限。
+
+/** 飞书发送/资源基础权限（本人身份发送用） */
+export const FEISHU_BASE_SCOPES = ['im:message', 'im:message.send_as_user', 'im:resource'] as const;
+/** 飞书「本人身份接收」额外权限（用户身份读消息） */
+export const FEISHU_USER_RECEIVE_SCOPES = [
+  'im:message.p2p_msg:get_as_user',
+  'im:message.group_msg:get_as_user',
+] as const;
+/** refresh_token 必需 */
+export const FEISHU_OFFLINE_SCOPE = 'offline_access';
+
+/**
+ * 生成本次授权要申请的完整 scope（空格分隔由 authorizeUrl 负责）。
+ *  - policy=bot 或 receive=false：只申请发送权限；
+ *  - 其它（auto/true 且非固定机器人）：额外申请用户身份读消息权限。
+ */
+export function resolveFeishuScopes(conf: Pick<FeishuIdentityConfig, 'policy' | 'receive'>): string[] {
+  const receive = conf.receive === true || (conf.receive === 'auto' && conf.policy !== 'bot');
+  return [
+    ...FEISHU_BASE_SCOPES,
+    ...(receive ? FEISHU_USER_RECEIVE_SCOPES : []),
+    FEISHU_OFFLINE_SCOPE,
+  ];
+}
+
+function identityPolicyValue(raw: string | undefined): IdentityPolicy | undefined {
+  const v = (raw ?? '').trim().toLowerCase();
+  if (v === 'auto' || v === 'bot' || v === 'user') return v;
+  return undefined;
+}
+
+/**
+ * 身份策略解析（含旧变量别名）。
+ * 优先级：FEISHU_IDENTITY > FEISHU_SEND_AS（别名，给废弃提示）> auto。
+ */
+export function parseIdentityPolicy(
+  raw: string | undefined,
+  envKey: string,
+  warnings: string[] = [],
+): IdentityPolicy {
+  const parsed = identityPolicyValue(raw);
+  if (parsed) return parsed;
+  if (raw !== undefined && raw.trim() !== '') {
+    warnings.push(`${envKey}=${raw} 不是合法值（auto/bot/user），已回退 auto`);
+  }
+  return 'auto';
+}
+
+/** 飞书身份策略：主变量优先，旧别名兜底（并明确提示已废弃） */
+export function parseFeishuIdentityPolicy(env: NodeJS.ProcessEnv, warnings: string[] = []): IdentityPolicy {
+  const rawMain = env[FEISHU_IDENTITY_ENV];
+  if (rawMain !== undefined && rawMain.trim() !== '') {
+    return parseIdentityPolicy(rawMain, FEISHU_IDENTITY_ENV, warnings);
+  }
+  const rawAlias = env[FEISHU_IDENTITY_ALIAS_ENV];
+  if (rawAlias !== undefined && rawAlias.trim() !== '') {
+    warnings.push(
+      `${FEISHU_IDENTITY_ALIAS_ENV} 已废弃：请改用 ${FEISHU_IDENTITY_ENV}=auto|bot|user（本次已按别名生效：${rawAlias.trim()}）`,
+    );
+    return parseIdentityPolicy(rawAlias, FEISHU_IDENTITY_ALIAS_ENV, warnings);
+  }
+  return 'auto';
+}
+
+/** 接收开关解析：auto（默认）/ true / false（兼容 1/0/yes/no/on/off） */
+export function parseReceiveToggle(
+  raw: string | undefined,
+  envKey: string,
+  warnings: string[] = [],
+): ReceiveToggle {
+  const v = (raw ?? '').trim().toLowerCase();
+  if (!v || v === 'auto') return 'auto';
+  if (['true', '1', 'yes', 'on'].includes(v)) return true;
+  if (['false', '0', 'no', 'off'].includes(v)) return false;
+  warnings.push(`${envKey}=${raw} 不是合法值（auto/true/false），已回退 auto`);
+  return 'auto';
+}
+
+/**
+ * 事件范围解析：逗号/分号/空白分隔，去重保序；非法值警告并忽略；
+ * group / sender 需要 dws 目标参数，当前不支持 → 警告并忽略（否则子进程会反复退出重启）；
+ * 全部不可用时回退默认（all-direct,at-me），绝不因为配置写错就静默不收消息。
+ */
+export function parseDingtalkEventKinds(
+  raw: string | undefined,
+  warnings: string[] = [],
+): string[] {
+  const items = (raw ?? '')
+    .split(/[,;\s]+/)
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  if (items.length === 0) return [...DEFAULT_DINGTALK_EVENT_KINDS];
+  const out: string[] = [];
+  for (const item of items) {
+    if (!(DINGTALK_EVENT_KINDS as readonly string[]).includes(item)) {
+      warnings.push(`DINGTALK_USER_EVENT_KINDS 含未知范围 "${item}"（可选：${SUPPORTED_DINGTALK_EVENT_KINDS.join(' / ')}），已忽略`);
+      continue;
+    }
+    if (item === 'group' || item === 'sender') {
+      warnings.push(
+        `DINGTALK_USER_EVENT_KINDS 的 "${item}" 需要 dws 目标参数（--chat-id / --user），LinkHub 暂不支持，已忽略；`
+        + `请改用 ${SUPPORTED_DINGTALK_EVENT_KINDS.join(' / ')}`,
+      );
+      continue;
+    }
+    if (!out.includes(item)) out.push(item);
+  }
+  return out.length > 0 ? out : [...DEFAULT_DINGTALK_EVENT_KINDS];
+}
+
+/**
+ * 解析整数并夹到 [min, max]。
+ * 关键：**空串/未设置必须回退 fallback** —— Number('') === 0 是有限数，
+ * 旧实现会把「没配」当成「配了 0」再夹到 min（轮询间隔变 5s、dws 超时变 1s），
+ * 在「无 .env / 只配本人身份」的最小配置场景直接让功能异常（verifier P0）。
+ * 显式的 '0' 是真实值，仍按 min 夹取。
+ */
+function clampInt(raw: string | undefined, fallback: number, min: number, max: number): number {
+  const text = (raw ?? '').trim();
+  if (!text) return fallback;
+  const n = Number(text);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, Math.floor(n)));
+}
+
+/** 解析身份能力全部配置（纯函数，供 config.ts / 测试共用） */
+export function resolveIdentityConfig(
+  env: NodeJS.ProcessEnv,
+  warnings: string[] = [],
+): IdentityRuntimeConfig {
+  const feishuPolicy = parseFeishuIdentityPolicy(env, warnings);
+  const dingtalkPolicy = parseIdentityPolicy(env[DINGTALK_IDENTITY_ENV], DINGTALK_IDENTITY_ENV, warnings);
+
+  const receiveSeconds = clampInt(
+    env.FEISHU_USER_RECEIVE_SECONDS,
+    DEFAULT_FEISHU_USER_RECEIVE_SECONDS,
+    MIN_FEISHU_USER_RECEIVE_SECONDS,
+    // 1 天：再大就没有"轮询"的意义了，用户应改用机器人通道
+    86_400,
+  );
+  if (env.FEISHU_USER_RECEIVE_SECONDS !== undefined) {
+    const raw = Number(env.FEISHU_USER_RECEIVE_SECONDS);
+    if (Number.isFinite(raw) && raw < MIN_FEISHU_USER_RECEIVE_SECONDS) {
+      warnings.push(
+        `FEISHU_USER_RECEIVE_SECONDS=${env.FEISHU_USER_RECEIVE_SECONDS} 过小，已按最小值 ${MIN_FEISHU_USER_RECEIVE_SECONDS}s 生效（飞书轮询过快会撞限频）`,
+      );
+    }
+  }
+
+  const bin = (env.DWS_BIN ?? '').trim() || 'dws';
+  const profile = (env.DWS_PROFILE ?? '').trim();
+
+  return {
+    feishu: {
+      policy: feishuPolicy,
+      receive: parseReceiveToggle(env.FEISHU_USER_RECEIVE, 'FEISHU_USER_RECEIVE', warnings),
+      pollMs: receiveSeconds * 1000,
+      chatLimit: clampInt(
+        env.FEISHU_USER_CHAT_LIMIT,
+        DEFAULT_FEISHU_USER_CHAT_LIMIT,
+        1,
+        MAX_FEISHU_USER_CHAT_LIMIT,
+      ),
+      backfillHours: clampInt(
+        env.FEISHU_USER_BACKFILL_HOURS,
+        DEFAULT_FEISHU_USER_BACKFILL_HOURS,
+        0,
+        MAX_FEISHU_USER_BACKFILL_HOURS,
+      ),
+    },
+    dingtalk: {
+      policy: dingtalkPolicy,
+      receive: parseReceiveToggle(env.DINGTALK_USER_RECEIVE, 'DINGTALK_USER_RECEIVE', warnings),
+      eventKinds: parseDingtalkEventKinds(env.DINGTALK_USER_EVENT_KINDS, warnings),
+      bin,
+      profile,
+      authTimeoutMs: clampInt(env.DWS_AUTH_TIMEOUT_MS, DEFAULT_DWS_AUTH_TIMEOUT_MS, 1_000, 120_000),
+      sendTimeoutMs: clampInt(env.DWS_SEND_TIMEOUT_MS, DEFAULT_DWS_SEND_TIMEOUT_MS, 1_000, 600_000),
+    },
   };
 }

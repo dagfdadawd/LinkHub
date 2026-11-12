@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { conversationLabel, deliveryLabel, formatRelative, initials, shortTrace, sortMessages } from './format';
+import {
+  conversationLabel,
+  deliveryLabel,
+  formatRelative,
+  initials,
+  receivedIdentityLabel,
+  sendIdentityLabel,
+  shortTrace,
+  sortMessages,
+} from './format';
 import { MsgStatus, Platform } from '../types';
 import type { UnifiedMessage } from '../types';
 
@@ -41,7 +50,7 @@ describe('format utils', () => {
     expect(sortMessages([old, fresh, older]).map((m) => m.traceId)).toEqual(['b', 'a', 'c']);
   });
 
-  it('投递方式：真实 / Mock / 无（Mock 必须醒目标注）', () => {
+  it('投递方式：真实 / Mock / 无（Mock 必须醒目标注），真实回写带上身份', () => {
     const at = new Date().toISOString();
     expect(deliveryLabel(undefined)).toEqual({ text: '—', kind: 'none' });
     expect(deliveryLabel({ mode: 'mock', at })).toEqual({
@@ -53,6 +62,27 @@ describe('format utils', () => {
       kind: 'real',
     });
     expect(deliveryLabel({ mode: 'real', at })).toEqual({ text: '真实接口', kind: 'real' });
+    // 真实回写：必须写清是本人还是机器人发的，不能含糊
+    expect(deliveryLabel({ mode: 'real', identity: 'user', platformReply: 'om_123', at })).toEqual({
+      text: '本人发送 · 真实接口（om_123）',
+      kind: 'real',
+    });
+    expect(deliveryLabel({ mode: 'real', identity: 'bot', at })).toEqual({
+      text: '机器人发送 · 真实接口',
+      kind: 'real',
+    });
+  });
+
+  it('接收/发送身份文案：本人 / 机器人；Mock 只写模拟发送；没有身份不虚构', () => {
+    expect(receivedIdentityLabel('user')).toBe('本人账号接收');
+    expect(receivedIdentityLabel('bot')).toBe('机器人接收');
+    expect(receivedIdentityLabel(undefined)).toBeUndefined();
+    expect(sendIdentityLabel(undefined)).toBeUndefined();
+    expect(sendIdentityLabel({ mode: 'mock', at: new Date().toISOString() })).toBe('模拟发送');
+    expect(sendIdentityLabel({ mode: 'real', identity: 'user', at: new Date().toISOString() })).toBe('本人发送');
+    expect(sendIdentityLabel({ mode: 'real', identity: 'bot', at: new Date().toISOString() })).toBe('机器人发送');
+    // 旧数据/旧后端没有 delivery.identity：不猜身份
+    expect(sendIdentityLabel({ mode: 'real', at: new Date().toISOString() })).toBeUndefined();
   });
 
   it('会话类型：群聊带群名 / 群聊无群名 / 单聊 / 无会话', () => {

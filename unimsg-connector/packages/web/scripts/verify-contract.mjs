@@ -187,6 +187,54 @@ async function main() {
     );
   }
 
+  // 5.1 本人身份视图（飞书 / 钉钉）：账号页身份块直接渲染这份数据，
+  // 字段缺失或枚举漂移会让「谁在收、谁在发」显示空白/错误。
+  const IDENTITY_FIELDS = [
+    'policy', 'effectiveSend', 'effectiveReceive', 'user',
+    'botAvailable', 'botHint', 'receiveHint', 'sendHint',
+  ];
+  const USER_FIELDS = ['state', 'linked', 'hint', 'canLink', 'linkMethod'];
+  for (const platform of ['feishu', 'dingtalk']) {
+    const account = accountList.find((a) => a.platform === platform);
+    const identity = account?.identity;
+    check(`accounts.${platform} 含 identity 身份视图`, Boolean(identity));
+    if (!identity) continue;
+    for (const field of IDENTITY_FIELDS) {
+      check(`accounts.${platform}.identity 含 ${field}`, field in identity);
+    }
+    check(
+      `accounts.${platform}.identity.effectiveSend ∈ user|bot|mock`,
+      ['user', 'bot', 'mock'].includes(identity.effectiveSend),
+      String(identity.effectiveSend),
+    );
+    check(
+      `accounts.${platform}.identity.effectiveReceive ∈ user|bot|mock`,
+      ['user', 'bot', 'mock'].includes(identity.effectiveReceive),
+      String(identity.effectiveReceive),
+    );
+    for (const field of USER_FIELDS) {
+      check(`accounts.${platform}.identity.user 含 ${field}`, field in (identity.user ?? {}));
+    }
+    // Mock 平台不得声称本人/机器人真实通道（契约 §1）
+    if (account.mode === 'mock') {
+      check(
+        `accounts.${platform} Mock 模式 effectiveSend/Receive 均为 mock`,
+        identity.effectiveSend === 'mock' && identity.effectiveReceive === 'mock',
+      );
+    }
+  }
+
+  // 5.2 钉钉本人身份登录状态（只读，不触发登录）：账号页 2s 轮询依赖它
+  const dtStatus = await req('GET', '/api/dingtalk/personal/status');
+  check(
+    'GET /api/dingtalk/personal/status → {ok, data:{available,authenticated,hint}}',
+    dtStatus.status === 200 &&
+      dtStatus.data?.ok === true &&
+      typeof dtStatus.data?.data?.available === 'boolean' &&
+      typeof dtStatus.data?.data?.authenticated === 'boolean' &&
+      typeof dtStatus.data?.data?.hint === 'string',
+  );
+
   if (!id) return;
 
   // 6. reply 202 回执（HttpApi.reply 依赖 message + taskId）

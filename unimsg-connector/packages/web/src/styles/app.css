@@ -705,13 +705,26 @@ button {
 }
 
 .rail-status {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 28px;
+  min-height: 28px;
+  padding: 5px 2px 4px;
   border-radius: var(--r-10);
   cursor: default;
   transition: background-color var(--dur-fast) var(--ease-out);
+}
+
+/* 可见短文案：小白看不到 aria-label，断线/在线至少对称可读 */
+.rail-status__text {
+  font-size: 0.625rem;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+  color: var(--text-3);
+  white-space: nowrap;
 }
 
 .rail-status:hover {
@@ -740,6 +753,19 @@ button {
 
 .rail-status--pending .rail-status__dot {
   animation: pulse 2.4s var(--ease-out) infinite;
+}
+
+.rail-status--ok .rail-status__text {
+  color: var(--success-ink);
+}
+
+.rail-status--error .rail-status__text {
+  color: var(--danger);
+}
+
+.rail-status--pending .rail-status__text,
+.rail-status--demo .rail-status__text {
+  color: var(--warning);
 }
 
 /* 数据加载错误 Alert：错误信息 + 排查清单两行 */
@@ -4156,4 +4182,487 @@ html.vt-morph .detail {
   margin-top: 6px;
   color: var(--text-3);
   font-size: 0.75rem;
+}
+
+/* ---------------- 本人身份（谁在收 / 谁在发） ----------------
+   小白用户先看结论再看原因：两行「接收 / 发送」Tag + 一句人话说明。
+   身份色相与 components/IdentityTag 一致：本人=绿、机器人=蓝、模拟=橙。 */
+
+.accounts-intro {
+  margin: -6px 0 18px;
+  max-width: 78ch;
+  font-size: 0.8125rem;
+  line-height: 1.7;
+  color: var(--text-2);
+}
+
+.accounts-intro strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.identity-tag {
+  margin-inline-end: 0;
+  padding: 0 7px;
+  font-size: 0.6875rem;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.identity-block {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-10);
+  background: var(--surface-2);
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.identity-block__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.identity-block__title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.identity-block__policy {
+  margin-left: auto;
+  font-size: 0.6563rem;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.identity-block__rows {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.identity-block__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.identity-block__row-label {
+  flex: none;
+  width: 2rem;
+  padding-top: 1px;
+  font-size: 0.75rem;
+  color: var(--text-3);
+}
+
+.identity-block__row-text {
+  flex: 1 1 10rem;
+  min-width: 0;
+  font-size: 0.75rem;
+  line-height: 1.55;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.identity-block__why {
+  padding: 8px 10px;
+  border-radius: var(--r-8);
+  background: var(--brand-soft);
+  font-size: 0.75rem;
+  line-height: 1.6;
+  color: var(--brand-ink);
+}
+
+.identity-block__hint {
+  font-size: 0.75rem;
+  line-height: 1.6;
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+
+.identity-block__hint--warn {
+  color: var(--warning);
+}
+
+.identity-block__linked {
+  font-size: 0.75rem;
+  line-height: 1.55;
+  color: var(--success-ink);
+  overflow-wrap: anywhere;
+}
+
+.identity-block__bot {
+  font-size: 0.6875rem;
+  line-height: 1.55;
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+
+.identity-block__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+/* 回放页摘要里的身份标签 */
+.trace-summary__identity {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+/* 详情页回复框上方的「本次回复身份」提示 */
+.composer__identity {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 8px;
+  font-size: 0.75rem;
+  color: var(--text-3);
+}
+
+.composer__identity-hint {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* 新建发送：发送身份单选 */
+.compose-identity {
+  display: grid;
+  gap: 6px;
+}
+
+.compose-identity .ant-radio-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+}
+
+/* ---------------- 钉钉「连接本人账号」引导弹窗 ---------------- */
+
+.personal-modal__why,
+.personal-modal__steps {
+  margin: 0;
+  padding-left: 1.125rem;
+  display: grid;
+  gap: 8px;
+  font-size: 0.8125rem;
+  line-height: 1.65;
+  color: var(--text-2);
+}
+
+.personal-modal__why strong {
+  color: var(--text);
+}
+
+.personal-modal__line {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+  font-size: 0.8125rem;
+  color: var(--text-2);
+}
+
+.personal-modal__cmd.ant-typography,
+.personal-modal__link.ant-typography {
+  margin: 0;
+  max-width: 100%;
+  font-size: 0.75rem;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.personal-modal__link.ant-typography {
+  color: var(--brand-ink);
+}
+
+.personal-modal__hint {
+  font-size: 0.75rem;
+  line-height: 1.6;
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+
+.personal-modal__start {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-10);
+  background: var(--surface-2);
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.personal-modal__start-title {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.personal-modal__start-text {
+  font-size: 0.8125rem;
+  line-height: 1.65;
+  color: var(--text-2);
+}
+
+.personal-modal__code.ant-typography {
+  font-size: 1.0625rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+
+.personal-modal__waiting {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.75rem;
+  color: var(--brand-ink);
+}
+
+.personal-modal__pulse {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--brand);
+  animation: identity-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes identity-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 0.35;
+    transform: scale(0.7);
+  }
+}
+
+.personal-modal__linked {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.personal-modal__linked-name {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.personal-modal__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+@media (max-width: 640px) {
+  .accounts-intro {
+    font-size: 0.8125rem;
+  }
+
+  /* 窄屏：策略名不挤占标题行 */
+  .identity-block__policy {
+    margin-left: 0;
+  }
+
+  .personal-modal__actions .ant-btn {
+    flex: 1 1 auto;
+  }
+}
+
+/* ============================================================
+   小白卡点修复（P1-1 / P1-3 / P1-5 / P1-6 / P2-2 / P2-4）
+   —— 空态说明、自检入口、重启提示、授权反馈、失败提示
+   ============================================================ */
+
+/* 空收件箱：告诉用户「点下去会发生什么」，不再只是几颗像筛选标签的胶囊 */
+.quickstart__hint {
+  margin: -6px 0 2px;
+  max-width: 34rem;
+  font-size: 0.7813rem;
+  line-height: 1.6;
+  color: var(--text-3);
+  text-align: center;
+}
+
+.quickstart__chip--accent {
+  background: var(--brand-soft);
+  color: var(--brand-ink);
+  box-shadow: inset 0 0 0 1px var(--brand-line), var(--shadow-sm);
+}
+
+.quickstart__chip--accent:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--brand-soft) 72%, var(--brand) 10%);
+  color: var(--brand-ink);
+}
+
+/* 账号页：真实模式「未验证」自检入口 */
+.accounts-intro + .accounts-intro {
+  margin-top: -12px;
+}
+
+.account-card__verify {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--r-8);
+  background: var(--surface-2);
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.account-card__verify-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--warning);
+}
+
+.account-card__verify-line .anticon {
+  margin-top: 2px;
+  flex: none;
+}
+
+.account-card__doctor.ant-typography {
+  justify-self: start;
+  max-width: 100%;
+  font-size: 0.7188rem;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* 账号页顶部提示（.env 需重启 / 飞书授权未完成） */
+.accounts-alert {
+  margin: 0 0 16px;
+}
+
+.accounts-alert__detail {
+  display: grid;
+  gap: 8px;
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.accounts-alert__row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.accounts-alert__muted {
+  font-size: 0.75rem;
+  color: var(--text-3);
+}
+
+.accounts-alert__copy.ant-typography {
+  font-size: 0.75rem;
+}
+
+.accounts-alert__steps {
+  font-size: 0.75rem;
+  color: var(--text-2);
+  line-height: 1.6;
+}
+
+.accounts-alert__steps summary {
+  cursor: pointer;
+  color: var(--brand-ink);
+}
+
+.accounts-alert__steps ul {
+  margin: 8px 0 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: 4px;
+}
+
+.accounts-alert__steps li {
+  overflow-wrap: anywhere;
+}
+
+/* 指标口径：发送共 N（真实 A / 模拟 B） */
+.metric-card__note {
+  font-size: 0.6563rem;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+/* 发送失败 toast：一句可读原因 + 查看详情 */
+.failure-toast {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-width: min(70vw, 34rem);
+}
+
+.failure-toast__link.ant-btn {
+  height: auto;
+  padding: 0 2px;
+  font-size: 0.8125rem;
+}
+
+/* 详情页失败区：可读原因 + 重试 */
+.detail__fail {
+  display: grid;
+  gap: 8px;
+}
+
+.detail__fail-reason {
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.detail__fail-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.detail__fail-hint {
+  font-size: 0.75rem;
+  color: var(--text-3);
+}
+
+@media (max-width: 640px) {
+  .accounts-alert .ant-alert-action {
+    margin-inline-start: 0;
+    margin-top: 8px;
+  }
+
+  .accounts-alert .ant-alert {
+    flex-wrap: wrap;
+  }
+
+  .failure-toast {
+    max-width: 78vw;
+  }
 }

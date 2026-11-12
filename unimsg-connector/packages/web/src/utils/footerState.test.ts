@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { footerState } from './footerState';
+import { footerShortLabel, footerState } from './footerState';
 
 describe('footerState 页脚状态映射', () => {
   it('Mock 演示模式：保持「前端演示模式 · 未接后端」', () => {
@@ -46,5 +46,13 @@ describe('footerState 页脚状态映射', () => {
 
   it('Mock 模式不会被后端错误污染（演示模式不发请求）', () => {
     expect(footerState(true, 'connected', 'should-not-happen').tone).toBe('demo');
+  });
+
+  it('可见短文案与断线状态对称（不再只有一颗绿点）', () => {
+    expect(footerShortLabel(footerState(true, 'offline', null))).toBe('演示');
+    expect(footerShortLabel(footerState(false, 'connected', null))).toBe('已连接');
+    expect(footerShortLabel(footerState(false, 'reconnecting', null))).toBe('重连中');
+    expect(footerShortLabel(footerState(false, 'offline', null))).toBe('未连接');
+    expect(footerShortLabel(footerState(false, 'connected', '请求超时'))).toBe('异常');
   });
 });

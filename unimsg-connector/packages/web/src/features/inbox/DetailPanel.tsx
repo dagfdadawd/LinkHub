@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Alert, App as AntApp, Button, Tag, Tooltip } from 'antd';
 import {
@@ -9,14 +9,17 @@ import {
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   PaperClipOutlined,
+  ReloadOutlined,
   SendOutlined,
 } from '@ant-design/icons';
 import { MsgStatus } from '../../types';
 import type { OutboundAttachment, UnifiedMessage } from '../../types';
 import { formatBytes } from '../../utils/attachments';
 import { store } from '../../store';
+import { useAppState } from '../../hooks/useAppState';
 import { TYPE_LABEL, PLATFORM_META, deliveryLabel, conversationLabel, formatDateTime, formatRelative, shortTrace } from '../../utils/format';
 import { AvatarBadge } from '../../components/AvatarBadge';
+import { IdentityTag } from '../../components/IdentityTag';
 import { PlatformTag } from '../../components/PlatformTag';
 import { StatusBadge } from '../../components/StatusBadge';
 import { AiSuggestion } from './AiSuggestion';
@@ -38,17 +41,36 @@ export function DetailPanel({
   const navigate = useNavigate();
   const { message: toast } = AntApp.useApp();
   const prefs = usePreferences();
+  const state = useAppState();
   const [text, setText] = useState(message.replyDraft ?? '');
   const [sending, setSending] = useState(false);
+  /** 发送成功后短暂冷却：清空输入框 + 禁用按钮，避免手滑把同一内容再发一次（P2-2） */
+  const [cooldown, setCooldown] = useState(false);
+  const cooldownTimer = useRef<number>();
 
   useEffect(() => {
     setText(message.replyDraft ?? '');
     setSending(false);
+    setCooldown(false);
+    window.clearTimeout(cooldownTimer.current);
+    return () => window.clearTimeout(cooldownTimer.current);
   }, [message.traceId, message.replyDraft]);
 
   const canMarkDone = !message.done;
-  // 投递方式：Mock 必须如实标注，不能显示成真实平台已收到
+  // 投递方式：Mock 必须如实标注，不能显示成真实平台已收到；真实回写带身份时一并展示
   const delivery = deliveryLabel(message.delivery);
+  // 回复将以哪种身份发出（来自账号页身份视图；Mock 平台整体显示模拟）
+  const account = state.accounts.find((a) => a.platform === message.platform);
+  const replyIdentity = account?.mode === 'mock'
+    ? 'mock'
+    : account?.identity?.effectiveSend;
+  const replyIdentityHint = replyIdentity === 'user'
+    ? '以你本人账号发出'
+    : replyIdentity === 'bot'
+      ? '以机器人身份发出（本人账号未连接时自动兜底）'
+      : replyIdentity === 'mock'
+        ? 'Mock 模拟，不会真的发到平台'
+        : '';
 
   async function handleSend(attachments: OutboundAttachment[] = []) {
     const content = text.trim();
@@ -56,13 +78,37 @@ export function DetailPanel({
     setSending(true);
     try {
       await store.reply(message.traceId, content, attachments);
+      // P1-2：「已提交」不等于「已发出」——异步发送结果会经 WS 回流，文案不要写成成功口吻
       toast.success(
         attachments.length > 0
-          ? `已提交回写（含 ${attachments.length} 个附件），状态将实时更新`
-          : '已提交回写，状态将实时更新',
+          ? `已提交，正在发送（含 ${attachments.length} 个附件）…状态会在消息里实时更新`
+          : '已提交，正在发送…状态会在消息里实时更新',
       );
-    } catch {
-      toast.error('回复失败，请重试');
+      // P2-2：清空输入框 + 2 秒防重复，避免手滑再点一次重复打扰对方
+      setText('');
+      setCooldown(true);
+      window.clearTimeout(cooldownTimer.current);
+      cooldownTimer.current = window.setTimeout(() => setCooldown(false), 2000);
+    } catch (e) {
+      toast.error(e instanceof Error ? `发送失败：${e.message}` : '发送失败，请重试');
+    } finally {
+      setSending(false);
+    }
+  }
+
+  /** 失败消息重试：用同一条回复内容再走一次回写，不要求用户改文案（P1-2） */
+  const retryContent = message.reply?.trim() ?? '';
+  const retryBlockedByAttachments = Boolean(message.attachments && message.attachments.length > 0);
+  const canRetry = retryContent.length > 0 && !retryBlockedByAttachments;
+
+  async function handleRetry(): Promise<void> {
+    if (!canRetry || sending) return;
+    setSending(true);
+    try {
+      await store.reply(message.traceId, retryContent);
+      toast.success('已重新提交，正在重试…成功/失败会实时更新');
+    } catch (e) {
+      toast.error(e instanceof Error ? `重试失败：${e.message}` : '重试失败，请稍后再试');
     } finally {
       setSending(false);
     }
@@ -159,8 +205,42 @@ export function DetailPanel({
             className="detail__alert"
             type="error"
             showIcon
-            message="回写失败，已写入死信队列"
-            description="可修改内容后再次发送；生产环境会按指数退避重试 3 次。"
+            message="发送失败（已写入死信队列）"
+            description={
+              <div className="detail__fail">
+                <div className="detail__fail-reason">
+                  {message.failureReason
+                    ? `原因：${message.failureReason}`
+                    : '暂未拿到可读原因，点「查看闭环日志」可看到完整错误。'}
+                </div>
+                <div className="detail__fail-actions">
+                  <Button
+                    size="small"
+                    type="primary"
+                    icon={<ReloadOutlined />}
+                    loading={sending}
+                    disabled={!canRetry}
+                    onClick={() => void handleRetry()}
+                    data-testid="retry-send"
+                  >
+                    重试发送
+                  </Button>
+                  <Button
+                    size="small"
+                    onClick={() => navigate(`/trace/${message.traceId}`)}
+                  >
+                    查看闭环日志
+                  </Button>
+                  {!canRetry && (
+                    <span className="detail__fail-hint">
+                      {retryBlockedByAttachments
+                        ? '含附件的失败消息请在下方回复框重新附加文件后发送'
+                        : '这条消息没有可重试的回复内容'}
+                    </span>
+                  )}
+                </div>
+              </div>
+            }
           />
         )}
 
@@ -237,6 +317,22 @@ export function DetailPanel({
               <dt>更新时间</dt>
               <dd>{formatDateTime(message.updatedAt)}</dd>
             </div>
+            <div>
+              <dt>接收身份</dt>
+              <dd
+                title={
+                  message.receivedAs
+                    ? '这条消息进入 LinkHub 时实际使用的身份'
+                    : '这条消息未记录接收身份（Mock / 演示消息或旧数据），不冒充真实接收'
+                }
+              >
+                {message.receivedAs ? (
+                  <IdentityTag role={message.receivedAs} action="receive" />
+                ) : (
+                  '—'
+                )}
+              </dd>
+            </div>
             <div className="meta-grid__wide">
               <dt>投递方式</dt>
               <dd title={delivery.kind === 'none' ? undefined : delivery.text}>
@@ -256,10 +352,18 @@ export function DetailPanel({
       </div>
 
       <footer className="detail__footer">
+        {replyIdentity && (
+          <div className="composer__identity" data-testid="reply-identity">
+            <span className="composer__identity-label">本次回复</span>
+            <IdentityTag role={replyIdentity} action="send" />
+            <span className="composer__identity-hint">{replyIdentityHint}</span>
+          </div>
+        )}
         <ReplyComposer
           message={message}
           value={text}
           sending={sending}
+          sendDisabled={cooldown}
           onChange={setText}
           onSend={handleSend}
         />

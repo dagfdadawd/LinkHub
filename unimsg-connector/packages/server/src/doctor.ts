@@ -15,9 +15,10 @@ import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Platform } from '@unimsg/shared';
-import { config } from './config';
+import { config, monorepoRoot } from './config';
 import { mailAccountSummary } from './config/runtime';
 import { feishuUserAuth } from './connectors/feishuUserAuth';
+import { receiveEnabled } from './services/identity';
 import { runProbes, PROBE_TIMEOUT_MS, type ProbeInput } from './doctor/probes';
 import { parseCliArgs, type CliOptions } from './doctor/cli';
 import { findSuspiciousEnvVars } from './doctor/env-check';
@@ -189,6 +190,17 @@ function collectProbeInput(): ProbeInput {
     },
     // config.runtime 的条目天然满足 PlatformProbeRuntime（多出的字段不会进报告）
     runtime: config.runtime,
+    // 本人身份策略：doctor 只做只读探测（飞书 user token 读会话 / 钉钉 dws 版本与登录态）
+    identity: {
+      feishu: {
+        policy: config.identity.feishu.policy,
+        receiveEnabled: receiveEnabled(config.identity.feishu.policy, config.identity.feishu.receive),
+      },
+      dingtalk: {
+        policy: config.identity.dingtalk.policy,
+        receiveEnabled: receiveEnabled(config.identity.dingtalk.policy, config.identity.dingtalk.receive),
+      },
+    },
   };
 }
 
@@ -223,7 +235,8 @@ async function main(): Promise<number> {
 
   const report: DoctorReportInput = {
     generatedAt,
-    cwd: process.cwd(),
+    // 显示项目根而不是 pnpm --filter 的脚本执行目录（P3-1：小白会以为跑错地方）
+    cwd: monorepoRoot,
     env,
     platforms,
     checks,

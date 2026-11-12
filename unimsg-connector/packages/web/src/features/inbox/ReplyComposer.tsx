@@ -14,12 +14,15 @@ export function ReplyComposer({
   message,
   value,
   sending,
+  sendDisabled = false,
   onChange,
   onSend,
 }: {
   message: UnifiedMessage;
   value: string;
   sending: boolean;
+  /** 发送成功后的短暂冷却（防止手滑重复发送同一条回复） */
+  sendDisabled?: boolean;
   onChange: (text: string) => void;
   /** 带上本次选中的附件一起回写；没有附件时传空数组 */
   onSend: (attachments: OutboundAttachment[]) => void;
@@ -28,7 +31,7 @@ export function ReplyComposer({
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [attachments, setAttachments] = useState<OutboundAttachment[]>([]);
   const [fileError, setFileError] = useState('');
-  const canSend = (value.trim().length > 0 || attachments.length > 0) && !sending;
+  const canSend = (value.trim().length > 0 || attachments.length > 0) && !sending && !sendDisabled;
   const enterToSend = prefs.sendKey === 'enter';
 
   // 发送按钮状态色：以「是否已有回写内容」为准，而不是追 WebSocket 推来的状态——

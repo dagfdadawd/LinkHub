@@ -1,87 +1,89 @@
-# LinkHub 换账号指南（swap-accounts）
+# LinkHub 换账号指南（swap accounts）
 
-> 目标：评审 / 同学拿到仓库后，**只改 `unimsg-connector/.env`，不改一行代码**，就能用自己的飞书、钉钉、企业微信、邮箱账号把真实收发跑起来。
+> 目标：评审 / 同学拿到仓库后，**只改 `unimsg connector/.env`，不改一行代码**，就能用自己的飞书、钉钉、企业微信、邮箱账号把真实收发跑起来。
 >
 > 本文所有凭据一律用占位符表示（`xxxxxxxx` / `you@example.com` 形式），请勿把真实密钥、授权码、邮箱地址提交进 git 或发到群里。
 
 本文覆盖：
 
-- 换账号的 3 步快速路径与模式判定（为什么填了凭据还是 Mock）
-- 四个平台各自的 checklist：**后台点什么 → 填哪些 env → 验证命令 → 常见报错**
-- errcode 排错总表（21001 / 10014 / 60020 / 40013 / 535 / 550 / Unsafe Login / ENOTFOUND / ETIMEDOUT …）
-- 邮箱 provider 预设表、端口与加密方式表、多账号写法
-- 「企业可信 IP」与飞书企业认证的现实说明
-- 安全与回滚
+  换账号的 3 步快速路径与模式判定（为什么填了凭据还是 Mock）
+  四个平台各自的 checklist：**后台点什么 → 填哪些 env → 验证命令 → 常见报错**
+  **本人账号收发**（飞书 OAuth / 钉钉官方 CLI `dws`）的配置、验证、平台限制与回退（完整版见 [personal identity.md](personal identity.md)）
+  errcode 排错总表（21001 / 10014 / 60020 / 40013 / 535 / 550 / Unsafe Login / ENOTFOUND / ETIMEDOUT …）
+  邮箱 provider 预设表、端口与加密方式表、多账号写法
+  「企业可信 IP」与飞书企业认证的现实说明
+  安全与回滚
 
----
+   
 
-## 0. 先读：四条约定
+## 0. 先读：五条约定
 
-1. **只改 `.env`**：平台凭据、邮箱账号、运行模式全部走环境变量，代码不需要动。改完**重启后端**（`config.ts` 只在启动时读取 `.env`）。
-2. **换完账号先跑 `doctor`**：`pnpm run doctor` 会检查 Node、`.env`、平台模式、逐平台探针、大模型连通性与出口公网 IP，并给出中文修复建议；有 FAIL 时退出码为 1。大模型探针（`llm:chat`）只在**未加** `--platform=` 时执行，所以下文各平台的示意输出不含它。
-3. **Mock 是合法状态，但一定标注**：没配凭据或配得不全时，`auto` 会自动回退本地模拟；回写消息里会写 `delivery.mode=mock`，闭环日志与前端都显示「模拟发送」，**不会假装真实平台已收到**。
-4. **命令写法**：在 `unimsg-connector/` 目录下用 `pnpm run doctor`；**不要写 `pnpm doctor`**——pnpm 9 会命中同名内置命令（实测无输出、退出码 0），看起来像成功但本项目自检根本没运行。在脚本 / CI 里推荐全路径：`pnpm --filter @unimsg/server run doctor`。
+1. **只改 `.env`**：平台凭据、邮箱账号、运行模式全部走环境变量，代码不需要动。改完**重启后端**（`config.ts` 只在启动时读取 `.env`）。账号页会在 `.env` 修改时间晚于服务启动时间时提示「.env 已修改，需要重启后端才生效」。
+2. **换完账号先跑 `doctor`**：`pnpm run doctor` 会检查 Node、`.env`、平台模式、逐平台探针、大模型连通性与出口公网 IP，并给出中文修复建议；有 FAIL 时退出码为 1。大模型探针（`llm:chat`）只在**未加** `  platform=` 时执行，所以下文各平台的示意输出不含它。
+3. **账号页 ≠ 连通性证明**：账号页 / `/api/accounts` / 启动日志只说明 **env 变量是否填齐、解析成 `real` 还是 `mock`、缺哪些变量**；**填假的 App ID / Secret 也会显示「已配置（未验证）/ 真实接口」**。平台到底能不能连通，以 `pnpm run doctor` 的 PASS / FAIL 为准（FAIL 会带错误码与修复建议）。真实模式的账号卡片上直接给出可复制的 `pnpm run doctor   platform=<平台>`，提示语「变量齐了 ≠ 平台能连通」。
+4. **Mock 是合法状态，但一定标注**：没配凭据或配得不全时，`auto` 会自动回退本地模拟；回写消息里会写 `delivery.mode=mock`，闭环日志与前端都显示「模拟发送」，**不会假装真实平台已收到**。
+5. **命令写法**：在 `unimsg connector/` 目录下用 `pnpm run doctor`；**不要写 `pnpm doctor`**——pnpm 9 会命中同名内置命令（实测无输出、退出码 0），看起来像成功但本项目自检根本没运行。在脚本 / CI 里推荐全路径：`pnpm   filter @unimsg/server run doctor`。
 
 > 更多架构、API、测试说明见根目录 [README.md](../README.md)。
 
----
+   
 
 ## 1. 换账号 3 步
 
 ```bash
-cd unimsg-connector
+cd unimsg connector
 
 # 1) 复制模板
-cp .env.example .env              # Windows PowerShell：Copy-Item .env.example .env
+cp .env.example .env              # Windows PowerShell：Copy Item .env.example .env
 
 # 2) 只填“目标平台”那一段，其他平台留空即可（留空 = auto 回退 Mock）
 #    飞书 / 钉钉 / 企业微信 / 邮箱的变量见下面各平台 checklist
 
 # 3) 自检（只读，不发任何业务消息），通过后再启动
 pnpm run doctor
-pnpm --filter @unimsg/server start
+pnpm   filter @unimsg/server start
 ```
 
 按目标平台选择自检命令：
 
 ```bash
-pnpm run doctor --platform=feishu      # 只查飞书
-pnpm run doctor --platform=dingtalk    # 只查钉钉
-pnpm run doctor --platform=wecom       # 只查企业微信
-pnpm run doctor --platform=mail        # 只查邮箱
-pnpm run doctor --platform=feishu,mail # 多个平台用逗号
+pnpm run doctor   platform=feishu      # 只查飞书
+pnpm run doctor   platform=dingtalk    # 只查钉钉
+pnpm run doctor   platform=wecom       # 只查企业微信
+pnpm run doctor   platform=mail        # 只查邮箱
+pnpm run doctor   platform=feishu,mail # 多个平台用逗号
 ```
 
 机器可读 JSON（stdout 严格只有 JSON，便于 CI / 脚本消费）：
 
 ```bash
-pnpm --filter @unimsg/server run --silent doctor --json
+pnpm   filter @unimsg/server run   silent doctor   json
 ```
 
-> `--json` 场景必须加 `--silent` 且用**全路径**：`pnpm run doctor --json` 会把 pnpm 启动横幅写进 stdout，破坏 JSON。
+> `  json` 场景必须加 `  silent` 且用**全路径**：`pnpm run doctor   json` 会把 pnpm 启动横幅写进 stdout，破坏 JSON。
 
-「换账号」可以只换一个平台，例如只把钉钉换成自己的应用：改 `DINGTALK_*` 四个变量 → `pnpm run doctor --platform=dingtalk` → 重启后端。飞书 / 企微 / 邮箱的配置不受影响。
+「换账号」可以只换一个平台，例如只把钉钉换成自己的应用：改 `DINGTALK_*` 四个变量 → `pnpm run doctor   platform=dingtalk` → 重启后端。飞书 / 企微 / 邮箱的配置不受影响。
 
----
+   
 
 ## 2. 先搞懂模式，避免误判
 
 | `*_MODE` | 行为 | 凭据不全时 |
-|---|---|---|
+|   |   |   |
 | `auto`（默认） | 具备真实收或真实发能力 → 真实接口；否则本地 Mock | 自动回退 Mock，`/api/accounts` 的 `reason` 说明原因 |
 | `real` | 强制真实接口 | 发送时显式报错并列出缺失变量，**绝不静默假成功** |
 | `mock` | 强制本地模拟（填了凭据也不外呼） | 不适用，适合离线演示 |
 
-- 变量名：`FEISHU_MODE` / `DINGTALK_MODE` / `WECOM_MODE` / `MAIL_MODE`。
-- 旧全局 `MOCK` 已废弃：只在没写 `*_MODE` 时作为默认策略（`true→mock`、`false→real`），启动日志和 doctor 都会警告；请删除它。
-- `auto` 下邮箱有特例：`MAIL_ENABLED=false`（关轮询）时按 Mock 处理；需要「只发不收」请显式 `MAIL_MODE=real`。
-- 每个平台解析出的 `policy / mode / configured / canSend / canReceive / missing / warnings / reason` 在三处一致：`/api/accounts`、启动日志、`doctor`。
-- 想确认「现在到底走没走真实接口」：
+  变量名：`FEISHU_MODE` / `DINGTALK_MODE` / `WECOM_MODE` / `MAIL_MODE`。
+  旧全局 `MOCK` 已废弃：只在没写 `*_MODE` 时作为默认策略（`true→mock`、`false→real`），启动日志和 doctor 都会警告；请删除它。
+  `auto` 下邮箱有特例：`MAIL_ENABLED=false`（关轮询）时按 Mock 处理；需要「只发不收」请显式 `MAIL_MODE=real`。
+  每个平台解析出的 `policy / mode / configured / canSend / canReceive / missing / warnings / reason` 在三处一致：`/api/accounts`、启动日志、`doctor`。
+  想确认「现在到底走没走真实接口」：
 
 ```bash
 curl http://127.0.0.1:3001/api/health
 # 看 modes：{"feishu":"real","dingtalk":"mock","wecom":"mock","mail":"mock"}
-curl -H "Authorization: Bearer dev-token" http://127.0.0.1:3001/api/accounts
+curl  H "Authorization: Bearer dev token" http://127.0.0.1:3001/api/accounts
 # 看每个平台的 mode / policy / missing / reason；邮箱另有 accounts[] 明细（地址脱敏）
 ```
 
@@ -94,7 +96,7 @@ curl -H "Authorization: Bearer dev-token" http://127.0.0.1:3001/api/accounts
 
 **为什么 doctor 里全是 SKIP？** SKIP 表示该平台当前未启用真实通道（`mode=mock` 且 `policy≠real`），doctor 按约定不发起真实探针；不是失败。填好凭据后 `auto` 会自动变 `real`，或临时加 `*_MODE=real` 强制自检。
 
----
+   
 
 ## 3. 飞书 checklist
 
@@ -106,11 +108,11 @@ curl -H "Authorization: Bearer dev-token" http://127.0.0.1:3001/api/accounts
 2. **凭证与基础信息**：复制 **App ID**、**App Secret**。注意 App Secret 别复制成 App ID。
 3. **添加应用能力 → 机器人**（要收发机器人消息时需要）。
 4. **权限管理**：开通
-   - `im:message:send_as_bot`（以应用身份发送消息）——**发送必需**；
-   - `im:message`（获取与发送单聊、群组消息）——接收 / 查询消息需要；未开通时可能收不到消息。
+     `im:message:send_as_bot`（以应用身份发送消息）——**发送必需**；
+     `im:message`（获取与发送单聊、群组消息）——接收 / 查询消息需要；未开通时可能收不到消息。
 5. **事件与回调 → 事件配置**（两种订阅方式二选一）：
-   - **方式 A · 长连接（推荐，免公网）**：订阅方式选「**使用长连接接收事件**」，保存时要求本地长连接已在线（**先启动后端，再回后台保存**）；添加事件 `im.message.receive_v1`。长连接下事件由官方 SDK 明文推送，无需 Verification Token / Encrypt Key，也不需要公网回调地址。
-   - **方式 B · HTTP 回调**：订阅方式选「将事件发送至开发者服务器」，请求地址填 `https://<公网域名>/api/webhook/feishu`；添加事件 `im.message.receive_v1`。
+     **方式 A · 长连接（推荐，免公网）**：订阅方式选「**使用长连接接收事件**」，保存时要求本地长连接已在线（**先启动后端，再回后台保存**）；添加事件 `im.message.receive_v1`。长连接下事件由官方 SDK 明文推送，无需 Verification Token / Encrypt Key，也不需要公网回调地址。
+     **方式 B · HTTP 回调**：订阅方式选「将事件发送至开发者服务器」，请求地址填 `https://<公网域名>/api/webhook/feishu`；添加事件 `im.message.receive_v1`。
 6. 若走**方式 B（HTTP 回调）**：**事件与回调 → 加密策略**复制 **Verification Token**（必填）、**Encrypt Key**（建议配置；配了就必须同步到 `.env`，否则解密失败）。走**方式 A 长连接则无需此项**。
 7. **版本管理与发布**：创建版本并发布（可用范围可先设「仅我可见」自测）。**不发布版本，事件订阅可能不生效。**
 8. 配置回调 URL 时飞书会发 `url_verification` 挑战（仅 HTTP 回调方式），本服务会自动回 `challenge`；这一步**不用**手动处理。
@@ -134,7 +136,7 @@ FEISHU_ENCRYPT_KEY=xxxxxxxxxxxxxxxx          # 后台没开加密策略可留空
 ### 3.3 验证命令
 
 ```bash
-pnpm run doctor --platform=feishu
+pnpm run doctor   platform=feishu
 ```
 
 期望输出形态（示意）：
@@ -149,25 +151,25 @@ pnpm run doctor --platform=feishu
 然后启动后端，用真实飞书账号给应用机器人发一条消息，再确认入库：
 
 ```bash
-curl -H "Authorization: Bearer dev-token" http://127.0.0.1:3001/api/messages
-curl -H "Authorization: Bearer dev-token" http://127.0.0.1:3001/api/accounts
+curl  H "Authorization: Bearer dev token" http://127.0.0.1:3001/api/messages
+curl  H "Authorization: Bearer dev token" http://127.0.0.1:3001/api/accounts
 ```
 
 ### 3.4 常见报错
 
 | 现象 | 原因 | 处理 |
-|---|---|---|
+|   |   |   |
 | `21001 Access denied due to platform policy` | 租户级策略 / 合规限制，常见于未完成企业认证的租户 | 代码、Secret、IP 白名单、应用发布都救不了；见「现实说明」 |
 | `10014` | App Secret 错误 | 回后台重新复制 App Secret（别复制成 App ID），更新后重跑 doctor |
 | `10003` 或 `app_id not found` | App ID 不存在 / 应用被删除 | 核对 `FEISHU_APP_ID`，确认应用仍存在 |
 | `99991663` | tenant_access_token 无效 | 重置 Secret 后旧 token 失效；重跑 doctor；核对 `FEISHU_BASE_URL` 与数据中心一致 |
-| 配置回调 URL 时提示「请求地址不正确」 | 公网不可达，或域名/路径写错 | 确认 `https://<域名>/api/webhook/feishu` 可从公网访问；先 `curl -I` 验证 |
+| 配置回调 URL 时提示「请求地址不正确」 | 公网不可达，或域名/路径写错 | 确认 `https://<域名>/api/webhook/feishu` 可从公网访问；先 `curl  I` 验证 |
 | 收到事件但返回 401 `verify failed` | `FEISHU_VERIFY_TOKEN` 与后台不一致 | 复制后台 Verification Token（不是 Encrypt Key） |
 | 收到加密事件但报「未配置 FEISHU_ENCRYPT_KEY」 | 后台开了加密策略但 `.env` 没填 Encrypt Key | 填上 Encrypt Key 并重启 |
 | 解密失败 / JSON 解析失败 | Encrypt Key 错误，或后台关闭加密但 `.env` 仍按加密处理 | 两处保持一致；改完重启 |
 | 能发不能收 | 缺 `FEISHU_VERIFY_TOKEN`、事件未订阅、权限未开通或版本未发布 | 看 `/api/accounts` 的 `missing` / `warnings`，逐项补齐 |
-| 长连接保存时提示「连接校验失败」 | 本地后端未启动，或 `FEISHU_STREAM=true` 未设，或应用未发布启用 | 先 `FEISHU_STREAM=true` 启动后端，确认日志出现 `[feishu-stream] 飞书长连接启动指令已下发` 且随后出现「已就绪」，再回后台保存订阅方式 |
-| 长连接启动后日志无「已就绪」 | `FEISHU_STREAM` 未开，或 `FEISHU_MODE≠real`，或 21001（应用未发布/未启用），或 appId 格式不对 | 看 `[feishu-stream]` 日志（SDK 异步建连，启动指令下发 ≠ 已连通）；21001 见「现实说明」 |
+| 长连接保存时提示「连接校验失败」 | 本地后端未启动，或 `FEISHU_STREAM=true` 未设，或应用未发布启用 | 先 `FEISHU_STREAM=true` 启动后端，确认日志出现 `[feishu stream] 飞书长连接启动指令已下发` 且随后出现「已就绪」，再回后台保存订阅方式 |
+| 长连接启动后日志无「已就绪」 | `FEISHU_STREAM` 未开，或 `FEISHU_MODE≠real`，或 21001（应用未发布/未启用），或 appId 格式不对 | 看 `[feishu stream]` 日志（SDK 异步建连，启动指令下发 ≠ 已连通）；21001 见「现实说明」 |
 | 长连接能收但回复发失败 | 缺 `im:message:send_as_bot` 权限，或版本未发布 | 开通权限并重新发布版本 |
 
 ### 3.5 现实说明：飞书 21001 与企业认证
@@ -183,68 +185,87 @@ curl -H "Authorization: Bearer dev-token" http://127.0.0.1:3001/api/accounts
 
 > 所以：飞书适配器、验签、加解密、发送、事件订阅代码均已就绪，`21001` 属于「换租户 / 走认证」才能解决的外部约束。
 
-### 3.6 以用户本人身份发送（user_access_token）
+### 3.6 以用户本人身份收发（user_access_token）
 
-默认机器人身份发送时，群里看到的是「机器人」。如果希望回写消息显示为**你本人**发出，需要额外做一次用户授权（只需一次，后续 access_token 自动续期）。
+默认机器人身份收发时，群里看到的是「机器人」、收消息也只能收「单聊 + @机器人」。如果希望**以你本人身份收消息、以你本人身份发出**，需要额外做一次用户授权（只需一次，后续 access_token 自动续期）。完整版本（含平台边界与排错）见 [personal identity.md](personal identity.md)，本节是速查。
 
 **后台一次性配置（缺一不可）**
 
 1. **权限管理 → 用户身份权限** 开通：
-   - `im:message`（获取与发送单聊、群组消息）
-   - `im:message.send_as_user`（以用户身份发消息）
-   - `im:resource`（上传图片/文件；只发文本也建议一起开）
+     `im:message`（获取与发送单聊、群组消息）
+     `im:message.send_as_user`（以用户身份发消息）
+     `im:resource`（上传图片/文件；只发文本也建议一起开）
+     **本人接收**另需：`im:message`、`im:message.p2p_msg:get_as_user`（以用户身份获取单聊消息）、`im:message.group_msg:get_as_user`（以用户身份获取群聊消息）、`im:resource`（附件资源）；缺权限时报 `99991672` 并给出权限清单。
+   - LinkHub 的 OAuth 会**自动申请**上述 scope（本人接收开启时附带两个读消息权限，FEISHU_USER_RECEIVE=false / FEISHU_IDENTITY=bot 时不申请）；**从旧版本升级后需重新授权一次**，旧 token 不含读消息权限（轮询会报 99991672）。
 2. **安全设置 → 重定向 URL** 添加：`http://localhost:3001/api/feishu/oauth/callback`
-   - 如果后端端口不是 3001，先设 `FEISHU_REDIRECT_URI`，再把**同一个值**原样填进后台；协议、域名、端口、路径、结尾斜杠都必须完全一致。
+     如果后端端口不是 3001，先设 `FEISHU_REDIRECT_URI`，再把**同一个值**原样填进后台；协议、域名、端口、路径、结尾斜杠都必须完全一致。
 3. **安全设置 → 打开「刷新 user_access_token」**（否则 refresh_token 无法续期）。
 4. **版本管理与发布**：重新发布版本并等待权限生效；完成授权的飞书账号必须在应用可用范围内（否则报 `20010`）。
 
 **env 写法**
 
 ```dotenv
-FEISHU_SEND_AS=auto    # auto（默认）：未连接时机器人，连接后本人；user=强制本人；bot=固定机器人
+# 身份策略：auto（默认，已连接本人就用本人，否则机器人）/ bot（固定机器人）/ user（固定本人，未连接显式报错）
+FEISHU_IDENTITY=auto
+# 旧变量 FEISHU_SEND_AS 仍兼容（仅在未写 FEISHU_IDENTITY 时生效并提示废弃）；新配置只用 FEISHU_IDENTITY
+# 本人身份接收（轮询）：auto（默认，身份=本人时自动开启）/ true / false
+FEISHU_USER_RECEIVE=auto
+FEISHU_USER_RECEIVE_SECONDS=20     # 轮询间隔秒（最小 5）
+FEISHU_USER_CHAT_LIMIT=20          # 每轮最多检查的会话数
+FEISHU_USER_BACKFILL_HOURS=0       # 首轮回溯小时数：0=只立基线不灌历史
+# FEISHU_USER_STATE_FILE=          # 接收水位文件（默认 .feishu user receive.json，已 gitignore）
 # FEISHU_REDIRECT_URI=http://localhost:3001/api/feishu/oauth/callback
-# FEISHU_USER_TOKEN_FILE=.feishu-user-token.json
+# FEISHU_USER_TOKEN_FILE=.feishu user token.json
 # FEISHU_ACCOUNTS_BASE_URL=https://accounts.feishu.cn   # 国际版 Lark 才需要改
 ```
 
 **操作步骤**
 
 1. 改完 `.env` 后**重启后端**；
-2. 打开 LinkHub「平台账号」页 → 飞书卡片 → 点「连接飞书用户身份」；
-3. 在飞书授权页点同意，成功后授权页自动关闭；
-4. 回到账号页，飞书卡片会显示「发送身份：本人（用户授权）」，并展示 access / refresh 过期时间；
-5. 在收件箱回复一条消息，或「新建发送」发一条，去飞书里确认发送者是**你本人**。
+2. 打开 LinkHub「平台账号」页 → 飞书卡片 → 点「连接本人账号」（已授权过则显示「重新授权」）；
+3. 在飞书授权页点同意，成功后回到页面；
+4. 飞书卡片「身份 · 谁在收、谁在发」块显示「接收 = 本人、发送 = 本人」，并展示「已连接：<展示名>」与 access / refresh 过期时间；
+5. 在收件箱回复一条消息，或「新建发送」发一条，去飞书里确认发送者是**你本人**；
+6. 让别人给你发一条单聊消息（或你在某个群里收到消息），**5–30 秒内**应出现在收件箱，并标注「本人账号接收」。
 
 **令牌与失败行为**
 
-- 令牌保存在 `unimsg-connector/.feishu-user-token.json`（已 gitignore；POSIX 下 0600），只存服务端，接口/日志/前端都拿不到。
-- `access_token` 约 2 小时，过期前自动用 `refresh_token` 续期；refresh_token 单次有效，刷新后立即落盘。若落盘失败（磁盘满/权限被改），新令牌只在**当前进程内存**里继续用，重启后需重新授权；启动日志会打印警告。
-- `FEISHU_SEND_AS=user`，或 `auto` 下已经连接过但令牌过期 / 文件损坏 / 无权限读取 / 属于其他飞书应用：发送会**显式失败**并进死信队列，错误提示「请重新授权」，**不会悄悄换回机器人**。重新点一次「重新授权」即可。
-- 当前为**单账号授权**：谁完成连接，之后所有回写都以该用户身份发送；多人共用请各自部署实例。
-- 用户身份只能发到**授权用户本人所在的会话**；如果手动填了用户不在的群 / 单聊 `conversationId`，飞书会拒绝，LinkHub 会如实置为 failed。
-- **单实例约束**：不要让多个后端进程共享同一个令牌文件。`refresh_token` 单次有效，两个实例并发刷新会导致其中一个实例的令牌失效。
-- 令牌文件默认在 `unimsg-connector/` 根目录；设置了 `DATA_DIR`（Docker Compose 固定为 `/app/data`，已持久化）时默认落在 `DATA_DIR/feishu-user-token.json`。如果默认目录被 OneDrive / 云盘同步，建议用 `FEISHU_USER_TOKEN_FILE` 指向非同步目录（令牌仍只在服务端）。
-- 连接用户身份前建议先把 `API_TOKEN` 改成强随机值；默认 `dev-token` 虽然仍强制鉴权，但任何知道它的人都能发起授权并覆盖令牌（启动日志与 `doctor` 会提示默认令牌风险）。
-- 收消息仍然走机器人（长连接 / 回调），不受发送身份影响；单聊里用户身份发出的消息会被自环保护丢弃，不会在自己的收件箱里再出现一条。
+  令牌保存在 `unimsg connector/.feishu user token.json`（已 gitignore；POSIX 下 0600），只存服务端，接口/日志/前端都拿不到。
+  `access_token` 约 2 小时，过期前自动用 `refresh_token` 续期；refresh_token 单次有效，刷新后立即落盘。若落盘失败（磁盘满/权限被改），新令牌只在**当前进程内存**里继续用，重启后需重新授权；启动日志会打印警告。
+  `FEISHU_IDENTITY=user`，或 `auto` 下已经连接过但令牌过期 / 文件损坏 / 无权限读取 / 属于其他飞书应用：发送会**显式失败**并进死信队列，错误提示「请重新授权」，**不会悄悄换回机器人**。重新点一次「重新授权」即可。
+  当前为**单账号授权**：谁完成连接，之后所有回写都以该用户身份发送；多人共用请各自部署实例。
+  用户身份只能发到**授权用户本人所在的会话**；如果手动填了用户不在的群 / 单聊 `conversationId`，飞书会拒绝，LinkHub 会如实置为 failed。
+  **单实例约束**：不要让多个后端进程共享同一个令牌文件。`refresh_token` 单次有效，两个实例并发刷新会导致其中一个实例的令牌失效。
+  令牌文件默认在 `unimsg connector/` 根目录；设置了 `DATA_DIR`（Docker Compose 固定为 `/app/data`，已持久化）时默认落在 `DATA_DIR/feishu user token.json`。如果默认目录被 OneDrive / 云盘同步，建议用 `FEISHU_USER_TOKEN_FILE` 指向非同步目录（令牌仍只在服务端）。
+  连接用户身份前建议先把 `API_TOKEN` 改成强随机值；默认 `dev token` 虽然仍强制鉴权，但任何知道它的人都能发起授权并覆盖令牌（启动日志与 `doctor` 会提示默认令牌风险）。
+
+**本人身份接收（轮询）的行为**
+
+  飞书官方没有「个人消息推送事件」，项目用用户 token **轮询**本人所在会话：默认 20s 一轮（`FEISHU_USER_RECEIVE_SECONDS`，最小 5），新消息通常 **5–30 秒**出现；**只读本人可见会话**，读不到你不在的群。
+  首轮默认只记录每个会话的水位基线（`FEISHU_USER_BACKFILL_HOURS=0`），只入库之后的新消息；需要回看最近 N 小时可设 `24`。
+  自己发出的消息会被过滤（自环保护）；水位文件损坏时安全回退重建基线；重启后从水位续传。
+  权限不足不会静默：账号页身份块 / 日志会给出所需权限与「重新授权」提示（权限变更后必须重新授权，旧 token 不带新权限）。
+  机器人长连接 / 回调**保留**：本人轮询与机器人通道可同时存在，入库按 `platform + externalId` 幂等去重，界面如实标注每条是「本人账号接收」还是「机器人接收」。
+  **注意**：接收链路是否真实可用仍受租户策略影响（`21001` 时应用本身都换不到 token）；真实端到端状态见 [personal identity.md](personal identity.md) §11。
 
 **用户身份常见报错**
 
 | 现象 | 原因 | 处理 |
-|---|---|---|
+|   |   |   |
 | 授权页报 `20027` / 权限不足 | 用户身份权限未开通或版本未发布 | 按上面第 1、4 步开通并发布 |
 | 授权页报 `20010` | 当前飞书账号不在应用可用范围 | 让管理员把账号加入应用可用范围 |
 | 授权页报 `20029` / redirect_uri 不合法 | 回调地址与后台登记不一致 | 两处都改成 `FEISHU_REDIRECT_URI` 的同一个值（含端口与斜杠） |
-| 账号页提示「用户身份未授权」 | 还没点连接，或令牌文件被删 | 点「连接飞书用户身份」 |
+| 账号页提示「用户身份未授权」 | 还没点连接，或令牌文件被删 | 点「连接本人账号」 |
 | 发送失败「授权已过期 / 请重新授权」 | refresh_token 失效或被使用 | 点「重新授权」；确认后台已打开刷新开关 |
 | 文件发送失败但文本成功 | `im:resource` 未开通 | 开通用户身份的资源上传权限并发布 |
 
----
+   
 
 ## 4. 钉钉 checklist
 
 ### 4.1 后台点什么
 
-在 [钉钉开放平台](https://open-dev.dingtalk.com/) 开发者后台：
+在 [钉钉开放平台](https://open dev.dingtalk.com/) 开发者后台：
 
 1. **创建应用**：企业内部应用。
 2. **凭证与基础信息**：复制 **Client ID**、**Client Secret**（旧版后台叫 AppKey / AppSecret，本服务两种都兼容）。
@@ -276,7 +297,7 @@ DINGTALK_AES_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx  # 加密密钥
 ### 4.3 验证命令
 
 ```bash
-pnpm run doctor --platform=dingtalk
+pnpm run doctor   platform=dingtalk
 ```
 
 期望输出形态（Stream 模式）：三条 PASS——accessToken 校验、机器人编码、收消息通道；且 Stream 模式下不再把 AES Token/Key 误报为缺失。
@@ -293,7 +314,7 @@ pnpm run doctor --platform=dingtalk
 ### 4.4 常见报错
 
 | 现象 | 原因 | 处理 |
-|---|---|---|
+|   |   |   |
 | `40089` / `InvalidAuthentication` | Client ID / Secret 错误 | 回后台复制，更新 `DINGTALK_CLIENT_ID` / `DINGTALK_CLIENT_SECRET`（旧名 AppKey/AppSecret 也兼容） |
 | `40001` / `40014` | accessToken 无效 / 环境不对 | 核对 `DINGTALK_BASE_URL`，确认应用已发布 |
 | 提示无权限 / forbidden | 机器人 / 消息权限未开通，或未发布版本 | 权限管理开通后重新发布版本 |
@@ -301,9 +322,84 @@ pnpm run doctor --platform=dingtalk
 | HTTP 回调 401 | AES Token / Key 不一致，或时间戳超出容忍窗口 | 后台 Token / AES Key 与 `.env` 对齐；确认服务器时间正确 |
 | 发送群消息报缺 `conversation.id` | 收到的消息没有会话信息 | 确认走的是机器人消息事件（Stream / 事件订阅），不是纯文本 webhook 自造数据 |
 
-> 钉钉实测记录（2026-11-03）：Stream 模式在本机无公网条件下完成「手机发消息 → 入库 → 调接口回写 → 机器人消息回到钉钉会话」全流程；`accessToken` 用真实 Client ID/Secret 换取成功，未认证企业也可用。
+> 钉钉实测记录（2026 11 03）：Stream 模式在本机无公网条件下完成「手机发消息 → 入库 → 调接口回写 → 机器人消息回到钉钉会话」全流程；`accessToken` 用真实 Client ID/Secret 换取成功，未认证企业也可用。
 
----
+### 4.5 以本人身份收发（钉钉官方 CLI dws）
+
+> 钉钉本人身份不走应用机器人，而是走官方开源 CLI [`dws`](https://github.com/DingTalk Real AI/dingtalk workspace cli)（LinkHub 以子进程方式调用）。完整版（安装、登录、事件范围、安全）见 [personal identity.md §5](personal identity.md#5 钉钉本人身份配置dws cli)，本节只列操作顺序与排错。
+
+**前置（缺一不可，且都需要企业侧配合）**
+
+1. **安装 dws**（本机已有 `dws` 可跳过；`dws version` 验证）：
+
+   ```powershell
+   # Windows PowerShell（官方安装脚本，推荐）
+   irm https://raw.githubusercontent.com/DingTalk Real AI/dingtalk workspace cli/main/scripts/install.ps1 | iex
+   # 或从官方 Releases 下载 dws.exe 放到 PATH：
+   #   https://github.com/DingTalk Real AI/dingtalk workspace cli/releases
+   ```
+
+2. **企业管理员开启 CLI 访问**：钉钉**开发者平台 →「CLI 访问管理」→ 开启**；成员未开通时 `dws auth login` 会引导向管理员发起申请、审批后重登。
+   替代方案 **Custom App（自有应用）模式**：开放平台创建应用 → 安全设置添加重定向 URL `http://127.0.0.1`、`https://login.dingtalk.com` → 发布 → `dws auth login   client id <AppKey>   client secret <AppSecret>`。
+3. **首次真人授权**（LinkHub 不能代替）：`dws auth login`（有浏览器）/ `dws auth login   device`（容器 / SSH 无头，在另一台设备完成）。
+4. **验证登录态**（只读）：`dws auth status   readonly   format json` → `authenticated: true`、`message` 为空。
+
+**env 写法**
+
+```dotenv
+# 身份策略：auto（默认，dws 已登录就用本人，否则机器人）/ bot（固定机器人）/ user（未登录显式报错）
+DINGTALK_IDENTITY=auto
+# 本人身份接收：auto（默认）/ true / false
+DINGTALK_USER_RECEIVE=auto
+# 个人事件订阅范围（逗号分隔）：all direct=全部单聊（默认）、at me=@我（默认）、all group=全部群消息（量大按需）
+# 注意：group / sender 暂不支持（需要 dws 目标参数），配了会被忽略并在启动日志告警，回退默认范围
+DINGTALK_USER_EVENT_KINDS=all direct,at me
+# dws 可执行文件（默认 dws，在 PATH 里）；可带参数，如 node scripts/fake dws.mjs（离线演示/测试）
+DWS_BIN=dws
+# DWS_PROFILE=            # 多账号时指定登录档案，一般留空
+# DWS_AUTH_TIMEOUT_MS=15000
+# DWS_SEND_TIMEOUT_MS=30000
+```
+
+**操作步骤**
+
+1. 改完 `.env` 后**重启后端**；
+2. 打开「平台账号」页 → 钉钉卡片：若显示未登录，点「连接本人账号」→ 在「连接钉钉本人账号」弹窗点「开始登录」，按提示完成授权（无头环境复制 `  device` 命令到运行环境执行），完成后点「我已登录，刷新状态」；
+3. 卡片显示「已连接：<dws 档案展示名>」，「接收 / 发送」均为本人；已连接后提供「重新登录（换账号）」与「注销」；
+4. 手机钉钉给本人 / 同事发一条单聊消息 → 收件箱出现并标「本人账号接收」；在 LinkHub 回复 → 对方收到**你本人**发的消息；
+5. 启动日志应出现钉钉本人身份 / 个人事件子进程启动说明（具体文案以实际日志为准）。
+
+**限制（如实，写进答辩话术）**
+
+  dws 官方处于**共创阶段**：企业数据访问需管理员授权，不能承诺"零配置"；未开 CLI 访问时任何 `.env` 都救不了。
+  首次登录必须**真人浏览器授权**；凭据加密绑定设备，**Windows 不能跨机复制**，换机器 / 重建容器需重新登录；容器部署需在容器内登录（见 [deploy.md](deploy.md)）。
+  默认只订阅「全部单聊 + @我」；普通群消息平台不推送，全量群消息（`all group`）量大且受平台事件能力限制，默认不开。
+  以本人身份发出的消息会带钉钉平台的 **AI 发送角标**（dws 默认 `  ai tag=true`，LinkHub 保留该默认、不隐藏）。
+  **真实端到端待实测**：本机 dws v1.0.68 beta.1 已安装但未登录；离线演示可用 fake dws（见 [personal identity.md §7](personal identity.md#7 离线演示用 fake dws 模拟已登录不碰真实钉钉)）。
+
+**验证命令**
+
+```bash
+# 在 unimsg connector/ 下
+pnpm run doctor   platform=dingtalk    # dws version / auth status / 事件目录（只读）
+curl http://127.0.0.1:3001/api/health              # identities：收/发身份摘要
+curl  H "Authorization: Bearer dev token" http://127.0.0.1:3001/api/accounts
+# 钉钉 identity.user.state=linked、effectiveSend/Receive=user 表示本人身份生效
+```
+
+**常见报错**
+
+| 现象 | 原因 | 处理 |
+|   |   |   |
+| 账号页「未找到 dws」 | 未安装 / `DWS_BIN` 路径错 | 按上面安装；`DWS_BIN` 保持 `dws` 或写绝对路径 |
+| `dws auth login` 提示组织未开启 CLI 访问 | 管理员未开「CLI 访问管理」 | 走申请审批，或让企业走 Custom App 模式 |
+| 浏览器授权完回到 CLI 仍失败 | 无头环境用了 loopback 回调（127.0.0.1 不可达） | `dws auth login   device` 在另一台设备完成授权 |
+| `auth status` 返回 `local_state_requires_repair` | 本机凭据状态需要修复 | 重新 `dws auth login`；按官方文档迁移 / 重建 |
+| 换机器 / 重建容器后变回机器人 | 凭据与设备绑定、容器内未登录 | 新环境重新登录；不要复制 `~/.dws` |
+| `DINGTALK_IDENTITY=user` 时发送报错 | 固定本人但本人不可用 | 正确行为（不悄悄回退）；连接 dws 或改 `auto` / `bot` |
+| 收不到群消息 | 默认只订阅单聊 + @我 | 平台边界；按需配置事件范围，不承诺全量群消息 |
+
+   
 
 ## 5. 企业微信 checklist
 
@@ -315,12 +411,12 @@ pnpm run doctor --platform=dingtalk
 2. **应用管理 → 自建 → 创建应用**：填名称 / logo / 可见范围。
 3. **应用详情页**：复制 **AgentId** → `WECOM_AGENT_ID`；点 **Secret 的「眼睛」图标**复制 Secret → `WECOM_SECRET`（**不要点重置**，重置后旧 Secret 立即失效）。
 4. 该应用 → **接收消息 → 设置 API 接收**：
-   - URL：`https://<公网域名>/api/webhook/wecom`
-   - 随机生成 **Token** → `WECOM_TOKEN`
-   - 随机生成 **EncodingAESKey**（43 位）→ `WECOM_AES_KEY`
+     URL：`https://<公网域名>/api/webhook/wecom`
+     随机生成 **Token** → `WECOM_TOKEN`
+     随机生成 **EncodingAESKey**（43 位）→ `WECOM_AES_KEY`
 5. **应用详情 → 企业可信 IP**：把**发信出口公网 IP** 加进去。不知道出口 IP 时：
-   - 先跑 `pnpm run doctor --platform=wecom`，若返回 60020，doctor 会直接打印当前出口 IP；
-   - 或访问 `https://ifconfig.me/ip` 查看。
+     先跑 `pnpm run doctor   platform=wecom`，若返回 60020，doctor 会直接打印当前出口 IP；
+     或访问 `https://ifconfig.me/ip` 查看。
 6. 确认应用「可见范围」包含需要收发的成员。
 
 > 企业微信回调 URL 必须公网可达，且 GET 握手要通过：服务会校验 SHA1 签名并解密 `echostr` 后回明文。**配置 Token / AES Key 之前，URL 验证不会通过。**
@@ -340,7 +436,7 @@ WECOM_AES_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx   # 43 位
 ### 5.3 验证命令
 
 ```bash
-pnpm run doctor --platform=wecom
+pnpm run doctor   platform=wecom
 ```
 
 期望：`[PASS] 企业微信 access_token（应用凭据校验）`，退出码 0。若返回 **60020**，doctor 会打印当前出口公网 IP 与「加入企业可信 IP」的操作步骤。
@@ -354,16 +450,16 @@ pnpm run doctor --platform=wecom
 拿到真实消息后再验证回写：
 
 ```bash
-curl -X POST -H "Authorization: Bearer dev-token" -H "Content-Type: application/json" \
-  -d '{"text":"收到"}' http://127.0.0.1:3001/api/messages/<traceId>/reply
-curl -H "Authorization: Bearer dev-token" http://127.0.0.1:3001/api/messages/<traceId>
+curl  X POST  H "Authorization: Bearer dev token"  H "Content Type: application/json" \
+   d '{"text":"收到"}' http://127.0.0.1:3001/api/messages/<traceId>/reply
+curl  H "Authorization: Bearer dev token" http://127.0.0.1:3001/api/messages/<traceId>
 # 看 delivery.mode 是否为 real、status 是否到 synced
 ```
 
 ### 5.4 常见报错
 
 | 现象 | 原因 | 处理 |
-|---|---|---|
+|   |   |   |
 | `60020 not allow to access from your ip` | 发信出口 IP 不在「企业可信 IP」 | 把 doctor 显示的出口 IP 加入应用「企业可信 IP」，保存后等约 1 分钟再重跑；换网络 / 换机器后出口 IP 会变，需要重新加 |
 | `40013 invalid corpid` | `WECOM_CORP_ID` 错误 | 用「我的企业 → 企业信息」里的企业ID，别和 AppID / AgentId 搞混 |
 | `40001 invalid credential` | `WECOM_SECRET` 错误或已重置 | 应用详情页「眼睛」重新复制 Secret，别点重置 |
@@ -377,17 +473,17 @@ curl -H "Authorization: Bearer dev-token" http://127.0.0.1:3001/api/messages/<tr
 
 `60020` 的本质是**出口 IP 白名单**，与账号密码无关：
 
-- 企业微信要求的不是「服务器内网 IP」，而是请求发到腾讯时看到的**公网出口 IP**；
-- 家用宽带 / 动态 IP 会变化，今天加白明天可能又 60020；
-- **电脑重启一般不会改变出口 IP**：电脑重启只是重新拿内网 DHCP 地址，公网出口在路由器 / 校园网或公司出口网关 / 运营商侧；本次实测 2026-11-03 → 11-04 出口 IP 保持不变。但下面这些情况会变：重启了路由器 / 光猫、校园网或公司网络重新认证、运营商重新分配地址、切换 Wi-Fi / 手机热点、开启或切换 VPN / 代理；
-- 正式部署建议用云服务器弹性公网 IP / 固定专线出口，把该 IP 固定加入可信 IP；
-- 走公司代理 / VPN 时，出口 IP 是代理的，需要加代理的 IP；
-- 保存可信 IP 后通常需要约 1 分钟生效，重跑 doctor 确认变 PASS；
-- **演示前先核对**：`pnpm run doctor` 每次都会打印「当前出口公网 IP」，与后台可信 IP 不一致就更新（本功能专为"IP 会不会变"这个问题加的）。
+  企业微信要求的不是「服务器内网 IP」，而是请求发到腾讯时看到的**公网出口 IP**；
+  家用宽带 / 动态 IP 会变化，今天加白明天可能又 60020；
+  **电脑重启一般不会改变出口 IP**：电脑重启只是重新拿内网 DHCP 地址，公网出口在路由器 / 校园网或公司出口网关 / 运营商侧；本次实测 2026 11 03 → 11 04 出口 IP 保持不变。但下面这些情况会变：重启了路由器 / 光猫、校园网或公司网络重新认证、运营商重新分配地址、切换 Wi Fi / 手机热点、开启或切换 VPN / 代理；
+  正式部署建议用云服务器弹性公网 IP / 固定专线出口，把该 IP 固定加入可信 IP；
+  走公司代理 / VPN 时，出口 IP 是代理的，需要加代理的 IP；
+  保存可信 IP 后通常需要约 1 分钟生效，重跑 doctor 确认变 PASS；
+  **演示前先核对**：`pnpm run doctor` 每次都会打印「当前出口公网 IP」，与后台可信 IP 不一致就更新（本功能专为"IP 会不会变"这个问题加的）。
 
 > 当前项目状态：企微适配器（SHA1 验签、AES 加解密、XML 解析、GET 握手、`gettoken` → `message/send`）与 19 条单测已完成，`gettoken` 已实测 PASS；真实发送**卡在可信 IP** 这一步。这属于外部部署约束，不需要改代码。
 
----
+   
 
 ## 6. 邮箱 checklist（任意数量 / 任意服务商）
 
@@ -398,7 +494,7 @@ curl -H "Authorization: Bearer dev-token" http://127.0.0.1:3001/api/messages/<tr
 > 授权码 **不是**网页登录密码，且通常只显示一次，当场复制。
 
 | 服务商 | 网页端操作 |
-|---|---|
+|   |   |
 | QQ 邮箱 | 设置 → 账号与安全 → 安全设置 → `POP3/IMAP/SMTP… 服务` → 开启服务（需先通过密保，通常要短信验证）→ 生成授权码 |
 | 163 / 126 / yeah | 设置 → POP3/SMTP/IMAP → 开启服务（短信验证）→ 新增授权密码（只显示一次） |
 | Gmail | 先开启两步验证 → 生成「应用专用密码」；企业 / 学校 Workspace 可能被管理员关闭 IMAP 或基础认证，需管理员放行 |
@@ -413,9 +509,9 @@ curl -H "Authorization: Bearer dev-token" http://127.0.0.1:3001/api/messages/<tr
 ```dotenv
 MAIL_MODE=auto
 MAIL_QQ_ADDRESS=you@qq.com
-MAIL_QQ_AUTH_CODE=your-qq-auth-code
+MAIL_QQ_AUTH_CODE=your qq auth code
 MAIL_163_ADDRESS=you@163.com
-MAIL_163_AUTH_CODE=your-163-auth-code
+MAIL_163_AUTH_CODE=your 163 auth code
 ```
 
 **写法 B：`MAIL_ACCOUNTS` 显式声明要启用的账号**（只加载列出的 key，顺序按你写的来）：
@@ -424,18 +520,18 @@ MAIL_163_AUTH_CODE=your-163-auth-code
 MAIL_ACCOUNTS=qq,163,work
 ```
 
-- `KEY` 可随意取（`qq` / `163` / `work` / `school2` …），会被大写后拼成环境变量名（`work` → `MAIL_WORK_*`）；`externalId` 里的账号前缀也用它。
-- 写了 `MAIL_ACCOUNTS` 后，**只有列出的 key 会被加载**；未列出的即使填了 `MAIL_<KEY>_ADDRESS` 也不会启用（想用自动发现就别写 `MAIL_ACCOUNTS`）。
-- 在 `MAIL_ACCOUNTS` 里列了但没有填地址 / 授权码的 key 会给出警告并跳过，不会静默生效。
-- 同一服务商可以挂多个账号（`MAIL_QQ_ADDRESS` 与 `MAIL_QQ2_ADDRESS` 等，key 不重复即可）。
-- **不建议**把同一个邮箱地址配成两个 key：会产生两条轮询会话，语义混乱。
+  `KEY` 可随意取（`qq` / `163` / `work` / `school2` …），会被大写后拼成环境变量名（`work` → `MAIL_WORK_*`）；`externalId` 里的账号前缀也用它。
+  写了 `MAIL_ACCOUNTS` 后，**只有列出的 key 会被加载**；未列出的即使填了 `MAIL_<KEY>_ADDRESS` 也不会启用（想用自动发现就别写 `MAIL_ACCOUNTS`）。
+  在 `MAIL_ACCOUNTS` 里列了但没有填地址 / 授权码的 key 会给出警告并跳过，不会静默生效。
+  同一服务商可以挂多个账号（`MAIL_QQ_ADDRESS` 与 `MAIL_QQ2_ADDRESS` 等，key 不重复即可）。
+  **不建议**把同一个邮箱地址配成两个 key：会产生两条轮询会话，语义混乱。
 
 ### 6.3 provider 预设表
 
 不写 `MAIL_<KEY>_PROVIDER` 时按邮箱域名自动推断；写错 / 未知服务商请用 `custom` 并显式填 host。
 
 | provider | 服务商 | IMAP 默认 | SMTP 默认 | 说明 |
-|---|---|---|---|---|
+|   |   |   |   |   |
 | `qq` | QQ 邮箱 | `imap.qq.com:993` 隐式 TLS | `smtp.qq.com:465` 隐式 TLS | 域名 `qq.com` |
 | `foxmail` | Foxmail | `imap.qq.com:993` | `smtp.qq.com:465` | 域名 `foxmail.com`（推断为 qq） |
 | `163` | 网易 163 | `imap.163.com:993` | `smtp.163.com:465` | 反垃圾可能进 Junk |
@@ -451,7 +547,7 @@ MAIL_ACCOUNTS=qq,163,work
 ### 6.4 端口与加密方式
 
 | 用途 | 端口 | 加密方式 | 说明 |
-|---|---|---|---|
+|   |   |   |   |
 | IMAP | `993` | 隐式 TLS（默认） | 连接即 TLS，最常用 |
 | IMAP | `143` | STARTTLS | 先明文 greeting → `STARTTLS` 升级 → 再登录 |
 | SMTP | `465` | 隐式 TLS（默认） | 连接即 TLS，最常用 |
@@ -463,15 +559,15 @@ MAIL_ACCOUNTS=qq,163,work
 
 ### 6.5 监听目录
 
-- 默认只监听 `INBOX`；反垃圾 / 规则把回信扔进垃圾箱时用 `MAIL_<KEY>_FOLDERS=INBOX,Junk` 一起监听。
-- 多个目录用逗号（或分号 / 空格）分隔；目录名区分大小写、不要加引号。
-- `externalId` 形如 `<key>:<目录>:<UID>`（如 `qq:Junk:7`），多账号、多目录不会互相吞消息。
-- 首轮轮询只记录每个账号每个目录的最大 UID 作为**基线**，不会把历史邮件灌进中枢；之后只导入水位之后的新信。
+  默认只监听 `INBOX`；反垃圾 / 规则把回信扔进垃圾箱时用 `MAIL_<KEY>_FOLDERS=INBOX,Junk` 一起监听。
+  多个目录用逗号（或分号 / 空格）分隔；目录名区分大小写、不要加引号。
+  `externalId` 形如 `<key>:<目录>:<UID>`（如 `qq:Junk:7`），多账号、多目录不会互相吞消息。
+  首轮轮询只记录每个账号每个目录的最大 UID 作为**基线**，不会把历史邮件灌进中枢；之后只导入水位之后的新信。
 
 ### 6.6 验证命令
 
 ```bash
-pnpm run doctor --platform=mail
+pnpm run doctor   platform=mail
 ```
 
 期望：每个账号两条 PASS（IMAP 登录基线 + SMTP 登录自检；2 个账号即 PASS 4），地址自动脱敏：
@@ -484,7 +580,7 @@ pnpm run doctor --platform=mail
   ✔ 自检通过：PASS 4 / FAIL 0 / SKIP 0。
 ```
 
-2026-11-04 实测：两个真实邮箱账号（163 + QQ）`--platform=mail` → **PASS 4 / FAIL 0**。启动后端后日志应出现：
+2026 11 04 实测：两个真实邮箱账号（163 + QQ）`  platform=mail` → **PASS 4 / FAIL 0**。启动后端后日志应出现：
 
 ```
 [mail] 轮询已启动，间隔 45s，账号：QQ邮箱[INBOX,Junk]@imap.qq.com / 网易163邮箱[INBOX]@imap.163.com
@@ -496,23 +592,23 @@ pnpm run doctor --platform=mail
 ### 6.7 多账号完整示例（含自定义服务商）
 
 ```dotenv
-# ---- 邮箱：任意数量、任意服务商 ----
+#      邮箱：任意数量、任意服务商     
 MAIL_MODE=auto
 MAIL_POLL_SECONDS=45
 MAIL_ACCOUNTS=qq,163,work
 
 # 账号一：QQ（内置预设）
 MAIL_QQ_ADDRESS=you@qq.com
-MAIL_QQ_AUTH_CODE=your-qq-auth-code
+MAIL_QQ_AUTH_CODE=your qq auth code
 MAIL_QQ_FOLDERS=INBOX,Junk
 
 # 账号二：163（内置预设）
 MAIL_163_ADDRESS=you@163.com
-MAIL_163_AUTH_CODE=your-163-auth-code
+MAIL_163_AUTH_CODE=your 163 auth code
 
 # 账号三：公司邮箱（无内置预设，必须显式 host；587 自动 STARTTLS）
 MAIL_WORK_ADDRESS=you@company.com
-MAIL_WORK_AUTH_CODE=your-corp-auth-code
+MAIL_WORK_AUTH_CODE=your corp auth code
 MAIL_WORK_PROVIDER=custom
 MAIL_WORK_LABEL=公司邮箱
 MAIL_WORK_IMAP_HOST=imap.company.com
@@ -525,7 +621,7 @@ MAIL_WORK_FOLDERS=INBOX,Junk
 ### 6.8 常见报错
 
 | 现象 / 关键词 | 原因 | 处理 |
-|---|---|---|
+|   |   |   |
 | `Unsafe Login` | 网易 / QQ 风控：不报客户端身份的连接被拒，或用了登录密码而非授权码 | 检查授权码；本项目 IMAP 客户端已自动发送 ID 命令，仍报错通常是服务商风控，换网络重试或联系服务商 |
 | `IMAP 登录失败` / `authenticationfailed` | 授权码错误、未开启 IMAP、或用了网页密码 | 回网页端重新开启 IMAP/SMTP 并生成授权码（16 位左右，别带空格） |
 | SMTP `535` / `534` / `530` | 认证失败：授权码错 / 未开 SMTP / 服务商关闭基础认证 | 重新生成授权码；Gmail 用应用专用密码；企业邮箱找管理员确认 |
@@ -540,29 +636,33 @@ MAIL_WORK_FOLDERS=INBOX,Junk
 
 ### 6.9 邮箱行为说明
 
-- 邮箱**没有平台回调**：真实模式下 `POST /api/webhook/mail` 一律验签失败，邮件只能由本机 IMAP 轮询 ingest（防伪造的有意设计）；Mock 模式仍可用演示签名走通闭环。
-- 轮询默认 45s 一轮（`MAIL_POLL_SECONDS`，最小 5），不是实时推送。
-- IMAP 的 UID 水位存在内存里：重启会重新立基线，**重启间隙到达的邮件会被跳过**。
-- 入库正文为「主题 + 正文」，合计截断到约 2000 字符（中枢与 LLM 只需要要点）。
-- 回写走 SMTP：主题自动加 `Re:`、带 `In-Reply-To` 串联会话；发信地址固定为登录账号（否则 QQ / 网易会判冒用）。
-- 取正文用 `BODY.PEEK[]`，不会改动你邮箱里的已读状态。
+  邮箱**没有平台回调**：真实模式下 `POST /api/webhook/mail` 一律验签失败，邮件只能由本机 IMAP 轮询 ingest（防伪造的有意设计）；Mock 模式仍可用演示签名走通闭环。
+  轮询默认 45s 一轮（`MAIL_POLL_SECONDS`，最小 5），不是实时推送。
+  IMAP 的 UID 水位存在内存里：重启会重新立基线，**重启间隙到达的邮件会被跳过**。
+  入库正文为「主题 + 正文」，合计截断到约 2000 字符（中枢与 LLM 只需要要点）。
+  回写走 SMTP：主题自动加 `Re:`、带 `In Reply To` 串联会话；发信地址固定为登录账号（否则 QQ / 网易会判冒用）。
+  取正文用 `BODY.PEEK[]`，不会改动你邮箱里的已读状态。
 
----
+   
 
 ## 7. errcode / 报错总表
 
 > 下表中的建议与 `pnpm run doctor` 输出的中文修复建议一致；换账号时优先照 doctor 的建议做。
 
 | 平台 | 错误码 / 关键词 | 含义 | 处理 |
-|---|---|---|---|
+|   |   |   |   |
 | 飞书 | `21001` | 租户策略 / 合规限制，无法换 tenant_access_token | 企业认证或换合规租户；改 Secret / IP / 代码无效 |
 | 飞书 | `10014` | App Secret 错误 | 回后台重新复制 Secret |
 | 飞书 | `10003` | App ID 不存在 / 应用被删除 | 核对 `FEISHU_APP_ID` |
 | 飞书 | `99991663` | tenant_access_token 无效 | 重置 Secret 后旧 token 失效；重跑 doctor；核对 base URL |
 | 飞书 | `401 verify failed` | Verification Token 不一致 | 对齐 `FEISHU_VERIFY_TOKEN` |
+| 飞书 | `20027` / `99991672` / `99991679` / `230027`（用户身份） | 用户身份权限未开通 / 版本未发布 / 旧 token 不带新权限 | 开通 §3.6 的用户身份权限 → 发布版本 → **重新授权** |
+| 飞书 | `20010`（授权页） | 当前账号不在应用可用范围 | 让管理员加入可用范围 |
+| 飞书 | `20029` / redirect_uri 不合法 | 回调地址与后台登记不一致 | `FEISHU_REDIRECT_URI` 与后台逐字符一致 |
 | 钉钉 | `40089` / `InvalidAuthentication` | Client ID / Secret 错误 | 重新复制 `DINGTALK_CLIENT_ID` / `_CLIENT_SECRET` |
 | 钉钉 | `40001` / `40014` | accessToken 相关错误 | 核对 `DINGTALK_BASE_URL`；确认应用已发布 |
 | 钉钉 | 机器人无权限 / 收不到消息 | 机器人能力未开、未发布、接收模式不是 Stream | 后台改接收模式 → 发布版本 → `DINGTALK_STREAM=true` → 重启 |
+| 钉钉 | 账号页「未找到 dws」/ 本人身份不可用 | 未装 dws、未登录、组织未开 CLI 访问 | 装 dws + 管理员开 CLI 访问 + `dws auth login`；见 §4.5 |
 | 企微 | `60020` | 出口 IP 不在「企业可信 IP」 | 把 doctor 显示的出口 IP 加白；用稳定公网出口 |
 | 企微 | `40013` | 企业ID 错误 | 用「我的企业 → 企业信息」的企业ID |
 | 企微 | `40001` | Secret 错误 / 已重置 | 应用详情「眼睛」重新复制 |
@@ -580,25 +680,34 @@ MAIL_WORK_FOLDERS=INBOX,Junk
 | 通用 | `401`（业务接口） | API_TOKEN 不一致 | 前端 `VITE_API_TOKEN` 与后端 `API_TOKEN` 一致 |
 | 通用 | `1008 unauthorized`（WS） | WS token 错误 | 同上，`/ws?token=<API_TOKEN>` |
 
----
+   
 
 ## 8. 安全与回滚
 
-- **凭据只放 `.env`**：`unimsg-connector/.env` 已被 `.gitignore` 忽略；仓库只保留 `.env.example`（全占位符）。不要 `git add -f .env`，不要把授权码贴进 issue / 截图 / 聊天记录。
-- **`VITE_` 红线**：任何 `*SECRET` / `*KEY` / `*TOKEN` 都不能加 `VITE_` 前缀，否则会被打进前端构建产物。前端只拿业务入口 token（`VITE_API_TOKEN`）。
-- **doctor 是只读的**：只做换取 token / IMAP SEARCH 立基线 / SMTP 登录 + QUIT，不发送任何业务消息；报告中的邮箱地址自动脱敏，但把报告贴出去前仍建议人工再看一眼。
-- **换错账号 / 想回滚**：
-  - 临时离线演示：把对应平台改成 `*_MODE=mock`（或四个都改），重启即可，不需要删凭据；
-  - 恢复旧配置：用你的 `.env` 备份覆盖后重启；
-  - 凭据泄露：立刻在平台后台重置 Secret / 重新生成授权码，更新 `.env` 后重启；旧值会立即失效。
-- **改完 `.env` 必须重启**：后端只在启动时读取；前端 Vite 也只在 dev server 启动时读取 `packages/web/.env`。
+  **凭据只放 `.env`**：`unimsg connector/.env` 已被 `.gitignore` 忽略；仓库只保留 `.env.example`（全占位符）。不要 `git add  f .env`，不要把授权码贴进 issue / 截图 / 聊天记录。
+  **本人身份令牌不进仓库**：飞书令牌文件（`.feishu user token.json`）、接收水位（`.feishu user receive.json`）已 gitignore；钉钉 token 由 dws 存在本机（Windows 用系统凭据保护、与设备绑定），LinkHub 不读取、不落盘。**不要**提交 / 复制 `~/.dws`，也不要 `git add  f` 任何 token / 水位文件。
+  **不同平台的身份互不影响**：飞书令牌按 App ID 校验（换应用需重新授权）；钉钉按 dws 登录档案（换组织 / 换账号重新 `dws auth login`，多账号用 `DWS_PROFILE`）。
+  **`VITE_` 红线**：任何 `*SECRET` / `*KEY` / `*TOKEN` 都不能加 `VITE_` 前缀，否则会被打进前端构建产物。前端只拿业务入口 token（`VITE_API_TOKEN`）。
+  **doctor 是只读的**：只做换取 token / IMAP SEARCH 立基线 / SMTP 登录 + QUIT，不发送任何业务消息；报告中的邮箱地址自动脱敏，但把报告贴出去前仍建议人工再看一眼。
+  **换错账号 / 想回滚**：
+    临时离线演示：把对应平台改成 `*_MODE=mock`（或四个都改），重启即可，不需要删凭据；
+    **回退到机器人身份**：`.env` 设 `FEISHU_IDENTITY=bot` / `DINGTALK_IDENTITY=bot` 重启（已连接的本人身份保留但不使用）；只想停掉本人接收可设 `*_USER_RECEIVE=false`；钉钉彻底退出登录用 `dws auth logout`；
+    恢复旧配置：用你的 `.env` 备份覆盖后重启；
+    凭据泄露：立刻在平台后台重置 Secret / 重新生成授权码，更新 `.env` 后重启；旧值会立即失效。
+  **改完 `.env` 必须重启**：后端只在启动时读取；前端 Vite 也只在 dev server 启动时读取 `packages/web/.env`。
 
----
+   
 
 ## 9. FAQ
 
 **Q：我填了真实凭据，但 `/api/health` 的 `modes` 还是 mock？**
 A：按顺序查：① 是否显式 `*_MODE=mock`；② `/api/accounts` 的 `missing` / `reason` 是否说明凭据不足；③ 邮箱是否 `MAIL_ENABLED=false`；④ 是否改完没重启后端。
+
+**Q：真实模式发送失败了，原因在哪看？**
+A：消息详情页「回写失败」区域会直接显示 `failureReason`（形如「原因：…」），并提供「重试发送」按钮；完整错误仍在「全链路回放」的闭环日志与死信队列里。收到失败 WebSocket 推送时也会弹失败 toast（带一句可读原因）。
+
+**Q：账号页显示「真实接口 / 已配置」，为什么实际发不出去？**
+A：账号页只说明**变量填齐了**，不代表平台能连通——假 App ID、权限未开、租户策略（飞书 `21001`）、出口 IP（企微 `60020`）都会这样。以 `pnpm run doctor   platform=<平台>` 的 PASS / FAIL 为准；FAIL 会带错误码和修复建议。改完 `.env` 记得**重启后端**（账号页会提示需重启）。
 
 **Q：doctor 显示 SKIP，是失败吗？**
 A：不是。SKIP 表示该平台当前未启用真实通道（`mode=mock` 且不是强制 `real`），doctor 按约定不发起真实探针。退出码只看 FAIL 与 Node 版本：全 PASS / SKIP → 0，有 FAIL → 1。
@@ -616,10 +725,10 @@ A：新的邮箱账号都要在网页端开启 IMAP/SMTP 并生成授权码；�
 A：反垃圾行为不可预测（同一发件人不同轮次可能进 `Junk` 或 `INBOX`）。把 `MAIL_<KEY>_FOLDERS` 设为 `INBOX,Junk` 一起监听，`externalId` 会带目录名，不会和收件箱的 UID 撞车。
 
 **Q：企业微信为什么会 60020，加白后还报？**
-A：确认加的是**当前真实出口公网 IP**（公司代理 / VPN / 家庭宽带 / 云服务器各不相同），保存后等约 1 分钟；IP 变化后需要重新加。用 `pnpm run doctor --platform=wecom` 可看到当前出口 IP。
+A：确认加的是**当前真实出口公网 IP**（公司代理 / VPN / 家庭宽带 / 云服务器各不相同），保存后等约 1 分钟；IP 变化后需要重新加。用 `pnpm run doctor   platform=wecom` 可看到当前出口 IP。
 
 **Q：电脑重启后，企业微信可信 IP 会不会变？**
-A：**一般不会**。电脑重启只是重新拿内网 DHCP 地址，公网出口 IP 在路由器 / 校园网或公司出口网关 / 运营商侧，重启电脑不会让出口网关重拨；本次实测 2026-11-03 → 11-04 出口 IP 未变。会变的情况：重启路由器 / 光猫、校园网重新认证、运营商重新分配、切换 Wi-Fi / 手机热点、开或换 VPN / 代理。既然 `pnpm run doctor` 每次都会打印当前出口公网 IP，演示前扫一眼即可；变了就回后台更新可信 IP。要彻底免维护，就用带固定公网 IP 的云服务器部署后端（或把出口固定到该服务器）。
+A：**一般不会**。电脑重启只是重新拿内网 DHCP 地址，公网出口 IP 在路由器 / 校园网或公司出口网关 / 运营商侧，重启电脑不会让出口网关重拨；本次实测 2026 11 03 → 11 04 出口 IP 未变。会变的情况：重启路由器 / 光猫、校园网重新认证、运营商重新分配、切换 Wi Fi / 手机热点、开或换 VPN / 代理。既然 `pnpm run doctor` 每次都会打印当前出口公网 IP，演示前扫一眼即可；变了就回后台更新可信 IP。要彻底免维护，就用带固定公网 IP 的云服务器部署后端（或把出口固定到该服务器）。
 
 **Q：飞书 21001 能靠改配置解决吗？**
 A：不能。21001 是租户级策略，已排除 Secret（10014）、IP 白名单、应用未发布、测试企业通道等因素；需要企业认证或换合规租户，换租户后只改 `FEISHU_APP_ID` / `FEISHU_APP_SECRET` 即可。
@@ -628,4 +737,19 @@ A：不能。21001 是租户级策略，已排除 Secret（10014）、IP 白名�
 A：四个平台都设 `*_MODE=mock`（或什么都不填，`auto` 自动 Mock），启动后端 + 前端即可走通「收件箱 → 回复 → 回放」；或直接 `pnpm e2e`（强制四平台 mock，完全离线，20 项断言 + `SMOKE OK`）。
 
 **Q：`pnpm doctor` 为什么输出的是 pnpm 自己的诊断？**
-A：pnpm 9 自带同名内置命令，实测无输出、退出码 0。本项目命令必须写 `pnpm run doctor`（或全路径 `pnpm --filter @unimsg/server run doctor`）。
+A：pnpm 9 自带同名内置命令，实测无输出、退出码 0。本项目命令必须写 `pnpm run doctor`（或全路径 `pnpm   filter @unimsg/server run doctor`）。
+
+**Q：本人身份和机器人身份可以同时用吗？**
+A：可以。机器人通道（飞书长连接 / 回调、钉钉 Stream）配置保留即可；本人身份连接后由 `*_IDENTITY` 决定发送身份，接收按 `*_USER_RECEIVE` 决定是否开启。两种通道同时收消息时按 `platform + externalId` 幂等去重，界面分别标注「本人账号接收」与「机器人接收」。
+
+**Q：飞书本人身份为什么收消息慢、还收不全？**
+A：慢是因为飞书官方没有个人消息推送事件，项目用用户 token **轮询**（默认 20s 一轮，通常 5–30s 延迟）；收不全是"本人身份"的平台语义——**只能读你本人可见的会话**，你不在的群读不到。两点都是边界，不是配置错误。
+
+**Q：钉钉为什么必须管理员开 CLI 访问？能绕吗？**
+A：不能绕。dws 涉及企业数据访问，官方设计就是管理员授权（共创阶段白名单 + 权限最小化）；未开通时 `dws auth login` 只能走申请审批。企业也可走 Custom App 模式自建应用授权，但仍需管理员操作。详见 §4.5。
+
+**Q：为什么我以本人身份发出的消息带「AI」角标？**
+A：dws 发送默认带钉钉平台的 AI 发送角标（`  ai tag` 默认 `true`），LinkHub 保留这个默认、不隐藏不伪造——对方能看出是自动化工具以你本人身份发出的，属于透明标注。
+
+**Q：本人身份真实端到端验证过吗？**
+A：代码、单测与 fake dws 离线桩已覆盖；真实端到端**待实测**：飞书受本机租户 `21001` 限制，钉钉需企业开启 CLI 访问并真人授权。文档不写"已实测通过"，详见 [personal identity.md](personal identity.md) §11。

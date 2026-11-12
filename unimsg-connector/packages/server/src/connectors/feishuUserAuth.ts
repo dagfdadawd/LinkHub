@@ -251,13 +251,13 @@ export class FeishuUserAuth {
   async accessToken(): Promise<string> {
     const status = this.status();
     if (status.state === 'none') {
-      throw new FeishuUserAuthError('飞书用户身份未授权：请在 LinkHub 账号页点击「连接飞书用户身份」完成授权');
+      throw new FeishuUserAuthError('飞书用户身份未授权：请在 LinkHub「平台账号」页点飞书卡片的「连接本人账号」完成授权');
     }
     if (status.state === 'invalid') {
       throw new FeishuUserAuthError(`飞书用户身份不可用：${status.reason}`);
     }
     if (status.state === 'expired') {
-      throw new FeishuUserAuthError('飞书用户授权已过期：请在 LinkHub 账号页点击「重新授权」');
+      throw new FeishuUserAuthError('飞书用户授权已过期：请在 LinkHub「平台账号」页重新授权（点「重新连接」）');
     }
 
     const record = this.load().record!;
@@ -284,10 +284,10 @@ export class FeishuUserAuth {
     if (status.state === 'refreshable') return '发送身份：本人（access_token 将自动续期）';
     if (status.state === 'none') {
       return this.opts.sendAs === 'user'
-        ? '未连接用户身份，发送会失败；请点击「连接飞书用户身份」'
+        ? '未连接用户身份，发送会失败；请到「平台账号」页点「连接本人账号」'
         : '未连接用户身份，当前以机器人发送；连接后自动切换为本人';
     }
-    if (status.state === 'expired') return '用户授权已过期，请点击「重新授权」；否则发送会失败';
+    if (status.state === 'expired') return '用户授权已过期，请到「平台账号」页重新授权（点「重新连接」）；否则发送会失败';
     return `${status.reason}；当前${effective === 'user' ? '发送会失败' : '以机器人发送'}`;
   }
 
@@ -434,7 +434,7 @@ export class FeishuUserAuth {
         } catch {
           // 落盘失败也要在内存里标记失效，至少本次进程状态正确
         }
-        throw new FeishuUserAuthError('飞书用户授权已失效（refresh_token 无效或已被使用）：请在 LinkHub 账号页点击「重新授权」');
+        throw new FeishuUserAuthError('飞书用户授权已失效（refresh_token 无效或已被使用）：请在 LinkHub「平台账号」页重新授权（点「重新连接」）');
       }
       throw e;
     }

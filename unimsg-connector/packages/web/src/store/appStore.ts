@@ -9,7 +9,7 @@ import type {
   ComposeRequest, MsgType, OutboundAttachment, Platform, UnifiedMessage,
 } from '../types';
 import type {
-  AccountInfo, FeishuOAuthStart, HealthInfo, MessageApi,
+  AccountInfo, DingtalkLoginStart, DingtalkPersonalStatus, FeishuOAuthStart, HealthInfo, MessageApi,
 } from '../services/api';
 import { isDemoApi } from '../services/api';
 import type { RealtimeClient, RealtimeStatus } from '../services/realtime';
@@ -33,6 +33,12 @@ export interface AppState {
   connection: RealtimeStatus;
   demoMode: boolean;
   initialized: boolean;
+  /**
+   * 最近一次「实时收到」的发送失败（含可读原因）。
+   * 只由 WebSocket failed 事件设置——加载历史失败消息不会弹 toast；
+   * AppShell 消费后调用 dismissSendFailure 清掉，避免重复提示。
+   */
+  sendFailure: { traceId: string; reason?: string; at: number } | null;
 }
 
 export const DEFAULT_FILTERS: Filters = {
@@ -74,6 +80,7 @@ export class AppStore {
     connection: 'connected',
     demoMode: true,
     initialized: false,
+    sendFailure: null,
   };
 
   private listeners = new Set<() => void>();
@@ -146,6 +153,11 @@ export class AppStore {
     this.set({ error: null });
   }
 
+  /** 清掉最近一次实时发送失败提示（AppShell 弹过 toast 后调用） */
+  dismissSendFailure(): void {
+    if (this.state.sendFailure) this.set({ sendFailure: null });
+  }
+
   async reply(id: string, text: string, attachments?: OutboundAttachment[]): Promise<void> {
     const ack = await this.api.reply(id, text, attachments);
     // 202 回执兜底：WS 丢包时也能把回复内容与 replied 状态落地。
@@ -200,6 +212,22 @@ export class AppStore {
     return this.api.feishuOAuthStart();
   }
 
+  /** 拉起钉钉本人身份登录（本机 dws）：返回操作指引，完成后前端轮询状态判断 */
+  async dingtalkPersonalLogin(): Promise<DingtalkLoginStart> {
+    return this.api.dingtalkPersonalLogin();
+  }
+
+  /** 轮询钉钉本人身份登录状态（只读，不打断当前消息视图） */
+  async dingtalkPersonalStatus(): Promise<DingtalkPersonalStatus> {
+    return this.api.dingtalkPersonalStatus();
+  }
+
+  /** 注销钉钉本人身份并刷新账号页（回到机器人 / Mock 通道） */
+  async dingtalkPersonalLogout(): Promise<void> {
+    await this.api.dingtalkPersonalLogout();
+    await this.refreshAccounts();
+  }
+
   async refreshHealth(): Promise<void> {
     try {
       this.set({ health: await this.api.health() });
@@ -225,6 +253,16 @@ export class AppStore {
   private onRealtime(event: { type: string; data?: UnifiedMessage }): void {
     if (!event.data) return;
     if (event.type === 'message.received' || event.type === 'message.updated' || event.type === 'message.failed') {
+      // 实时失败才提示：失败原因直接写进消息，详情页不必再让用户去回放里翻
+      if (event.type === 'message.failed' || event.data.status === MsgStatus.FAILED) {
+        this.set({
+          sendFailure: {
+            traceId: event.data.traceId,
+            ...(event.data.failureReason ? { reason: event.data.failureReason } : {}),
+            at: Date.now(),
+          },
+        });
+      }
       this.upsert(event.data);
     }
   }

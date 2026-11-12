@@ -32,6 +32,13 @@ $python = if (Get-Command python -ErrorAction SilentlyContinue) { "python" } els
 
 Write-Host "[e2e] starting server on port $Port (forced mock mode, isolated from real .env credentials) ..."
 $env:SERVER_PORT = "$Port"
+# 注意：Windows 上把环境变量设成空字符串等于【删除】它，dotenv 会再读回 .env 里的 DATA_DIR，
+# 所以这里用独立临时目录（而不是空串）隔离消息快照/水位，e2e 结束一并清理。
+$e2eData = Join-Path ([System.IO.Path]::GetTempPath()) ("linkhub-e2e-" + [guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Path $e2eData -Force | Out-Null
+$env:DATA_DIR = $e2eData
+$env:DATA_FILE = Join-Path $e2eData "linkhub-state.json"
+$env:FEISHU_USER_STATE_FILE = Join-Path $e2eData "feishu-user-receive.json"
 # e2e 必须完全离线可复现：强制四个平台 mock，不连真实平台/邮箱，也不受 .env 真实凭据影响
 $env:FEISHU_MODE = "mock"
 $env:DINGTALK_MODE = "mock"
@@ -54,6 +61,10 @@ function Stop-Server {
   $listeners = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
   foreach ($c in $listeners) {
     try { Stop-Process -Id $c.OwningProcess -Force -ErrorAction SilentlyContinue } catch {}
+  }
+  # 清理本轮 e2e 的独立数据目录（消息快照 / 水位文件），保证下一轮可复现
+  if ($e2eData) {
+    try { Remove-Item $e2eData -Recurse -Force -ErrorAction SilentlyContinue } catch {}
   }
 }
 

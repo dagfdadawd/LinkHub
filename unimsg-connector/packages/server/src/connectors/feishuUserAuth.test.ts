@@ -307,3 +307,13 @@ test('auto 模式已过期：按本人严格报错，不悄悄回退机器人', 
   assert.match(auth.identityView().hint, /重新授权/);
   await assert.rejects(() => auth.accessToken(), /过期/);
 });
+
+test('authorizeUrl：完整身份 scope（含本人接收的读消息权限）用空格分隔', () => {
+  const scopes = [
+    'im:message', 'im:message.send_as_user', 'im:resource',
+    'im:message.p2p_msg:get_as_user', 'im:message.group_msg:get_as_user', 'offline_access',
+  ];
+  const auth = makeAuth({ scopes });
+  const url = new URL(auth.authorizeUrl('state-x'));
+  assert.equal(url.searchParams.get('scope'), scopes.join(' '));
+});
