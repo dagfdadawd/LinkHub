@@ -42,7 +42,7 @@
 
 | 平台 | 本人身份**发送** | 本人身份**接收** | LinkHub 实现方式 | 当前状态 |
 |---|---|---|---|---|
-| 飞书 | ✅ 官方支持（`user_access_token` + `im/v1/messages`） | ⚠️ 官方无「个人消息推送事件」，用用户 token **轮询**本人所在会话的增量消息 | 用户 OAuth 授权 → 轮询器 + 水位持久化 | 代码 / 单测就绪；真实租户端到端受 `21001` 限制（见 §3.1） |
+| 飞书 | ✅ 官方支持（`user_access_token` + `im/v1/messages`）；**2026-11-12 真实租户实测通过**：以本人身份发出后飞书侧 `sender.sender_type=user` | ⚠️ 官方无「个人消息推送事件」，用用户 token **轮询**本人所在会话的增量消息；**2026-11-12 真实租户实测通过**：单聊 + 群聊均以 `receivedAs=user` 入库（列会话需带 `types=p2p,group`） | 用户 OAuth 授权 → 轮询器 + 水位持久化 | **2026-11-12 真实端到端已通过**（本机租户 `21001` 已解除；接收仍是轮询 5–30s；单聊枚举依赖未公开参数 `types`，有降级兜底，见 §3.1） |
 | 钉钉 | ✅ 官方开源 CLI [`dws`](https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli) 的 `dws chat message send`（以当前登录用户身份发） | ✅ 同上，`dws event +listen-im` 个人事件订阅（Stream 长连接，NDJSON） | 子进程调用本机 `dws`，LinkHub 管理登录态 / 事件流 / 重启 | 代码 / 单测 / fake-dws 桩就绪；真实登录需企业开启 CLI 访问（见 §3.2） |
 | 企业微信 / 邮箱 | — | — | 不适用本人身份（平台无对应能力），保持现有机器人 / IMAP 通道 | 不变 |
 
@@ -59,8 +59,9 @@
 - **接收是轮询，不是实时**：飞书官方没有面向"个人消息"的推送事件，本项目用用户身份 token 轮询本人所在会话，**默认 20 秒一轮**（`FEISHU_USER_RECEIVE_SECONDS`，最小 5），新消息通常 **5–30 秒**内出现，取决于轮询间隔与平台接口耗时。不要承诺"秒级实时"。
 - **只能读本人可见的会话**：列会话 / 读消息都用授权用户的身份，**读不到你本人不所在的群、也读不到别人视角的消息**。这是"本人身份"的语义边界，不是缺陷。
 - **首轮默认不灌历史**：`FEISHU_USER_BACKFILL_HOURS=0` 时首轮只记录每个会话的水位基线，只入库之后的新消息；需要回看最近 N 小时可设 `24` 等。
-- **需要用户身份权限**：除发送所需的用户身份权限外，接收还需要「以用户身份获取单聊消息 / 群聊消息」等权限（见 §4.1），由应用管理员开通并发布版本。
-- **企业认证 / 租户策略 `21001`**：部分租户（常见于未完成企业认证）换应用 `tenant_access_token` 会被平台策略直接拒绝，报 `21001 Access denied due to platform policy`。换 Secret、改代码、加 IP 白名单都无效，只能企业认证或换合规租户。本人身份走 **user_access_token**，是否同样被租户策略拦截取决于平台侧策略，本项目未能在该租户做真实端到端验证（见 §11）；遇到时同按平台策略处理。
+- **需要用户身份权限**：除发送所需的用户身份权限外，接收还需要「以用户身份获取单聊消息 / 群聊消息」与「查看群信息」（`im:chat:read`，列会话的硬前提；缺它列会话直接报 `99991679`）等权限（见 §4.1），由应用管理员开通并发布版本。
+- **企业认证 / 租户策略 `21001`（本机租户 2026-11-12 已解除，实测通过）**：部分租户（常见于未完成企业认证）换应用 `tenant_access_token` 会被平台策略直接拒绝，报 `21001 Access denied due to platform policy`。**本机租户已解除**：2026-11-12 14:16 用仓库 `.env` 真实凭据实测，`POST /open-apis/auth/v3/app_access_token/internal` 与 `/tenant_access_token/internal` 均返回 `code:0`（推断为完成企业认证 / 平台策略调整，未获官方确认）。**这不代表 `21001` 消失了**：它仍是飞书平台策略，换租户、换环境、平台策略变化都可能再现，本文保留历史排错记录（见 [README 实测记录](../README.md)），其他租户遇到时仍按「企业认证或换合规租户」处理，换 Secret / 改代码 / 加 IP 白名单都无效。本机租户的本人身份真实端到端已完成：收单聊 + 群聊、以本人身份发送，见 [验收记录](verification/feishu-personal-e2e-2026-11-12.md)。
+- **列会话必须带 `types=p2p,group` 才能看到单聊**：飞书公开文档对 `GET /open-apis/im/v1/chats` 的说明是「不包含单聊」，2026-11-12 真实令牌实测：不带 `types` 只返回 2 个群聊，加 `types=p2p,group` 返回 5 个会话（2 群 + 3 单聊）。该参数**未收录于公开 API 文档**（飞书官方 CLI 在用），存在被平台调整的风险；LinkHub 已做**进程内降级兜底**：平台一旦报参数错误（`232001` / invalid request parameter），自动永久退回不带 `types` 的纯群列表并告警——单聊收不到，但群聊接收不中断（见 §4.4、§4.6）。
 - **单实例单账号**：一次授权绑定一个飞书账号；换账号需重新授权（令牌文件按 App ID 校验，换 App 会要求重新授权）。
 
 ### 3.2 钉钉：dws 共创阶段 + 企业 CLI 访问 + 首次真人授权 + 凭据绑定设备
@@ -79,7 +80,7 @@
 ### 3.3 两者共同的边界
 
 - **真实凭据只在本机 / 服务端**：飞书 token 存服务端令牌文件，钉钉 token 存本机 dws 凭据存储；都不下发前端、不写日志、不进 git（见 §8）。
-- **钉钉双通道同时开启会重复入库**：机器人 Stream（`DINGTALK_STREAM=true`）与本人身份个人事件同时开启时，同一条钉钉消息可能**各入库一次**——机器人通道与个人事件的平台消息 ID 体系不同，跨通道幂等键不通用。**建议二选一**：要用本人身份就关掉机器人 Stream（`DINGTALK_STREAM=false`），或反过来；这是已知限制，不是 bug。
+- **双通道同时开启会重复入库**：① 钉钉机器人 Stream（`DINGTALK_STREAM=true`）与本人身份个人事件同时开启时，同一条钉钉消息可能**各入库一次**——两套平台消息 ID 体系不同，跨通道幂等键不通用；② 飞书机器人长连接（`FEISHU_STREAM=true`）与本人轮询同时开启时，在「机器人与本人同处的单聊」里同一条消息也可能被两条通道各入库一次（同一 `externalId` 幂等，只留一条）。**建议二选一**：要用本人身份就关掉机器人通道（`*_STREAM=false`），或反过来；这是已知限制，不是 bug。
 - **Mock 永远是 Mock**：平台 `*_MODE=mock` 时本人身份通道不启动，界面统一显示「模拟」，不会显示成"本人已连接"。
 - **多员工共享一个实例不支持**：单身份模型；需要多人使用请各自部署（或等后续多租户能力）。
 - **平台策略会变**：飞书权限名、钉钉 CLI 访问策略以官方后台当时展示为准；本文写作时已做只读探测，但平台侧可能调整。
@@ -92,7 +93,7 @@
 
 | 平台 | 管理员要做什么 | 官方后台 | 授权中心里的动作 |
 |---|---|---|---|
-| 飞书 | 创建**企业自建应用** → 权限管理开通消息权限（scope 由 onboarding 下发，含 `im:message` 等；本人接收另需 `im:message.p2p_msg:get_as_user` / `im:message.group_msg:get_as_user`）→ 安全设置添加**重定向 URL**（`http://localhost:<端口>/api/feishu/oauth/callback`，页面给出实际值）→ 事件订阅 Encrypt Key / Verification Token（或长连接）→ **发布应用** | <https://open.feishu.cn/app> | 「打开飞书开放平台（应用后台）」「复制管理员开通清单（含回调 URL / 权限）」 |
+| 飞书 | 创建**企业自建应用** → 权限管理开通消息权限（scope 由 onboarding 下发，含 `im:message` 等；本人接收另需 `im:message.p2p_msg:get_as_user` / `im:message.group_msg:get_as_user` / `im:chat:read`，以及 `offline_access`）→ 安全设置添加**重定向 URL**（`http://localhost:<端口>/api/feishu/oauth/callback`，页面给出实际值）→ 事件订阅 Encrypt Key / Verification Token（或长连接）→ **发布应用** | <https://open.feishu.cn/app> | 「打开飞书开放平台（应用后台）」「复制管理员开通清单（含回调 URL / 权限）」 |
 | 钉钉 | 创建**企业内部应用**（记 Client ID / Secret）→ 开通机器人发送权限、事件订阅 AES Token/Key → **企业开启「CLI 访问管理」**（或走 Custom App 模式，本人身份依赖它） | <https://open-dev.dingtalk.com/> | 「打开钉钉开发者后台」「复制管理员开通清单」 |
 | 企业微信 | 创建**自建应用**（CorpID / AgentId / Secret）→ 接收消息 Token / EncodingAESKey + 回调 URL（`/api/wecom/callback`，需公网可达）→ **企业可信 IP** 加入部署机公网出口 IP（否则发送报 `60020`） | <https://work.weixin.qq.com/> | 「打开企业微信管理后台」「复制管理员开通清单（含可信 IP）」 |
 | 邮箱 | **不需要管理员**：自己到邮箱网页版开启 IMAP/SMTP 并生成授权码即可 | 各服务商设置页（页面给深链） | 「添加邮箱账号」「去邮箱网页版开启 IMAP/SMTP」 |
@@ -104,20 +105,23 @@
 
 在[飞书开放平台](https://open.feishu.cn/)开发者后台，基于**已有的自建应用**补充配置（机器人通道的配置保留不动）：
 
-1. **权限管理 → 用户身份权限**开通：
+1. **权限管理 → 用户身份权限**开通（2026-11-12 在测试企业「LinkHub 测试」/ 应用 `LinkHub` 上实测有效；在「开通权限」抽屉里按用户身份权限勾选后点「确认开通权限」，测试应用免审、即时生效）：
    - `im:message`（获取与发送单聊、群组消息）
    - `im:message.send_as_user`（以用户身份发消息）——**本人发送必需**
-   - `im:resource`（上传图片 / 文件；只发文本也建议一起开）
-   - 本人接收另需：`im:message`、`im:message.p2p_msg:get_as_user`（以用户身份获取单聊消息）、`im:message.group_msg:get_as_user`（以用户身份获取群聊消息）、`im:resource`（附件资源）；缺权限时日志会给出 `99991672` 与所需权限清单（见 §4.6）。
-   - 注意：权限变更后必须**重新发布应用版本并重新授权**，旧 token 不带新权限。
-  - **授权 scope 由 LinkHub 自动申请**：OAuth 时带 `im:message`、`im:message.send_as_user`、`im:resource`、`offline_access`；**本人接收开启时会额外申请** `im:message.p2p_msg:get_as_user`、`im:message.group_msg:get_as_user`（`FEISHU_USER_RECEIVE=false` 或 `FEISHU_IDENTITY=bot` 时不申请）。后台仍需把这些权限在应用侧开通。
-  - **从旧版本升级后必须「重新授权」一次**：旧 token 不含读消息权限，直接轮询会报 `99991672`（不会自己恢复）。
+   - `im:resource`（上传图片 / 文件；只发文本也建议一起开；**缺它授权页可能报 `20027` 当前应用权限不足**）
+   - `im:chat:read`（查看群信息）——**列会话（含单聊）的硬前提**：缺它对 user token 调 `GET /open-apis/im/v1/chats` 直接报 `99991679`（required one of [im:chat:readonly, im:chat, im:chat.group_info:readonly, im:chat:read]），一条会话都列不出来，轮询等于空转。
+   - 本人接收另需：`im:message.p2p_msg:get_as_user`（以用户身份获取单聊消息）、`im:message.group_msg:get_as_user`（以用户身份获取群聊消息）；缺权限时日志会给出 `99991672` 与所需权限清单（见 §4.6）。
+   - `offline_access`（后台显示为「持续访问已授权的数据」）——**refresh_token / 自动续期必需，也要在「用户身份权限」里开通**：2026-11-12 实测此前未开通，授权页报 `20027 当前应用权限不足`（同批还缺 `im:resource`）；补齐后恢复。
+   - 注意：权限变更后必须**重新授权**（正式应用还需发布版本使权限生效；**测试应用**改动免审即时生效），旧 token 不带新权限。
+   - **授权 scope 由 LinkHub 自动申请**：OAuth 时带 `im:message`、`im:message.send_as_user`、`im:resource`、`offline_access`；**本人接收开启时会额外申请** `im:message.p2p_msg:get_as_user`、`im:message.group_msg:get_as_user`、`im:chat:read`（`FEISHU_USER_RECEIVE=false` 或 `FEISHU_IDENTITY=bot` 时不申请）。后台仍需把这些权限在应用侧开通。
+   - **从旧版本升级后必须「重新授权」一次**：旧 token 不含读消息 / 列会话权限，直接轮询会报 `99991672` / `99991679`（不会自己恢复）。
 2. **安全设置 → 重定向 URL**：添加与 LinkHub 完全一致的地址，默认
    `http://localhost:<SERVER_PORT>/api/feishu/oauth/callback`
    （默认端口 3001 即 `http://localhost:3001/api/feishu/oauth/callback`）。协议、域名、端口、路径、结尾斜杠**全部要一致**；端口不是 3001 时先设 `FEISHU_REDIRECT_URI`，再把**同一个值**原样填进后台。
-3. **安全设置 → 打开「刷新 user_access_token」**：否则 refresh_token 无法自动续期。
-4. **版本管理与发布**：重新发布版本并等权限生效；要授权的飞书账号必须在该应用的**可用范围**内（否则授权会报 `20010`）。
-5. 如租户被 `21001` 拦截，先按 [§3.1](#31-飞书轮询用户可见范围租户策略) 处理租户策略，否则后面步骤都会失败。
+   - **实测坑（2026-11-12）**：这一项为空时，点授权会在飞书授权页报 **`20029 重定向 URL 有误`**；把上面的回调地址登记后即恢复。遇到 `20029` 先查后台这一项，不是 LinkHub 的 bug。
+3. **持续授权（自动续期）由 `offline_access` 决定**：在「用户身份权限」开通 `offline_access`（后台显示「持续访问已授权的数据」）并重新授权后，OAuth 会返回 `refresh_token` + `refresh_token_expires_in`（2026-11-12 实测已验证）。旧版控制台曾有「刷新 user_access_token」开关，**新版控制台已无此项**（「安全设置」只有「重定向 URL」「IP 白名单」两页）。
+4. **应用发布**：正式应用需重新发布版本并等权限生效（**测试应用**后台横幅提示「修改后无需重新审核即可生效」）；要授权的飞书账号必须在该应用的**可用范围**内（否则授权会报 `20010`）。
+5. **租户策略 `21001`**：2026-11-12 本机租户已实测解除（`app_access_token` / `tenant_access_token` 均 `code:0`），不再阻断授权与收发；其他租户仍可能遇到——遇到时先按 [§3.1](#31-飞书轮询用户可见范围租户策略) 处理租户策略，否则后面步骤都会失败。
 
 ### 4.2 `.env` 配置
 
@@ -157,9 +161,12 @@ FEISHU_USER_BACKFILL_HOURS=0
 ### 4.4 接收机制（看到什么、多久看到）
 
 - 启动后日志出现身份行与轮询启动说明，例如：`[unimsg] 身份: 飞书=本人(收:用户轮询/发:本人)`（具体文案以实际日志为准）；
-- 每轮先列本人会话，再对每个会话按时间水位拉增量（每轮最多 `FEISHU_USER_CHAT_LIMIT` 个会话）；
+- 每轮先列本人会话（请求带 `types=p2p,group`，**单聊 + 群聊都会列到**；平台若拒绝该参数会自动降级为纯群列表并告警，见 §3.1），再对每个会话按时间水位拉增量（每轮最多 `FEISHU_USER_CHAT_LIMIT` 个会话）；单聊消息同样按本人身份入库（`receivedAs=user`）；
+- 2026-11-12 真实租户实测的入库日志形如：`[feishu-user] 本人账号收到消息：单聊「LinkHub」 · 发送者=<脱敏名> · 类型=text`；群聊消息走同一通道，日志标「群聊」；
 - 首轮默认只立基线，**不会把历史消息灌进收件箱**；设 `FEISHU_USER_BACKFILL_HOURS=24` 才会回溯；
+- **水位同秒重复已收敛**：水位按「秒」下取整，飞书每轮会把水位同一秒的最后一条重新返回；LinkHub 在轮询里把 `create_time <= 水位` 的消息直接计为「已见过」跳过，不再重复 ingest——避免每轮重复写 `redelivered` trace 并触发全量落盘（返回字段 `alreadySeen`，日志形如「…重复 0 条，已见过 2 条」）；
 - 自己发出的消息会被**尽可能**过滤（自环保护），不会在自己的收件箱里再出现一条；**飞书拿不到本人 open_id 时会跳过过滤并告警**；
+- **双通道并存会重复入库（已知限制）**：机器人长连接（`FEISHU_STREAM=true`）与本人轮询同时开启时，在「机器人与本人同处的单聊」里同一条消息可能被两条通道各入库一次；2026-11-12 实测该单聊里本人发出的消息先被机器人长连接入库为 `receivedAs=bot`（同一 `externalId` 幂等，只留一条）。**建议演示时二选一**；
 - 权限不足时不会静默：账号页身份块 / 日志会给出所需权限与"重新授权"提示；
 - 水位文件损坏 / 丢失时会安全回退并**重建基线**，重启后从水位续传；但**断档期间的消息不会自动补回**——需要回填就把 `FEISHU_USER_BACKFILL_HOURS` 设为 `24` 等值后重启（会把该时段消息重新入库）。
 
@@ -171,6 +178,10 @@ pnpm run doctor --platform=feishu     # 应用凭据 + 用户身份探针（只�
 curl http://127.0.0.1:3001/api/health              # identities 摘要（发送/接收身份）
 curl -H "Authorization: Bearer dev-token" http://127.0.0.1:3001/api/accounts
 # 看飞书平台 identity 字段：policy / effectiveSend / effectiveReceive / user.hint
+curl -X POST -H "Authorization: Bearer dev-token" http://127.0.0.1:3001/api/feishu/oauth/start
+# 返回真实飞书授权链接（data.url）与 redirectUri；浏览器打开它完成本人授权
+curl -H "Authorization: Bearer dev-token" "http://127.0.0.1:3001/api/messages?platform=feishu"
+# 收件箱里本人身份接收的条目带 receivedAs=user；单聊 conversation.type=p2p（2026-11-12 真实实测）
 ```
 
 ### 4.6 飞书本人身份常见报错
@@ -178,16 +189,17 @@ curl -H "Authorization: Bearer dev-token" http://127.0.0.1:3001/api/accounts
 | 现象 | 原因 | 处理 |
 |---|---|---|
 | 账号页身份为「未连接」，发送走机器人 | 还没点「连接本人账号」，或令牌文件被删 | 点「连接本人账号」/「重新授权」 |
-| 发送失败「飞书用户授权已过期 / 请重新授权」 | refresh_token 失效、后台没开「刷新 user_access_token」、令牌文件损坏 | 点「重新授权」；核对后台刷新开关；`FEISHU_IDENTITY=auto` 下不会悄悄换回机器人 |
-| 授权页报 `20027` / 权限不足 | 用户身份权限未开通，或版本未发布 | 按 §4.1 开通权限并重新发布版本，再重新授权 |
+| 发送失败「飞书用户授权已过期 / 请重新授权」 | refresh_token 失效 / 过期（约 7 天）、后台未开通 `offline_access`（持续访问已授权的数据）、令牌文件损坏 | 点「重新授权」；核对后台 `offline_access` 是否已开通（新版控制台**没有**「刷新 user_access_token」独立开关，自动续期由它决定）；`FEISHU_IDENTITY=auto` 下不会悄悄换回机器人 |
+| 授权页报 `20027` / 权限不足 | **2026-11-12 实测**：应用「用户身份权限」未开通 `offline_access`（后台显示「持续访问已授权的数据」）和 / 或 `im:resource`；也可能只是版本未发布 | 在后台「权限管理 → 用户身份权限」的「开通权限」抽屉里勾选 `offline_access` 与 `im:resource`，点「确认开通权限」（测试应用免审、即时生效），再回 LinkHub 重新授权 |
 | 授权页报 `20010` | 当前飞书账号不在应用可用范围 | 让管理员把账号加入应用可用范围 |
-| 授权页报 `20029` / redirect_uri 不合法 | 回调地址与后台登记不一致 | `FEISHU_REDIRECT_URI` 与后台**逐字符**一致（含端口、斜杠） |
+| 授权页报 `20029` / redirect_uri 不合法 | **2026-11-12 实测**：后台「安全设置 → 重定向 URL」为空（或与 LinkHub 实际回调不一致） | 在后台登记 `FEISHU_REDIRECT_URI` 的**同一个值**（默认 `http://localhost:3001/api/feishu/oauth/callback`，协议 / 域名 / 端口 / 路径 / 斜杠逐字符一致），保存后重新发起授权 |
+| 列会话 / 接收报 `99991679` | 用户身份缺 `im:chat:read`（查看群信息），列 `/im/v1/chats` 被拒（required one of [im:chat:readonly, im:chat, im:chat.group_info:readonly, im:chat:read]） | 先在后台「权限管理 → 用户身份权限」开通 `im:chat:read`，再回 LinkHub「重新授权」（旧 token 不带新 scope；只重新授权、不开权限仍会报同样错误） |
 | 点「连接本人账号」后飞书页报错、回到 LinkHub 没反应 | 旧版本缺陷（已修复）：现在回跳会提示「飞书授权未完成」/「浏览器拦截了飞书授权窗口」并给常见原因与「重新发起授权」 | 按提示检查：应用未发布/不在可用范围、重定向 URL 不一致、用户身份权限未开通；改完**重启后端**再重新授权 |
-| 接收不到消息、日志提示权限错误（如 `99991672` / `99991679` / `20027` / `230027`） | 缺用户身份读消息权限 / 未重新授权 | 按提示补齐 §4.1 的读消息权限，**重新发布版本并重新授权**（权限变化后旧 token 不带新权限）。后端 hint 原文：`飞书用户身份缺少「读消息」权限（错误码 99991672）：请在飞书开放平台「权限管理 → 用户身份权限」开通 im:message、im:message.p2p_msg:get_as_user、im:message.group_msg:get_as_user、im:resource，发布应用版本后到 LinkHub 账号页点「重新授权」。` |
+| 接收不到消息、日志提示权限错误（如 `99991672` / `230027`） | 缺用户身份读消息权限 / 未重新授权 | 按提示补齐 §4.1 的读消息权限，**重新授权**（正式应用需发布版本使权限生效；测试应用改动免审），权限变化后旧 token 不带新权限。后端 hint 原文：`飞书用户身份缺少「读消息」权限（错误码 99991672）：请在飞书开放平台「权限管理 → 用户身份权限」开通 im:message、im:message.send_as_user、im:resource、im:message.p2p_msg:get_as_user、im:message.group_msg:get_as_user、im:chat:read，发布应用版本后到 LinkHub「平台账号」页点「重新授权」。` |
 | 能收但很慢（5–30s） | 轮询机制的固有延迟 | 正常现象；需要更快就减小 `FEISHU_USER_RECEIVE_SECONDS`（最小 5），但会增大接口调用量 |
 | 收件箱只有部分会话的消息 | 只读本人可见会话；本人不在的群读不到 | 平台边界，无法绕过 |
 | 首轮启动后历史消息没出现 | `FEISHU_USER_BACKFILL_HOURS=0` 默认只立基线 | 需要历史就设 `24` 等值后重启（注意会把该时段消息入库） |
-| `21001` | 租户策略 / 企业认证 | 见 §3.1，改配置无解 |
+| `21001` | 租户策略 / 企业认证（**本机租户 2026-11-12 已实测解除**，其他租户仍可能遇到） | 见 §3.1，改配置无解，只能企业认证或换合规租户 |
 
 ---
 
@@ -479,15 +491,19 @@ DINGTALK_IDENTITY=user
 
 ## 11. 验证状态（诚实标注）
 
+> 2026-11-12 更新：飞书本人身份已用**真实租户 + 真实 OAuth + 真实 `im/v1` 接口**完成端到端验收（收单聊 + 群聊、以本人身份发送），本机租户的 `21001` 已解除；钉钉真实端到端仍待企业条件。完整证据、命令与已知限制见 [docs/verification/feishu-personal-e2e-2026-11-12.md](verification/feishu-personal-e2e-2026-11-12.md)。
+
 | 项目 | 状态 |
 |---|---|
-| LinkHub 身份解析、飞书用户轮询、钉钉 dws 子进程、发送身份分流 | 已由单元测试 + 注入 fetch / 注入 runner 覆盖（以仓库测试输出为准） |
-| 飞书本人身份真实端到端（授权 → 轮询 → 入库 → 本人发送） | **待实测**：本机租户受 `21001` 限制，无法完成真实租户验证；代码与配置已就绪 |
+| LinkHub 身份解析、飞书用户轮询、钉钉 dws 子进程、发送身份分流 | 已由单元测试 + 注入 fetch / 注入 runner 覆盖（本轮 server **437 tests 全过**、web 28 文件 / 255 tests 全过、`pnpm -r typecheck` 全过，见验收记录） |
+| 飞书租户策略 `21001` | ✅ **2026-11-12 本机租户实测解除**：`POST /open-apis/auth/v3/app_access_token/internal` 与 `/tenant_access_token/internal` 均返回 `code:0`（此前 README 记录为 `21001 Access denied due to platform policy`，历史记录保留；`21001` 仍是平台策略，其他租户 / 环境仍可能遇到，见 §3.1） |
+| 飞书本人身份真实端到端（授权 → 轮询 → 入库 → 本人发送） | ✅ **2026-11-12 真实租户实测通过**（测试企业「LinkHub 测试」、应用 `LinkHub`（`cli_aa63738b78f81d0d`）、授权账号「八水合甲烷」）：真实 OAuth 授权 → 用户轮询收**单聊 + 群聊**（入库 `receivedAs=user`）→ `POST /api/messages/compose` 以本人身份返回 202 / `status=replied` → 飞书侧核对 `sender.sender_type=user`、`is_agent=false`（确认是真人本人，不是机器人）；独立测试实例 3101 与用户主应用 3001 各验证一次。详见 [验收记录](verification/feishu-personal-e2e-2026-11-12.md) |
+| 飞书单聊（p2p）会话发现 | ✅ **2026-11-12 真实令牌实测**：`GET /im/v1/chats` 不带 `types` 只返回 2 个群聊；带 `types=p2p,group` 返回 5 个会话（2 群 + 3 单聊），`types=p2p` 只返回 3 个单聊。该参数**未公开**（官方 CLI 在用），已做「被拒自动降级为纯群列表」兜底（`232001` / invalid request parameter） |
 | 钉钉 dws 真实端到端（登录 → 个人事件 → 入库 → 本人发送） | **待实测**：需要企业管理员开启 CLI 访问并本人完成钉钉授权；本机 dws v1.0.68-beta.1 已安装。**浏览器 loopback 登录通道**已由开发侧在本机真实 dws 上手工验证（能拉起 `127.0.0.1` 授权链接、登录子进程可控退出、无残留），但**未代真人完成授权**；设备码过期提示来自真实用户反馈 |
 | 登录双通道（浏览器推荐 / 设备码）与状态恢复 | ✅ **2026-11-12 离线实测**（3099 + `DWS_BIN=node scripts/fake-dws.mjs`、未登录初始态）：`POST /login {mode:browser}` 返回 loopback 授权链接 + 600s 窗口；同方式重复发起复用同一 `loginId`；`{mode:device, force:true}` 返回设备码 + 900s；`GET /status` 下发 `loginInProgress/loginMode/loginUrl/loginCode/loginExpiresAt/loginExpiresInSec/loginId`；模拟登录完成后 `authenticated=true` 且**接收通道自动启动**（无需重启后端）。真实钉钉与真实设备码授权仍待真人操作 |
 | 登录 / 注销后自动启停接收通道 | ✅ 实现 + 单测覆盖（`IdentityChannelsCoordinator`，45s 兜底对齐）；fake-dws 离线实测：登录完成后个人事件子进程自动启动 |
 | fake-dws 离线闭环（事件入库、幂等、本人发送回执、进程重启） | ✅ **2026-11-12 离线实测通过**（3099 端口 + 独立 `DATA_DIR` + `DWS_BIN=node scripts/fake-dws.mjs` + 仅本人身份模式）：模拟事件入库 `receivedAs=user`；回复 `delivery.mode=real / identity=user`；杀掉子进程后 1s 自动重启；进程退出无残留子进程。**不接触真实钉钉** |
-| 平台侧限制（飞书轮询延迟 / 可见范围；钉钉共创阶段 / CLI 访问 / 设备绑定） | 已按官方文档与只读探测核实，写进本文 §3 |
+| 平台侧限制（飞书轮询延迟 / 可见范围；钉钉共创阶段 / CLI 访问 / 设备绑定） | 已按官方文档与只读探测核实，写进本文 §3（2026-11-12 补充：`types=p2p,group` 是未公开参数、已做降级兜底；飞书本人身份已真实端到端验证，但**轮询 5–30s、只能读本人可见会话**等边界不变） |
 
 ---
 

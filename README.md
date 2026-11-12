@@ -158,7 +158,7 @@ MAIL_MODE=real
 
 平台限制（务必如实说明，详见 [docs/personal-identity.md](docs/personal-identity.md) §3）：
 
-- **飞书**：接收是**轮询**（默认 20s，通常 5–30s 延迟）、**只能读本人可见会话**；用户身份读消息权限需管理员开通并重新发布版本；未认证租户可能被 `21001` 拦截。
+- **飞书**：接收是**轮询**（默认 20s，通常 5–30s 延迟）、**只能读本人可见会话**；用户身份读消息权限（含列会话必需的 `im:chat:read`）需管理员开通并使权限生效（正式应用需重新发布版本；测试应用改动免审即时生效）；**2026-11-12 本机租户已实测恢复正常**（`app_access_token` / `tenant_access_token` 均 `code:0`，此前记录的 `21001` 已解除）——`21001` 仍是平台策略，其他未认证租户 / 环境仍可能被拦截。
 - **钉钉**：`dws` 是官方**共创阶段**开源 CLI，需企业管理员开启「CLI 访问管理」（或 Custom App 模式）+ **首次真人授权**；登录推荐本机浏览器 loopback（与 LinkHub 同机），远程 / 容器用设备码（约 15 分钟有效、过期需重新获取，否则钉钉提示 `Invalid or expired user code`）；凭据绑定设备，**Windows 不能跨机复制**，容器部署需在容器内登录。
 - **共同**：当前是**单实例单身份**（一次连接一个飞书账号 / 一个 dws 登录用户），多员工共享同一实例不在本期范围。
 
@@ -170,7 +170,7 @@ MAIL_MODE=real
 | 飞书 | 只有 App ID + Secret（缺 Verification Token，且未开长连接） | ✗ | ✓ | `real`；警告「只能发不能收」，收到回调会验签失败 |
 | 飞书 | App ID + Secret + `FEISHU_STREAM=true`（长连接，免公网） | ✓ | ✓ | `real`；长连接明文推送，无需 Verification Token / 公网回调 |
 | 飞书 | 上述凭据 + 账号页完成用户授权（`FEISHU_SEND_AS=auto/user`） | ✓ | ✓ | `real`；回写显示为授权用户本人；授权失效时显式失败，不悄悄换机器人 |
-| 飞书 | App ID + Secret + Verification Token（可选 Encrypt Key） | ✓ | ✓ | `real`；若租户被 21001 拦，`doctor` 会 FAIL 并给建议 |
+| 飞书 | App ID + Secret + Verification Token（可选 Encrypt Key） | ✓ | ✓ | `real`；**2026-11-12 本机租户实测 `21001` 已解除**；其他租户被拦时 `doctor` 会 FAIL 并给建议 |
 | 钉钉 | 什么都没填 | ✗ | ✗ | `mock`；账号页「未配置 / Mock 模拟」 |
 | 钉钉 | Client ID/Secret + RobotCode（未开 Stream、无 AES） | ✗ | ✓ | `real`；警告「暂时收不到消息」 |
 | 钉钉 | 上述 + `DINGTALK_STREAM=true`（或 HTTP 回调 Token/AES） | ✓ | ✓ | `real`；本机长连接即可收，无需公网 |
@@ -193,24 +193,24 @@ MAIL_MODE=real
 |---|---|
 | 共享消息契约（`shared/src/message.ts`） | ✅ 完成（含 `conversation`、`delivery`、邮箱 `mailMeta`；`SendResult.mode` 强制如实标注通道） |
 | 运行时可替换性（`config/runtime.ts`） | ✅ 完成：四平台独立 `*_MODE`、`auto` 自动判定、`missing/warnings/reason`，旧 `MOCK` 废弃兼容 |
-| 平台适配器（飞书 / 钉钉 / 企业微信 / 邮箱） | ✅ 代码与单测全部完成；钉钉 Stream 真实收发、邮箱四跳闭环已实测；飞书卡租户策略 `21001`；企微卡「企业可信 IP」 |
-| **本人身份收发（飞书 / 钉钉）** | ✅ 代码 / 单测 / fake-dws 桩完成：统一身份解析（`auto/bot/user`）、飞书用户身份轮询接收（水位持久化）、钉钉 dws 个人事件 + 本人发送（子进程监管 / 退避重启）、`/api/accounts` identity 视图、发送身份分流与 400 校验、doctor 身份探针；钉钉登录支持**浏览器 loopback（推荐，本机）+ 设备码（远程/容器，带有效期倒计时与重新获取）**，登录/注销后自动启停接收通道、无需重启；真实端到端待平台条件（飞书 `21001`、钉钉需企业开 CLI 访问 + 本人授权）——见 [docs/personal-identity.md](docs/personal-identity.md) |
+| 平台适配器（飞书 / 钉钉 / 企业微信 / 邮箱） | ✅ 代码与单测全部完成；钉钉 Stream 真实收发、邮箱四跳闭环已实测；**飞书 2026-11-12 真实端到端已通过**（租户策略 `21001` 本机已解除）；企微卡「企业可信 IP」 |
+| **本人身份收发（飞书 / 钉钉）** | ✅ 代码 / 单测 / fake-dws 桩完成：统一身份解析（`auto/bot/user`）、飞书用户身份轮询接收（水位持久化）、钉钉 dws 个人事件 + 本人发送（子进程监管 / 退避重启）、`/api/accounts` identity 视图、发送身份分流与 400 校验、doctor 身份探针；钉钉登录支持**浏览器 loopback（推荐，本机）+ 设备码（远程/容器，带有效期倒计时与重新获取）**，登录/注销后自动启停接收通道、无需重启。**飞书本人身份 2026-11-12 真实端到端已通过**：真实 OAuth → 用户轮询收单聊 + 群聊（`receivedAs=user`）→ 以本人身份发送（飞书侧 `sender_type=user`），本机租户 `21001` 已解除；钉钉真实端到端仍待企业开 CLI 访问 + 本人授权——见 [docs/personal-identity.md](docs/personal-identity.md) 与 [飞书验收记录](docs/verification/feishu-personal-e2e-2026-11-12.md) |
 | 授权中心 / 个人版首启向导（本轮新增） | ✅ 新增前端「连接账号」页（`/connect`）+ `GET /api/onboarding` 聚合：邮箱 → 钉钉 → 飞书 → 企微四步，状态「已就绪 / 需本人授权 / 需安装 / 需管理员 / 演示模式 / 异常」如实标注，管理员项给可复制清单与官方后台深链；邮箱账号可在页面**直接添加并热加载**（`/api/mail/accounts` 增删测，授权码不下发）；钉钉 `dws` 支持自动发现（`DWS_BIN → LINKHUB_TOOLS_DIR → tools/ → ~/.local/bin → PATH`）与 `pnpm run fetch:dws` 一键下载，桌面版构建内置；收件箱首启横幅引导；见 [docs/quickstart.md 路径 E](docs/quickstart.md#path-e) |
 | 邮箱数据源 | ✅ 任意数量 / 任意服务商（8 个常见服务商预设 + `custom`）；IMAP 收 + SMTP 发；993/465 隐式 TLS 与 143/587/25 STARTTLS 均支持 |
 | `doctor` 自检 | ✅ 环境 + 模式 + 逐平台探针（飞书 token / 钉钉 token + 机器人 + 通道 / 企微 gettoken / 邮箱 IMAP+SMTP 登录）+ 大模型连通性（`llm:chat`，仅在未加 `--platform=` 时执行）+ 出口公网 IP + 中文修复建议；支持 `--json`、`--platform=`、`--help` |
-| 真实平台 API 接入 | ✅ 钉钉 Stream 端到端（真实收 + 回写）；✅ 邮箱四跳闭环；🟡 飞书适配器完成（机器人 / 用户本人双身份，OAuth 一键授权；部分租户仍可能被 `21001` 拦截）；🟡 企微 `gettoken` 通过，真实发送卡「企业可信 IP」 |
+| 真实平台 API 接入 | ✅ 钉钉 Stream 端到端（真实收 + 回写）；✅ 邮箱四跳闭环；✅ **飞书适配器完成且 2026-11-12 真实端到端实测通过**（机器人 / 用户本人双身份，OAuth 一键授权；本机租户 `21001` 已解除，其他租户仍可能被拦截）；🟡 企微 `gettoken` 通过，真实发送卡「企业可信 IP」 |
 | 消息中枢：状态机 / 幂等 / 异步回写 / 回流 | ✅ 完成（状态回流单向防倒退） |
 | 安全：Bearer 鉴权 + WebSocket 握手校验 | ✅ 完成 |
 | 闭环日志（traceId 全链路可回放） | ✅ 完成（Mock 与真实通道分开描述） |
 | 边界降级：限流退避、OCR 置信度、意图失败回退、DLQ | ✅ 完成 |
-| 单元测试 / 端到端冒烟 | ✅ **2026-11-12 本轮实测**：`typecheck` 通过；server **436 tests** 全过（2026-11-12 本轮实测）；web **255 tests**（28 文件）全过；`pnpm e2e` **20 项断言 PASS + SMOKE OK**；契约自检 **81 PASS / 0 FAIL**（含 2 个邮箱账号；含 `identity`、钉钉 personal status 等新接口，N 视是否配置邮箱账号：有邮箱 81 / 无邮箱 75） |
+| 单元测试 / 端到端冒烟 | ✅ **2026-11-12 本轮实测**：`typecheck` 通过；server **438 tests** 全过（2026-11-12 本轮实测，含本轮新增「`types` 被拒自动降级」「水位内消息不重复 ingest」用例）；web **255 tests**（28 文件）全过；`pnpm e2e` **20 项断言 PASS + SMOKE OK**；契约自检 **81 PASS / 0 FAIL**（含 2 个邮箱账号；含 `identity`、钉钉 personal status 等新接口，N 视是否配置邮箱账号：有邮箱 81 / 无邮箱 75） |
 | 上手与交付文档 | ✅ [quickstart.md](docs/quickstart.md)（5 分钟上手）/ [personal-identity.md](docs/personal-identity.md)（本人身份收发配置与边界）/ [demo-script.md](docs/demo-script.md)（演示脚本）/ [delivery-checklist.md](docs/delivery-checklist.md)（交付打包）/ [ai-integration.md](docs/ai-integration.md)（AI 服务集成说明）/ [risk-register.md](docs/risk-register.md)（风险台账）；README 顶部有「30 秒选路径」 |
 | 健壮性加固（本轮） | ✅ webhook 空/畸形事件 400 不入库、端口占用中文提示、CORS 白名单、状态回流防倒退、日志脱敏、空 `API_TOKEN` 不关鉴权、邮箱嵌套 MIME/水位持久化/中文目录 |
 | 大模型真实调用（意图 / 摘要 / 回复草稿） | ✅ OpenAI 兼容协议（默认小米 MiMo `mimo-v2.6-flash`）；失败一律回退规则识别并如实标注来源；见 [ai-integration.md](docs/ai-integration.md) |
 | OCR 真实调用 | 🚧 仍为占位实现（赛题 A 不依赖 OCR；配置项已预留） |
 | PostgreSQL / Redis 实装 | 🚧 仅有 DDL 与仓储接口，实际始终走内存 |
 | 前端统一入口 | ✅ 收件箱 / 待办 / 全链路回放 / 平台账号；首启「3 步上手」引导已挂载到空收件箱（含可复制命令）、侧栏导航有文字标签、账号页给出「变量齐 ≠ 连通」说明与可复制 doctor 自检命令、`.env` 改而未重启有提示、飞书 OAuth 失败回跳有中文反馈、页脚有可见连接状态（已连接 / 重连中 / 未连接 / 异常 / 演示）；飞书 / 钉钉账号卡有「身份 · 谁在收、谁在发」块（本人 / 机器人 / 模拟 Tag + 连接入口），收件箱与回放标注 `receivedAs` / `delivery.identity`，新建发送可选发送身份，发送失败原因显示在详情并可重试 |
-| 小白用户上手修复（本轮，来自 docs/qa/naive-user-report.md 阶段一） | ✅ P1：账号页自检命令与「已配置 ≠ 连通」、首启引导挂载、`pnpm run doctor` 全文档写全、`.env` 改而未重启提示、飞书 OAuth 失败回跳反馈、发送失败原因上浮 + 重试；P2：页脚可见连接状态、运行指标「本次启动以来」并拆真实/模拟、空态注入按钮可点性、回复成功后冷却防重复；P3：启动器 Token 打码、前端固定 5173 如实写。平台限制项（飞书 `21001`、企微 `60020`、钉钉企业 CLI 授权）仍如实标为已知限制 |
+| 小白用户上手修复（本轮，来自 docs/qa/naive-user-report.md 阶段一） | ✅ P1：账号页自检命令与「已配置 ≠ 连通」、首启引导挂载、`pnpm run doctor` 全文档写全、`.env` 改而未重启提示、飞书 OAuth 失败回跳反馈、发送失败原因上浮 + 重试；P2：页脚可见连接状态、运行指标「本次启动以来」并拆真实/模拟、空态注入按钮可点性、回复成功后冷却防重复；P3：启动器 Token 打码、前端固定 5173 如实写；平台限制项（企微 `60020`、钉钉企业 CLI 授权）与历史租户策略 `21001`（2026-11-12 本机租户已解除，仍保留为其他租户的排查项）仍如实标注 |
 | 前端设计系统与可访问性 | ✅ 设计令牌化（标签色板从一个品牌色派生明暗两套、圆角与字号成尺阶）、标签文字对比度 ≥4.5 有回归测试锁定、移动端安全区 + 44px 命中区、`pnpm --filter @unimsg/web lint:css` 样式护栏 |
 
 ## 功能特性（对应业务闭环五要素）
@@ -366,7 +366,7 @@ pnpm run fetch:dws      # 下载 v1.0.68-beta.1（Windows x64）到 tools/，约
 1. **变量层（账号页 / `/api/accounts` / 启动日志）**：只说明 env 是否填齐、解析成 `mode=real` 还是 `mock`、缺哪些变量。**变量齐 ≠ 平台能连通**——假 App ID 也会显示「已配置 / 真实接口」。
 2. **连通层（`pnpm run doctor`）**：真正调用平台换取 token / 登录 IMAP / 连 SMTP，给出 PASS / FAIL 与错误码；**这才是「生没生效」的判据**。也可以看 `start.bat` 输出的 `[acct] N credential group(s)` 确认变量组数。
 
-当前仓库文档的已知限制（飞书租户策略 `21001`、企微缺 `WECOM_TOKEN`/`WECOM_AES_KEY` 且卡可信 IP `60020`）依然是真实边界，配了 `.env`、账号页显示 `real` 也不等于所有平台都能真实收发。
+当前仓库文档的已知限制（企微缺 `WECOM_TOKEN`/`WECOM_AES_KEY` 且卡可信 IP `60020`；飞书租户策略 `21001` 在本机租户已于 2026-11-12 实测解除，但其他租户 / 环境仍可能遇到）依然是真实边界，配了 `.env`、账号页显示 `real` 也不等于所有平台都能真实收发。
 
 > 两个服务各开一个控制台窗口；关掉窗口或执行 `start.bat stop` 即停止。
 > Docker 模式需要先启动 Docker Engine；入口令牌默认 `linkhub-local-demo-2026-change-me`，改 `LINKHUB_DEPLOY_TOKEN` 后需重新 `--build`，详见 [docs/deploy.md](docs/deploy.md)。
@@ -564,12 +564,12 @@ pnpm install
 | 命令 | 实测结果 |
 |---|---|
 | `pnpm typecheck` | **2026-11-12 实测通过**：`shared` / `server` / `web` 三包检查 exit 0 |
-| `pnpm --filter @unimsg/server test` | **2026-11-12 本轮实测 436 tests 全过**（exit 0；条数以最终代码实际输出为准；覆盖连接器、真实适配器、身份解析 / 飞书用户轮询 / 钉钉 dws、MIME、IMAP 水位/目录、webhook HTTP 级、app/CORS、doctor 探针/渲染/拼写检查等），约 2s |
+| `pnpm --filter @unimsg/server test` | **2026-11-12 本轮实测 438 tests 全过**（exit 0；条数以最终代码实际输出为准；覆盖连接器、真实适配器、身份解析 / 飞书用户轮询 / 钉钉 dws、MIME、IMAP 水位/目录、webhook HTTP 级、app/CORS、doctor 探针/渲染/拼写检查等），约 4s |
 | `pnpm --filter @unimsg/web test` | **2026-11-12 实测 28 文件 / 255 tests 全过**（exit 0；覆盖 httpApi / wsRealtime / appStore / mockApi / AccountsPage（含身份 / OAuth / .env 重启）/ PersonalIdentityModal / FirstRunGuide / InboxPage / MessageCard / DetailPanel / ReplyComposer / ComposeModal 身份选择 / format / ink / due / footerState 等） |
 | `pnpm e2e -Port 3199`（Windows PowerShell） | **2026-11-12 本轮实测 20 项断言 PASS + `SMOKE OK`**，exit 0（e2e.ps1，本机 3199 端口；约 10s）；强制四平台 `mock` + **独立临时数据目录**（脚本隔离 `DATA_DIR`/`DATA_FILE` 并在结束时清理，不影响本机 `.env`/历史数据），完全离线 |
 | `pnpm e2e:sh`（Git Bash，3123 端口） | 同上，**20 项 PASS + `SMOKE OK`**（CI 使用此命令） |
 | 契约自检（后端起 mock 后） | `node packages/web/scripts/verify-contract.mjs http://127.0.0.1:3001 dev-token` → 本机 2026-11-12 实测 **81 PASS / 0 FAIL**（含 `modes` / `sentMock` / `mode`+`policy` / 邮箱账号明细 / `delivery` / WS 握手 / 身份 `identity` / 钉钉 personal status；N 视是否配置邮箱账号：有邮箱 81、无邮箱 75，以实际输出为准） |
-| `pnpm run doctor` | PASS / FAIL / SKIP 计数**以实际输出为准**（已新增「大模型连通性」探针 `llm:chat`，仅在未加 `--platform=` 时执行）；2026-11-10 真实凭据实测唯一 FAIL 为飞书 `21001`（租户策略，代码无解），退出码 1 是「有 FAIL」的约定结果 |
+| `pnpm run doctor` | PASS / FAIL / SKIP 计数**以实际输出为准**（已新增「大模型连通性」探针 `llm:chat`，仅在未加 `--platform=` 时执行）；**历史记录（2026-11-10）**：真实凭据实测唯一 FAIL 为飞书 `21001`（租户策略，代码无解），退出码 1 是「有 FAIL」的约定结果；**2026-11-12 复测本机租户已恢复正常**（`tenant_access_token` 返回 `code:0`，见 [飞书验收记录](docs/verification/feishu-personal-e2e-2026-11-12.md)） |
 | `pnpm run doctor --platform=mail` | **PASS 4 / FAIL 0**（两个邮箱账号的 IMAP 登录基线 + SMTP 认证；地址已脱敏） |
 | CI（`.github/workflows/ci.yml`） | Ubuntu + Node 22 + pnpm 9.15.9：install → typecheck → server 测试 → web 测试 → web build → `e2e:sh 3121` |
 
@@ -591,7 +591,7 @@ pnpm install
 - 环境：Node v24.14.0 ✔、`unimsg-connector/.env` 已加载、无旧 `MOCK` / 非法模式警告；邮箱账号 2 个（IMAP 轮询开启）。
 - 平台模式：飞书 / 钉钉 / 企业微信 / 邮箱均为 `auto → real`；企微缺 `WECOM_TOKEN` / `WECOM_AES_KEY`（只能发不能收）。
 - 探针：钉钉 accessToken、`DINGTALK_ROBOT_CODE`、Stream 通道三条全 **PASS**（Stream 模式下 AES Token/Key 不再被误报为缺失）；企微 `gettoken` **PASS**；163 与 QQ 两个邮箱的 IMAP 登录基线与 SMTP 认证四条全 **PASS**（地址脱敏为 `1******@163.com` / `3******@qq.com`）。
-- 唯一 **FAIL**：飞书 `tenant_access_token` 返回 `21001 Access denied due to platform policy`，建议文案已指向「企业认证 / 换合规租户」。
+- 唯一 **FAIL**：飞书 `tenant_access_token` 返回 `21001 Access denied due to platform policy`，建议文案已指向「企业认证 / 换合规租户」。（**历史记录（2026-11-04）**：2026-11-12 用同一份 `.env` 复测本机租户已恢复正常，`code:0`。）
 - 说明：HTTP 类探针超时 8s；IMAP/SMTP 登录往返较慢，邮箱探针超时放宽到 25s（避免假超时）。
 - 出口公网 IP：`pnpm run doctor` 每次都会打印当前出口公网 IP（企业微信可信 IP 绑定的就是它）；本次实测 2026-11-03 → 11-04 同一网络出口 IP 保持不变——电脑重启一般不影响，但重启路由器 / 切换网络 / 开代理后需要重新核对。
 
@@ -608,7 +608,8 @@ pnpm install
   4. 回信落到 163 收件箱后被轮询收回 → `externalId=163:INBOX:<UID>`，`mailMeta.inReplyTo` 是 QQ 真实返回的 Message-ID。
   全程中文主题与正文无损，两个发信账号与两个收信账号都各跑通一次。
 - **邮箱多账号与 STARTTLS（本轮新增）**：任意数量账号（`MAIL_ACCOUNTS` 显式列表或自动发现 `MAIL_<KEY>_ADDRESS`）、8 个常见服务商预设 + `custom`、993/465 隐式 TLS 与 143/587/25 STARTTLS 均实现并有单测覆盖；2026-11-04 `doctor --platform=mail` 用真实账号验证了 IMAP 基线 + SMTP 认证（PASS 4/4）。真实服务商 587/143 端到端尚未实测（已有实测链路走 465/993）。
-- **飞书 21001（2026-11-03）**：`POST /auth/v3/tenant_access_token/internal` 返回 `21001 Access denied due to platform policy`。已排除密钥错误（错误密钥返回 `10014`）、IP 白名单（未开启）、应用未发布（已发布 1.0.0 且状态「已启用」）、测试企业通道（建了测试企业并关联应用，仍 `21001`）——属租户级平台策略，需要企业认证或符合策略的租户。
+- **飞书 21001（2026-11-03，历史记录；2026-11-12 本机租户已解除）**：`POST /auth/v3/tenant_access_token/internal` 返回 `21001 Access denied due to platform policy`。已排除密钥错误（错误密钥返回 `10014`）、IP 白名单（未开启）、应用未发布（已发布 1.0.0 且状态「已启用」）、测试企业通道（建了测试企业并关联应用，仍 `21001`）——属租户级平台策略，需要企业认证或符合策略的租户。**2026-11-12 14:16 用仓库 `.env` 真实凭据复测**：`POST /open-apis/auth/v3/app_access_token/internal` 与 `/tenant_access_token/internal` 均返回 `code:0`，本机租户已恢复正常（推断为完成企业认证 / 平台策略调整，未证实）；`21001` 仍是平台策略，换租户 / 换环境仍可能遇到，以上排错说明保留。
+- **飞书本人身份真实端到端（2026-11-12）**：真实 OAuth 授权（授权账号「八水合甲烷」，open_id `ou_eca152db0e6379f6fc060e0c74c52d76`）→ 用户身份轮询收**单聊 + 群聊**（入库 `receivedAs=user`；列会话需带 `types=p2p,group`：不带只返回 2 个群聊，带上返回 5 个会话 = 2 群 + 3 单聊）→ `POST /api/messages/compose` 以本人身份返回 202 / `status=replied` / `sendIdentity=user`，飞书侧核对 `sender.sender_type=user`、`is_agent=false`（真人本人，不是机器人）；独立测试实例 3101 与用户主应用 3001 各验证一次。完整证据、已知限制与复现命令见 [docs/verification/feishu-personal-e2e-2026-11-12.md](docs/verification/feishu-personal-e2e-2026-11-12.md)。
 - **企业微信（代码就绪，卡可信 IP）**：真实适配器与 19 条单测已完成（SHA1 验签、AES 加解密、XML 解析、GET 握手、`gettoken` → `message/send`）；2026-11-04 `gettoken` 实测 **PASS**。当前 `.env` 只配了发信凭据（`WECOM_CORP_ID` / `WECOM_AGENT_ID` / `WECOM_SECRET`），缺 `WECOM_TOKEN` / `WECOM_AES_KEY` 所以收不到消息；真实发送还要求发信出口 IP 已加入「企业可信 IP」，否则报 **60020**（本轮真实接入即卡在这一步，`doctor` 会直接打印当前出口公网 IP）。
 - **Mock 标注已被机器校验**（`scripts/smoke.py` / e2e，以及契约自检）：`delivery.mode=mock`、`health.sentMock>=1`、闭环日志 `sent` 含「模拟发送」、`/api/accounts` 四平台均带 `mode/policy` 且为 `mock`。
 
@@ -629,7 +630,7 @@ pnpm install
 | 设计文档承诺 | 当前实现 | 说明 / 后续 |
 |---|---|---|
 | 四类数据源（飞书 / 钉钉 / 企微 / 邮箱）统一接入 | ✅ 已实现（邮箱为超出原设计的新增数据源） | 三平台 + 邮箱，均可 Mock/真实独立切换 |
-| 本人账号接收 + 本人账号发送（替代逐群拉机器人） | ✅ 已实现（飞书 OAuth 用户身份轮询 / 钉钉官方 CLI dws 个人事件与本人发送） | 统一身份策略 `*_IDENTITY=auto/bot/user`、状态如实标注、机器人保留兜底；真实端到端待平台条件（飞书 `21001`、钉钉企业 CLI 访问 + 真人授权），见 [docs/personal-identity.md](docs/personal-identity.md) |
+| 本人账号接收 + 本人账号发送（替代逐群拉机器人） | ✅ 已实现（飞书 OAuth 用户身份轮询 / 钉钉官方 CLI dws 个人事件与本人发送） | 统一身份策略 `*_IDENTITY=auto/bot/user`、状态如实标注、机器人保留兜底；**飞书 2026-11-12 真实端到端已通过**（收单聊 + 群聊、以本人身份发送；本机租户 `21001` 已解除），钉钉真实端到端仍待企业 CLI 访问 + 真人授权，见 [docs/personal-identity.md](docs/personal-identity.md) |
 | 完整闭环（接收→展示→处理→回写→回流）+ traceId 回放 | ✅ 已实现并有单测/e2e 覆盖 | `pnpm e2e` 20 项断言 |
 | 从统一入口向指定平台发送文本 + 文件 | ✅ 已实现 | 「新建发送」可指定平台/会话并挂附件，邮箱平台还可选择发件账号；回复也支持附件；四平台适配器各自完成媒体上传或 MIME 转换，附件元数据进闭环回放 |
 | 独立部署：可在纯净服务器零依赖启动 | ✅ 已实现（单容器方案） | `Dockerfile` + `docker-compose.yml` + [docs/deploy.md](docs/deploy.md)：server 同源托管前端，单端口 3001，含健康检查与数据卷；镜像可 `docker save/load` 离线搬运 |
@@ -637,7 +638,7 @@ pnpm install
 | PostgreSQL / Redis 持久化 | ❌ 未实现 | 仅有 `001_init.sql` 与仓储接口；当前为单实例内存 + 文件快照，不是关系库 |
 | 真实大模型意图识别 | ✅ 已实现（OpenAI 兼容协议，默认 MiMo flash） | 2026-11-11 实测：5 条业务样例 **5/5** 命中（同批关键词规则仅 2/5），平均 5.47s、最大 9.3s；doctor 探针实跑 2.5s PASS。失败/超时/低置信一律回退规则并标注来源 |
 | OCR 真实调用 | ❌ 未实现 | 仍是占位实现；赛题 A 不依赖 OCR，配置项已预留 |
-| 三平台真实收发 | 🟡 部分 | 2026-11-10 用真实 `.env` 跑 `doctor`：钉钉 accessToken / 机器人编码 / 收消息通道、企微 access_token、163+QQ 邮箱 IMAP+SMTP 全部 PASS；唯一 FAIL 是飞书租户策略 `21001`（`start.bat doctor` 可复现）。计数以实际输出为准（此后新增了大模型连通性探针） |
+| 三平台真实收发 | 🟡 部分 | **历史记录（2026-11-10）**：用真实 `.env` 跑 `doctor`，钉钉 accessToken / 机器人编码 / 收消息通道、企微 access_token、163+QQ 邮箱 IMAP+SMTP 全部 PASS；唯一 FAIL 是飞书租户策略 `21001`（`start.bat doctor` 可复现）。**2026-11-12 复测本机租户 `21001` 已解除**（`tenant_access_token` 返回 `code:0`），并完成飞书本人身份真实端到端（收单聊 + 群聊、发本人）；企微真实发送仍卡可信 IP `60020`。计数以实际输出为准 |
 | 入口鉴权（Bearer + WS）| ✅ 已实现 | `/api/*` 与 `/ws` 同一 token；默认 `dev-token` 仅演示用，对外需改 |
 | CORS 白名单 | ✅ 已实现 | `CORS_ORIGINS` 白名单（不填保持 `*` 兼容本地；填了名单外 403 JSON） |
 | 日志脱敏 | ✅ 已实现 | 闭环日志不含正文；doctor 报告邮箱脱敏；启动日志与 `mock-send` 已不打印邮箱/正文 |
@@ -647,13 +648,13 @@ pnpm install
 
 ## 已知限制
 
-- **飞书真实收发被租户策略 `21001` 拦住**：2026-11-10 在带真实凭据的 `.env` 上重跑 `doctor`，仍为 `21001`（`Access denied due to platform policy`），确认是租户级策略而非凭据或代码问题；代码与配置都已就绪，但要企业认证或换合规租户才能验证；此外 `im:message`（获取与发送单聊、群组消息）权限尚未开通，当前只有 `im:message:send_as_bot`。
+- **飞书真实收发（历史记录：2026-11-10 曾被租户策略 `21001` 拦住；2026-11-12 本机租户已恢复正常）**：2026-11-10 在带真实凭据的 `.env` 上重跑 `doctor`，仍为 `21001`（`Access denied due to platform policy`），确认是租户级策略而非凭据或代码问题。**2026-11-12 用同一份 `.env` 真实凭据复测**：`POST /open-apis/auth/v3/app_access_token/internal` 与 `/tenant_access_token/internal` 均返回 `code:0`，本机租户已恢复正常，并已完成本人身份真实端到端（收单聊 + 群聊、以本人身份发送）；此前缺失的 `im:message` 等用户身份权限也已在后台开通并实测生效。**`21001` 仍是飞书平台策略**，换租户 / 换环境 / 平台策略变化仍可能再现，换 Secret、改代码、加 IP 白名单都无效，只能企业认证或换合规租户（排错说明保留，见下文「真实接入实测记录」）。
 - **企业微信**：真实适配器与 19 条单测已就绪、`gettoken` 已通，但**卡在「企业可信 IP」**——当前出口 IP 不在白名单，真实发送端到端尚未验证（典型报错 60020）；同时缺回调 Token/EncodingAESKey，暂时收不到消息。`pnpm run doctor` 每次都会打印当前出口公网 IP：电脑重启一般不影响（公网出口在网关/运营商侧），但重拨路由器、换网络、开代理后可能变化，演示前先核对即可。
 - **个人版（授权中心）里飞书 / 企业微信需要企业管理员开通**：飞书要企业自建应用 + 消息权限 + 重定向 URL + 发布版本；企微要自建应用 + 接收消息 Token/EncodingAESKey + 「企业可信 IP」；钉钉本人身份还要企业开启「CLI 访问管理」。这些个人用户无法自助完成——「连接账号」页会标「需管理员」并给可复制清单与官方后台深链，开通后刷新即可；邮箱与演示模式不受影响。
 - **钉钉**真实收消息依赖 Stream 长连接（本机可用）或公网 HTTP 回调；`DINGTALK_STREAM` 默认关闭，需要显式开启并在后台发布版本。
 - **钉钉 / 企业微信群聊只推「@机器人」的消息**（平台规则，不是本项目限制）：普通群消息不会推给机器人，钉钉 Stream 的机器人通道只投递「单聊」和「群内 @机器人」。所以群聊场景能聚合的就是被 @ 的那一条，**不能承诺"群里所有消息都收"**。另外群里要添加的是**企业内部应用机器人**（自定义 Webhook 机器人只能发、不能收）。群内 @ 消息入库后会保留群会话与群名，回复走群消息接口回到原群（界面「会话」一行显示「群聊「群名」· 回复会发回该群」）。参考：[钉钉机器人接收消息](https://open.dingtalk.com/document/robots/receive-message)。
-- **本人身份（飞书 / 钉钉）的真实端到端仍待平台条件**：身份解析、飞书用户轮询、钉钉 dws 子进程 / 事件解析 / 本人发送都有单测与 fake-dws 桩覆盖，但**真实端到端尚未验证**——飞书本机租户受 `21001` 限制，钉钉需要企业管理员开启 CLI 访问并真人授权（本机 dws v1.0.68-beta.1 已安装但未登录）。文档不写"实测通过"，边界见 [docs/personal-identity.md](docs/personal-identity.md) §11。
-- **飞书本人接收是轮询，不是实时推送**：默认 20s 一轮（`FEISHU_USER_RECEIVE_SECONDS`，最小 5），新消息通常 5–30s 出现；**只能读本人可见的会话**；首轮默认只立基线不灌历史（`FEISHU_USER_BACKFILL_HOURS=0`）；用户身份读消息权限需管理员在后台开通**并重新发布版本**；**从旧版本升级后需重新授权一次**（OAuth 会额外申请读消息 scope，旧 token 不含，轮询会报 `99991672`）。
+- **本人身份（飞书 / 钉钉）**：身份解析、飞书用户轮询、钉钉 dws 子进程 / 事件解析 / 本人发送都有单测与 fake-dws 桩覆盖；**飞书已于 2026-11-12 完成真实端到端验收**（真实 OAuth → 本人身份轮询收单聊 + 群聊 → 以本人身份发送，飞书侧核对 `sender_type=user`；本机租户 `21001` 已解除），证据见 [验收记录](docs/verification/feishu-personal-e2e-2026-11-12.md)。**钉钉真实端到端仍待实测**：需要企业管理员开启 CLI 访问并本人完成授权（本机 dws v1.0.68-beta.1 已安装但未登录）。边界见 [docs/personal-identity.md](docs/personal-identity.md) §11。
+- **飞书本人接收是轮询，不是实时推送**：默认 20s 一轮（`FEISHU_USER_RECEIVE_SECONDS`，最小 5），新消息通常 5–30s 出现；**只能读本人可见的会话**；首轮默认只立基线不灌历史（`FEISHU_USER_BACKFILL_HOURS=0`）；用户身份读消息 / 列会话权限需管理员在后台开通并使权限生效（正式应用需重新发布版本；测试应用免审），**从旧版本升级后需重新授权一次**（OAuth 会额外申请读消息与 `im:chat:read` scope，旧 token 不含，轮询会报 `99991672` / `99991679`）；**单聊枚举依赖未公开参数 `types=p2p,group`**（不带只返回群聊；平台若拒绝该参数会自动降级为纯群列表——单聊收不到、群聊继续，不阻断接收）；机器人长连接与本人轮询同时开启时，同一单聊消息可能被两条通道各入库一次（`externalId` 幂等只留一条），建议演示时二选一。
 - **钉钉本人身份依赖官方开源 CLI `dws`（官方处于共创阶段）**：需企业管理员在钉钉开发者平台开启「CLI 访问管理」（或走 Custom App 自有应用模式）；**首次必须真人授权**——本机推荐「用浏览器登录（推荐）」（`127.0.0.1` loopback，浏览器必须与 LinkHub 同机，约 10 分钟操作窗口），服务器 / SSH / 容器用设备码（约 15 分钟有效，过期必须「重新获取授权码」，旧码会报 `Invalid or expired user code`）。凭据加密绑定设备，**Windows 上不能跨机复制**，容器部署需在容器内登录（见 [docs/deploy.md](docs/deploy.md)）。dws 未安装 / 未登录时 `auto` 回退机器人、`user` 显式报错，不会假成功。
 - **钉钉本人事件暂不支持按群 / 按人订阅**：`DINGTALK_USER_EVENT_KINDS` 里的 `group` / `sender` 需要 dws 的目标参数（`--chat-id` / `--user`），本期不做；**配置了会被忽略并在启动日志告警**，回退默认 `all-direct,at-me`（不会导致子进程重启）。支持的范围是 `all-direct` / `at-me` / `all-group`。
 - **钉钉双通道同时开启会重复入库（已知限制）**：机器人 Stream（`DINGTALK_STREAM=true`）与本人身份个人事件同时开启时，同一条钉钉消息可能**各入库一次**——机器人通道与个人事件的平台消息 ID 体系不同，跨通道幂等键不通用。**建议二选一**：要用本人身份就关机器人 Stream，或关本人接收（`DINGTALK_USER_RECEIVE=false`）。

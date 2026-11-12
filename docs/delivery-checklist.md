@@ -40,7 +40,7 @@ pnpm typecheck        # shared / server / web 全部 Done
 pnpm test             # 服务端单测全部通过（条数以实际输出为准）
 pnpm test:web         # 前端单测全部通过（条数以实际输出为准）
 pnpm e2e              # 20 项 PASS + SMOKE OK；macOS / Linux / Git Bash 用 pnpm e2e:sh
-pnpm run doctor       # 全 PASS 最好；飞书 21001 是已知外部限制（退出码 1），交付说明里写明
+pnpm run doctor       # 全 PASS 最好；飞书 21001 已于 2026-11-12 复测本机租户恢复（code=0）；若换租户再出现 21001，仍按外部限制如实说明（退出码 1）
 ```
 
 契约自检（必须用 **Mock 后端**，否则回复会走真实通道导致断言失败）：
@@ -96,8 +96,8 @@ pnpm e2e                                   # Windows；macOS / Linux / Git Bash�
 |---|---|
 | 版本 | commit `<git log -1 --format="%H">`（或 tag） |
 | 运行环境 | Node `<node -v>`、pnpm `<pnpm -v>`（package.json 固定 pnpm 9.15.9，可用 corepack） |
-| 真实可用 | 钉钉 Stream 收 + 机器人回写；邮箱 IMAP 收 + SMTP 发（多账号 / STARTTLS）；飞书 / 钉钉**本人身份收发**代码就绪（单测 + fake-dws 桩），真实端到端待平台条件（见下行） |
-| 受限能力 | 飞书 `21001`（需企业认证/合规租户）；企微 `60020`（需企业可信 IP + 回调 Token/AESKey + 公网）；**飞书本人身份**还需管理员开用户身份权限（轮询 5–30s、只读本人可见会话）；**钉钉本人身份**需企业管理员开启 CLI 访问 + 首次真人授权、凭据绑定设备（Windows 不能跨机复制） |
+| 真实可用 | 钉钉 Stream 收 + 机器人回写；邮箱 IMAP 收 + SMTP 发（多账号 / STARTTLS）；**飞书本人身份收发已实测通过（2026-11-12）**：真实 OAuth → 单聊 + 群聊轮询入库 → 以本人身份发送（飞书侧核对 `sender_type=user`）；钉钉**本人身份收发**代码就绪（单测 + fake-dws 桩），真实端到端待平台条件（见下行） |
+| 受限能力 | 飞书 `21001`（**历史：本机租户 2026-11-12 已解除**；换租户 / 换环境仍可能遇到，需企业认证 / 合规租户）；企微 `60020`（需企业可信 IP + 回调 Token/AESKey + 公网）；**飞书本人身份**已实测通过（2026-11-12），仍受平台边界限制：管理员需开用户身份权限（含 `im:chat:read` / `offline_access`）、轮询 5–30s、只读本人可见会话、单聊枚举依赖未公开参数 `types`；**钉钉本人身份**需企业管理员开启 CLI 访问 + 首次真人授权、凭据绑定设备（Windows 不能跨机复制） |
 | AI 能力 | 大模型意图 / 摘要 / 回复草稿**已接真实调用**（OpenAI 兼容协议，默认 MiMo `mimo-v2.6-flash`；失败/超时/低置信回退内置规则并标注来源），见 [ai-integration.md](ai-integration.md)；OCR 仍为占位实现 |
 | 未实现 | PostgreSQL/Redis 持久化（当前为单实例内存 + 文件快照）、OCR 真实调用、高可用/水平扩展、多租户 / 多员工共享单实例身份（详见 README「承诺 vs 实现」） |
 | 独立部署包 | `unimsg-connector/Dockerfile` + `docker-compose.yml` + `.dockerignore`；步骤见 [deploy.md](deploy.md)，可 `docker save/load` 离线搬运；**镜像默认不含 dws**，容器内钉钉本人身份需自建 glibc 镜像 |

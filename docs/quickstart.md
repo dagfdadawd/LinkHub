@@ -103,11 +103,11 @@ pnpm --filter @unimsg/server start
 **成功信号（分两层看，别混）**：
 
 - **变量层（不代表连通）**：后端启动日志出现 `运行模式: ...=real(auto) 收✓ 发✓`；`curl .../api/health` 的 `modes` 中该平台为 `real`；`/api/accounts` 中该平台 `configured=true / mode=real`。这些只说明 **env 变量填齐了**——**填假的 App ID 也会显示 `real` / 卡片 Tag「已配置（未验证）」**，不能当成"已连上"。
-- **连通层（这才是判据）**：`pnpm run doctor --platform=<平台>` 输出 `[PASS]` 且退出码 0（`✔ 自检通过：PASS x / FAIL 0`；0 = 全 PASS/SKIP，1 = 有 FAIL，2 = 参数错，3 = 自检异常）。若 doctor FAIL 而账号页显示 `real`，**以 doctor 为准**（典型：假凭据 `10003`、权限未开、租户 `21001`、网络/代理）。若终端退出码和报告结论对不上，重跑一次即可（历史版本在 Windows + Node 24 下有过强制退出导致异常码的问题，已修复）。
+- **连通层（这才是判据）**：`pnpm run doctor --platform=<平台>` 输出 `[PASS]` 且退出码 0（`✔ 自检通过：PASS x / FAIL 0`；0 = 全 PASS/SKIP，1 = 有 FAIL，2 = 参数错，3 = 自检异常）。若 doctor FAIL 而账号页显示 `real`，**以 doctor 为准**（典型：假凭据 `10003`、权限未开、租户 `21001`（历史：本机租户 2026-11-12 已解除；换租户仍可能）、网络/代理）。若终端退出码和报告结论对不上，重跑一次即可（历史版本在 Windows + Node 24 下有过强制退出导致异常码的问题，已修复）。
   - 注意：四个平台**都没填凭据**时，结论是「⚠ 尚未配置任何平台」而不是「✔ 自检通过」（退出码仍为 0）——这是提醒你去填账号，不是自检失败。
   - 不知道命令在哪：账号页真实模式的卡片上就有可复制的 `pnpm run doctor --platform=<平台>`（提示语「变量齐了 ≠ 平台能连通」）。
 
-两个平台的外部限制要提前知道：飞书可能报 `21001`（需企业认证 / 合规租户）、企微可能报 `60020`（出口 IP 要加入「企业可信 IP」）。doctor 会给中文修复建议；逐平台步骤见 [swap-accounts.md](swap-accounts.md)。
+两个平台的外部限制要提前知道：飞书历史上可能报 `21001`（**本机租户 2026-11-12 已解除**；换租户 / 换环境仍需企业认证 / 合规租户）、企微可能报 `60020`（出口 IP 要加入「企业可信 IP」）。doctor 会给中文修复建议；逐平台步骤见 [swap-accounts.md](swap-accounts.md)。
 改完 `.env` 必须**重启后端**；改了前端 `.env` 必须**重启 Vite**。账号页会在 `.env` 修改时间晚于服务启动时间时提示「.env 已修改，需要重启后端才生效」，看到就重启，不要反复改拼写。
 
 <a id="path-d"></a>
@@ -120,11 +120,11 @@ pnpm --filter @unimsg/server start
 
 ### D1 飞书（约 10 分钟，需应用管理员先开权限）
 
-1. **后台一次性配置**（应用管理员）：用户身份权限（发送：`im:message`、`im:message.send_as_user`、`im:resource`；接收：以用户身份获取单聊 / 群聊消息权限）→ 安全设置添加重定向 URL `http://localhost:3001/api/feishu/oauth/callback`（端口不同则以 `FEISHU_REDIRECT_URI` 为准）→ 打开「刷新 user_access_token」→ 发布版本。缺一不可。
+1. **后台一次性配置**（应用管理员）：用户身份权限（发送：`im:message`、`im:message.send_as_user`、`im:resource`；接收：以用户身份获取单聊 / 群聊消息权限 + 列会话 `im:chat:read`；持续授权：`offline_access`）→ 安全设置添加重定向 URL `http://localhost:3001/api/feishu/oauth/callback`（端口不同则以 `FEISHU_REDIRECT_URI` 为准）。**持续授权（自动续期）由用户身份权限 `offline_access`（后台名称「持续访问已授权的数据」）决定**：开通它并重新授权后，OAuth 会返回 `refresh_token` + `refresh_token_expires_in`（2026-11-12 实测已验证）；旧版控制台曾有「刷新 user_access_token」开关，新版已无此项（安全设置只有「重定向 URL」「IP 白名单」）。测试应用改动免审即时生效，正式应用需发布版本。
 2. `.env` 保持默认即可：`FEISHU_IDENTITY=auto`、`FEISHU_USER_RECEIVE=auto`（轮询间隔 `FEISHU_USER_RECEIVE_SECONDS=20`）。
 3. **重启后端** → 打开「平台账号」页 → 飞书卡片 → **「连接本人账号」** → 在飞书授权页用本人账号点同意。
 4. 成功信号：飞书卡片「身份 · 谁在收、谁在发」块里 **接收 = 本人、发送 = 本人**，并显示「已连接：<账号名>」；给本人发一条单聊消息，**5–30 秒内**出现在收件箱（标「本人账号接收」）；回复后对方收到**你本人**发的消息。
-5. 失败：授权报 `20027` / `20010` / `20029` 或收不到消息 → 按卡片 hint 与 [personal-identity.md §4.6](personal-identity.md#46-飞书本人身份常见报错) 处理；租户 `21001` 属平台策略，改配置无解。
+5. 失败：授权报 `20027` / `20010` / `20029` 或收不到消息 → 按卡片 hint 与 [personal-identity.md §4.6](personal-identity.md#46-飞书本人身份常见报错) 处理；租户 `21001` 属平台策略（**本机租户 2026-11-12 已解除**，其他租户仍可能），改配置无解。
 
 ### D2 钉钉（约 15 分钟，需企业管理员 + 首次真人授权）
 
