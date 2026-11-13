@@ -10,6 +10,7 @@ import type {
   AppConfigSaveResult,
   AppConfigUpdate,
   AppConfigView,
+  ContactDirectory,
   DemoApi,
   DingtalkLoginOptions,
   DingtalkLoginStart,
@@ -291,6 +292,17 @@ export class MockApi implements DemoApi {
         ? { note: '钉钉机器人发送文件需要媒体上传权限；Mock 通道可完整演示' }
         : {}),
     }));
+  }
+
+  /** Mock 没有真实通讯录：返回不可用，让 UI 退回「只列已有会话」 */
+  async contacts(platform: Platform): Promise<ContactDirectory> {
+    await this.wait();
+    return {
+      platform,
+      available: false,
+      reason: '演示模式没有真实通讯录，只能发给已有会话。',
+      items: [],
+    };
   }
 
   async feishuOAuthStart(): Promise<FeishuOAuthStart> {

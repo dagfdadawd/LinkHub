@@ -22,6 +22,8 @@ export interface Conversation {
   platform: Platform;
   /** 展示名：单聊=对方，群聊=群名，邮件=主题 */
   title: string;
+  /** 会话 ID（平台侧），用于按名录反查可读名字 */
+  conversationId?: string;
   /** 会话类型（p2p / group），邮件为空 */
   conversationType?: 'p2p' | 'group';
   /** 时间升序 */
@@ -74,7 +76,9 @@ function conversationTitle(messages: UnifiedMessage[], platform: Platform): stri
     return last.sender.name || last.sender.id || '邮件';
   }
   const conv = last.conversation;
-  if (conv?.type === 'group' && conv.title) return conv.title;
+  // 平台给了会话名就用它（飞书的单聊名就是对方昵称，比 sender 的 open_id 可读）
+  if (conv?.title) return conv.title;
+  if (conv?.type === 'group') return '群聊';
   // 单聊：取最后一条「入站」消息的发送者作为对方；全是出站时退回会话里出现过的非本人名字
   const inbound = [...messages].reverse().find((m) => !isOut(m));
   if (inbound) return inbound.sender.name || inbound.sender.id;
@@ -112,6 +116,7 @@ export function buildConversations(messages: UnifiedMessage[]): Conversation[] {
       platform,
       title: conversationTitle(ordered, platform),
       conversationType: last.conversation?.type,
+      conversationId: last.conversation?.id,
       messages: ordered,
       lastMessage: last,
       lastAt: last.updatedAt || last.createdAt,

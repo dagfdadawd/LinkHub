@@ -25,6 +25,8 @@ export function ConversationRow({
   const isGroup = conversation.conversationType === 'group';
   const isMail = conversation.platform === Platform.MAIL;
   const unread = conversation.unread > 0;
+  /** 会话标题：平台给了什么就显示什么（缺昵称是平台侧问题，不在前端编造） */
+  const title = conversation.title;
   /** 整段都是自己发的（只有出站）：头像不取名字首字，用自己的发送图标 */
   const outOnly = conversation.messages.every((m) => m.direction === 'out');
   const avatarText = outOnly
@@ -33,7 +35,7 @@ export function ConversationRow({
       ? <PlatformGlyph platform={Platform.MAIL} size={16} />
       : isGroup
         ? '群'
-        : initials(conversation.title);
+        : initials(title);
 
   return (
     <article
@@ -41,7 +43,7 @@ export function ConversationRow({
       role="button"
       tabIndex={0}
       aria-current={active}
-      aria-label={`${unread ? '未读，' : ''}${conversation.title}`}
+      aria-label={`${unread ? '未读，' : ''}${title}`}
       data-conv={conversation.key}
       onClick={() => onSelect(conversation.lastMessage.traceId)}
       onKeyDown={(e) => {
@@ -65,7 +67,7 @@ export function ConversationRow({
       <div className="conv-row__main">
         <div className="conv-row__top">
           <span className="conv-row__title" title={conversation.title}>
-            {conversation.title}
+            {title}
           </span>
           {isGroup && <span className="conv-row__tag">群</span>}
           <span className="conv-row__spacer" />
