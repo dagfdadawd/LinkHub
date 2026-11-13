@@ -229,7 +229,10 @@ export function sortMessages(list: UnifiedMessage[]): UnifiedMessage[] {
 }
 
 export function clamp(text: string, max: number): string {
-  return text.length > max ? `${text.slice(0, max)}…` : text;
+  // 防御：后端个别通道（如钉钉个人事件）可能把非字符串塞进 body，
+  // 这里统一转成字符串，避免界面上出现 "[object Object]"。
+  const value = typeof text === 'string' ? text : text == null ? '' : String(text);
+  return value.length > max ? `${value.slice(0, max)}…` : value;
 }
 
 function pad(n: number): string {
