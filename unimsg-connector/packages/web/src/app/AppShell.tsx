@@ -1,5 +1,5 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { CSSProperties, ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Alert, App as AntApp, Avatar, Button, Dropdown, Tooltip } from 'antd';
 import type { MenuProps } from 'antd';
@@ -21,6 +21,7 @@ import {
 import { useAppState } from '../hooks/useAppState';
 import { store } from '../store';
 import { ConnectionDot } from '../components/ConnectionDot';
+import { PlatformGlyph } from '../components/PlatformGlyph';
 import { footerShortLabel, footerState } from '../utils/footerState';
 import { clamp } from '../utils/format';
 import { formatSendError } from '../utils/sendError';
@@ -30,6 +31,11 @@ import { SettingsModal } from '../features/settings/SettingsModal';
 import { ComposeModal } from '../features/compose/ComposeModal';
 import { CommandPalette } from '../components/CommandPalette';
 import { useTheme } from './ThemeProvider';
+import { Platform } from '../types';
+import type { UnifiedMessage } from '../types';
+import { PLATFORM_META } from '../utils/format';
+import { conversationKey } from '../utils/conversations';
+import { ensureNotificationPermission, showSystemNotification } from '../services/notify';
 
 /** 错误排查提示：后端未启动 / 端口不一致 / token 不一致是最常见的三类首启问题 */
 const ERROR_HINTS =
@@ -60,33 +66,38 @@ function useIsCompact(): boolean {
   return compact;
 }
 
-/** 图标轨导航项：图标 + 常驻短文字（客户不用 hover 才知道是什么），计数以角标呈现 */
-function RailLink({
+/**
+ * 导航项：图标 + 常驻文字（不用 hover 才知道是什么）+ 可选计数。
+ * 选中态只换底色与字色，不做发光/描边——参考图里导航是安静的。
+ */
+function SideLink({
   to,
   icon,
   label,
   count,
+  onNavigate,
 }: {
   to: string;
   icon: ReactNode;
   label: string;
   count?: number;
+  onNavigate?: () => void;
 }) {
   return (
-    <Tooltip title={label} placement="right" mouseEnterDelay={0.22}>
-      <NavLink
-        to={to}
-        aria-label={label}
-        className={({ isActive }) => `rail-item${isActive ? ' is-active' : ''}`}
-      >
+    <NavLink
+      to={to}
+      aria-label={label}
+      onClick={onNavigate}
+      className={({ isActive }) => `side-link${isActive ? ' is-active' : ''}`}
+    >
+      <span className="side-link__icon" aria-hidden="true">
         {icon}
-        {typeof count === 'number' && count > 0 && (
-          <span className="rail-item__badge">{count > 99 ? '99+' : count}</span>
-        )}
-        {/* 常驻文字标签：客户不用逐个 hover 才知道每个图标是什么（P2-1） */}
-        <span className="rail-item__label">{label}</span>
-      </NavLink>
-    </Tooltip>
+      </span>
+      <span className="side-link__label">{label}</span>
+      {typeof count === 'number' && count > 0 && (
+        <span className="side-link__count">{count > 99 ? '99+' : count}</span>
+      )}
+    </NavLink>
   );
 }
 
@@ -146,42 +157,6 @@ export function AppShell() {
     store.dismissSendFailure();
   }, [sendFailure, message, navigate]);
 
-  // —— 图标轨滑动高光 ——
-  const navRef = useRef<HTMLElement | null>(null);
-  const [glow, setGlow] = useState<{ top: number; height: number } | null>(null);
-  const [jelly, setJelly] = useState(false);
-  const firstGlow = useRef(true);
-
-  useLayoutEffect(() => {
-    const nav = navRef.current;
-    if (!nav) return;
-    const measure = () => {
-      const active = nav.querySelector<HTMLElement>('.rail-item.is-active');
-      if (!active) {
-        setGlow(null);
-        return;
-      }
-      setGlow({ top: active.offsetTop, height: active.offsetHeight });
-    };
-    measure();
-    if (typeof ResizeObserver === 'undefined') return;
-    const ro = new ResizeObserver(measure);
-    ro.observe(nav);
-    return () => ro.disconnect();
-  }, [location.pathname]);
-
-  // 每次高光位移都补一段果冻挤压（首帧落位不做，避免刚进页面就抖一下）
-  useEffect(() => {
-    if (!glow) return;
-    if (firstGlow.current) {
-      firstGlow.current = false;
-      return;
-    }
-    setJelly(true);
-    const timer = window.setTimeout(() => setJelly(false), 560);
-    return () => window.clearTimeout(timer);
-  }, [glow?.top, glow?.height]);
-
   // 偏好落到 <html data-*> 上，交给 CSS 生效（密度 / 动效）
   useEffect(() => {
     const root = document.documentElement;
@@ -192,10 +167,62 @@ export function AppShell() {
   const counts = useMemo(() => {
     // 收件箱角标 = 未读数（阅读状态），不再用「未终结条数」——
     // 那个口径会让人误以为「角标 4 但其实都看过了」。
-    const inbox = state.messages.filter((m) => !m.readAt).length;
+    // 自己发出的消息（含钉钉回声）不算未读：会话列表里它们不产生角标。
+    const inbox = state.messages.filter((m) => m.direction !== 'out' && !m.readAt).length;
     const todos = state.messages.filter((m) => m.type === 'todo' && !m.done).length;
-    return { inbox, todos };
+    // 接入平台分组：按平台统计当前收件箱里的条数（真实数据，不写死）
+    const perPlatform = new Map<Platform, number>();
+    for (const m of state.messages) {
+      perPlatform.set(m.platform, (perPlatform.get(m.platform) ?? 0) + 1);
+    }
+    return { inbox, todos, perPlatform };
   }, [state.messages]);
+
+  /**
+   * 新消息提醒：应用内 toast + 系统通知（Windows / macOS 通知中心）。
+   *  - 只提醒「入站」：自己发出的消息与钉钉回声永不弹窗；
+   *  - 首屏已有历史不提醒，只有真正新到的才算；
+   *  - 同一会话本批多条合并为一条通知，最多提醒 3 个会话，避免刷屏。
+   */
+  const seenInbound = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    if (state.loading) return;
+    const inbound = state.messages.filter((m) => m.direction !== 'out');
+    if (seenInbound.current === null) {
+      seenInbound.current = new Set(inbound.map((m) => m.traceId));
+      return;
+    }
+    const seen = seenInbound.current;
+    const fresh = inbound.filter((m) => !seen.has(m.traceId) && !m.readAt);
+    for (const m of inbound) seen.add(m.traceId);
+    if (fresh.length === 0) return;
+
+    const byConv = new Map<string, UnifiedMessage[]>();
+    for (const m of fresh) {
+      const key = conversationKey(m);
+      const list = byConv.get(key);
+      if (list) list.push(m);
+      else byConv.set(key, [m]);
+    }
+
+    void (async () => {
+      await ensureNotificationPermission();
+      let shown = 0;
+      for (const [key, list] of byConv) {
+        if (shown >= 3) break;
+        shown += 1;
+        const last = list[list.length - 1];
+        const title =
+          last.conversation?.type === 'group' && last.conversation.title
+            ? last.conversation.title
+            : last.sender.name;
+        const body = clamp(last.body, 40);
+        showSystemNotification({ title, count: list.length, body, tag: key });
+        // 应用内兜底：系统通知被拒或被专注助手拦截时，至少应用里能看见
+        message.info(`${title}：${body}`);
+      }
+    })();
+  }, [state.messages, state.loading, message]);
 
   // ⌘K / Ctrl+K 打开命令面板（顶层监听，输入框内也生效）
   useEffect(() => {
@@ -230,67 +257,99 @@ export function AppShell() {
     },
   };
 
+  /** 平台导航：点一下 = 进收件箱 + 把渠道筛选切到该平台（复用既有筛选能力，不是新造的假入口） */
+  const openPlatform = (platform: Platform) => {
+    store.setFilters({ platform });
+    navigate('/inbox');
+  };
+  const activePlatform =
+    location.pathname.startsWith('/inbox') ? state.filters.platform : undefined;
+
+  const platformNav = useMemo(
+    () =>
+      [Platform.FEISHU, Platform.DINGTALK, Platform.WECOM, Platform.MAIL].map((platform) => ({
+        platform,
+        name:
+          platform === Platform.WECOM ? '企微' : PLATFORM_META[platform].name,
+        count: counts.perPlatform.get(platform) ?? 0,
+      })),
+    [counts.perPlatform],
+  );
+
   return (
     <div className="app-shell">
-      <aside className="app-side">
-        <div className="rail__brand">
-          <Tooltip title="LinkHub · 统一消息中心" placement="right">
-            <button
-              className="brand__mark"
-              type="button"
-              aria-label="返回收件箱"
-              onClick={() => navigate('/inbox')}
-            >
-              L
-            </button>
-          </Tooltip>
+      <aside className="side">
+        <div className="side__brand">
+          <button
+            className="side__logo"
+            type="button"
+            aria-label="返回收件箱"
+            onClick={() => navigate('/inbox')}
+          >
+            <span aria-hidden="true">L</span>
+          </button>
+          <span className="side__brand-text">
+            <strong>LinkHub</strong>
+            <small>统一消息中心</small>
+          </span>
         </div>
 
-        <nav className="rail__nav" aria-label="主导航" ref={navRef}>
-          {glow && (
-            <span
-              className={`rail__glow${jelly ? ' is-moving' : ''}`}
-              style={{ '--glow-y': `${glow.top}px`, height: glow.height } as CSSProperties}
-              aria-hidden="true"
-            />
-          )}
-
-          <div className="rail__group">
-            <RailLink to="/inbox" icon={<InboxOutlined />} label="收件箱" count={counts.inbox} />
-            <RailLink to="/todos" icon={<CheckSquareOutlined />} label="待办" count={counts.todos} />
-            <RailLink to="/trace" icon={<HistoryOutlined />} label="全链路回放" />
+        <nav className="side__nav" aria-label="主导航">
+          <div className="side__group">
+            <SideLink to="/inbox" icon={<InboxOutlined />} label="收件箱" count={counts.inbox} />
+            <SideLink to="/todos" icon={<CheckSquareOutlined />} label="待办" count={counts.todos} />
+            <SideLink to="/trace" icon={<HistoryOutlined />} label="全链路回放" />
           </div>
 
-          <span className="rail__sep" role="presentation" />
+          <div className="side__group">
+            <span className="side__group-label">接入平台</span>
+            {platformNav.map((item) => {
+              const active = activePlatform === item.platform;
+              return (
+                <button
+                  key={item.platform}
+                  type="button"
+                  className={`side-link side-link--platform${active ? ' is-active' : ''}`}
+                  aria-pressed={active}
+                  onClick={() => openPlatform(item.platform)}
+                >
+                  <span className={`side-link__icon side-link__icon--glyph is-${item.platform}`} aria-hidden="true">
+                    <PlatformGlyph platform={item.platform} size={14} />
+                  </span>
+                  <span className="side-link__label">{item.name}</span>
+                  <span className="side-link__count">{item.count}</span>
+                </button>
+              );
+            })}
+          </div>
 
-          <div className="rail__group">
-            <RailLink to="/connect" icon={<LinkOutlined />} label="连接账号" />
-            <RailLink to="/accounts" icon={<ApiOutlined />} label="平台账号" />
+          <div className="side__group">
+            <SideLink to="/connect" icon={<LinkOutlined />} label="连接账号" />
+            <SideLink to="/accounts" icon={<ApiOutlined />} label="平台账号" />
           </div>
         </nav>
 
-        <div className="rail__foot">
-          <Tooltip title="个人设置" placement="right">
-            <button
-              className="rail-item rail-item--plain"
-              type="button"
-              aria-label="个人设置"
-              onClick={() => setSettingsOpen(true)}
-            >
+        <div className="side__foot">
+          <button
+            className="side-link side-link--plain"
+            type="button"
+            aria-label="个人设置"
+            onClick={() => setSettingsOpen(true)}
+          >
+            <span className="side-link__icon" aria-hidden="true">
               <SettingOutlined />
-              <span className="rail-item__label">设置</span>
-            </button>
-          </Tooltip>
+            </span>
+            <span className="side-link__label">设置</span>
+          </button>
 
           <Tooltip title={`${footer.badge} · ${footer.text}`} placement="right">
             <span
-              className={`rail-status rail-status--${footer.tone === 'ok' ? 'ok' : footer.tone}`}
+              className={`side-status side-status--${footer.tone === 'ok' ? 'ok' : footer.tone}`}
               role="status"
               aria-label={`${footer.badge}：${footer.text}`}
             >
-              <span className="rail-status__dot" />
-              {/* 小白看不到 aria-label：给一颗绿点配可见短文案，断线时至少对称 */}
-              <span className="rail-status__text">{footerShortLabel(footer)}</span>
+              <span className="side-status__dot" />
+              <span className="side-status__text">{footerShortLabel(footer)}</span>
             </span>
           </Tooltip>
         </div>
@@ -304,17 +363,15 @@ export function AppShell() {
           </div>
 
           <div className="cmdbar__actions">
-            <Tooltip title="从统一入口向指定平台发送文本或文件">
-              <Button
-                type="primary"
-                icon={<SendOutlined />}
-                onClick={() => setComposeOpen(true)}
-                aria-label="新建发送"
-                data-testid="open-compose"
-              >
-                新建发送
-              </Button>
-            </Tooltip>
+            <Button
+              type="primary"
+              icon={<SendOutlined />}
+              onClick={() => setComposeOpen(true)}
+              aria-label="新建发送"
+              data-testid="open-compose"
+            >
+              新建发送
+            </Button>
 
             <button
               className="search-trigger"

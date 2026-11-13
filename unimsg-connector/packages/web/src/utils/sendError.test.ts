@@ -54,3 +54,34 @@ describe('formatSendError（按身份能力分支的失败提示）', () => {
     expect(out).not.toContain('。本人身份未连接，连接后可用本人身份发送（到「平台账号」页连接本人账号）发');
   });
 });
+describe('平台原始 JSON 报错 → 中文可操作结论', () => {
+  const feishuExternal =
+    'https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id HTTP 400: '
+    + '{"code":230027,"msg":"Lack of necessary permissions, ext=no permission to operate external chats.",'
+    + '"error":{"log_id":"20261113134203DCCFB29DC52A2259D81A","troubleshooter":"排查建议查看"}}';
+  const feishuUnknown =
+    'https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id HTTP 400: '
+    + '{"code":234999,"msg":"something odd happened on the platform side that is quite long to explain",'
+    + '"error":{"log_id":"abcdef"}}';
+
+  it('飞书 230027（外部会话无权限）：给出中文结论与下一步，不再甩一整段 JSON', () => {
+    const text = formatSendError(feishuExternal, identity(true));
+    expect(text).toContain('外部会话');
+    expect(text).toContain('230027');
+    expect(text).toContain('飞书开放平台');
+    expect(text).not.toContain('Lack of necessary permissions');
+    expect(text).not.toContain('log_id');
+  });
+
+  it('未收录的飞书错误码：给通用结论 + 错误码，保留排查入口', () => {
+    const text = formatSendError(feishuUnknown, identity(true));
+    expect(text).toContain('234999');
+    expect(text).toContain('全链路回放');
+    expect(text).not.toContain('log_id');
+  });
+
+  it('短文案 / 非 JSON 报错不受影响（原有行为保持不变）', () => {
+    const short = '真实发送失败：飞书返回 10003 invalid param';
+    expect(formatSendError(short, identity(true))).toBe(short);
+  });
+});
