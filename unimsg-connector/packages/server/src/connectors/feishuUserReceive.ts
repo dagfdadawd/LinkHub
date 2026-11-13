@@ -305,6 +305,8 @@ export interface FeishuUserMessageRaw {
   sender?: { id?: string; id_type?: string; sender_type?: string };
   chat_id?: string;
   deleted?: boolean;
+  /** 群消息里的 @ 列表；群聊只收「@我」时用它判断 */
+  mentions?: Array<{ id?: { open_id?: string }; key?: string; name?: string }>;
   [key: string]: unknown;
 }
 
@@ -399,6 +401,12 @@ function postText(content: any): string {
 export interface MapFeishuUserMessageOptions {
   /** 本人 open_id：过滤自己发出的消息（避免自环） */
   selfOpenId?: string;
+  /**
+   * 群聊是否只收「@我」的消息（默认 true）：
+   * 用户身份能读到全部群消息，但产品口径是「群里被 @ 才算找我」。
+   * 单测/排障需要看全量群消息时可显式传 false。
+   */
+  onlyMentionMe?: boolean;
   /** 单测注入时钟（毫秒） */
   now?: () => number;
 }
@@ -468,6 +476,22 @@ export function mapFeishuUserMessage(
 
   const senderId = typeof sender.id === 'string' && sender.id ? sender.id : 'unknown';
   const conversationType = chat.chatMode === 'p2p' ? 'p2p' : 'group';
+
+  /**
+   * 群聊只收「@我」：用户身份能看到自己所在全部群的普通消息，
+   * 但产品口径是「群聊里被 @ 才算找我」——普通群消息会把会话列表刷满，
+   * 且与钉钉个人事件的默认范围（all-direct + at-me）保持一致。
+   * 单聊不受影响。
+   */
+  const mentionFilterOn = opts.onlyMentionMe ?? true;
+  if (mentionFilterOn && conversationType === 'group' && selfOpenId) {
+    const mentions = Array.isArray(raw.mentions) ? raw.mentions : [];
+    const mentioned = mentions.some(
+      (m) => typeof m?.id?.open_id === 'string' && m.id.open_id === selfOpenId,
+    );
+    if (!mentioned) return null;
+  }
+
   return {
     traceId: genTraceId(),
     platform: Platform.FEISHU,

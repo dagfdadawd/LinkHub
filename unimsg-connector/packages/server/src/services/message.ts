@@ -9,6 +9,7 @@
  *  - getTrace / getLoopLog：全链路回放
  */
 import { randomUUID } from 'node:crypto';
+import { normalizeEchoText, rememberSent, learnedSelfIds } from './echoRegistry';
 import {
   Platform, MsgStatus, UnifiedMessage, PlatformConnector,
   type ComposeAck, type ComposeRequest, type IdentityRole, type OutboundAttachment,
@@ -31,6 +32,13 @@ export interface Broadcast {
 export interface IngestResult {
   message: UnifiedMessage;
   duplicate: boolean;
+}
+
+/** 一次 AI 分析的结果：除更新后的消息外，还带上「本次」回退原因（不是启动时的配置结论） */
+export interface AnalysisOutcome {
+  message: UnifiedMessage;
+  source: 'llm' | 'rules';
+  fallbackReason?: string;
 }
 
 /**
@@ -116,6 +124,9 @@ export interface SyncStatusResult {
 }
 
 export class MessageService {
+  /** 正在重新分析的消息：同一条并发点击只跑一次，避免重复计费与重复日志 */
+  private readonly reanalyzing = new Set<string>();
+
   constructor(
     private repo: MessageRepository,
     private connectors: Record<Platform, PlatformConnector>,
@@ -151,6 +162,28 @@ export class MessageService {
    *  - (platform, externalId) 幂等：重复投递返回 duplicate，不重复入库、不重复广播；
    *  - 写 received trace、counters，异步富化（OCR/LLM）并补广播 message.updated。
    */
+  /**
+   * 启动时按「已学习的本人 ID」补标历史消息：把以前误当成来信入库的本人消息
+   * （钉钉回声 / 手机直发）标成 direction=out，会话列表不再把它们算成未读。
+   * 返回被修正的条数；没有学习记录时是纯 no-op。
+   */
+  applyLearnedSelfDirections(): number {
+    const ids = learnedSelfIds(Platform.DINGTALK);
+    if (ids.length === 0) return 0;
+    let changed = 0;
+    for (const m of this.repo.list()) {
+      if (m.platform !== Platform.DINGTALK) continue;
+      if (m.direction === 'out') continue;
+      if (!ids.includes(m.sender.id)) continue;
+      this.repo.update(m.traceId, { direction: 'out' });
+      changed += 1;
+    }
+    if (changed > 0) {
+      console.log(`[identity] 已把 ${changed} 条本人发出的历史消息标为「我发出的」（不再计入未读）`);
+    }
+    return changed;
+  }
+
   async ingestUnified(platform: Platform, incoming: UnifiedMessage): Promise<IngestResult> {
     // 平台侧唯一 ID 是幂等键的唯一来源：缺失/兜底成 'unknown' 时必须拒收，
     // 否则多条不同消息会互相去重（或占死 unknown 键）。
@@ -208,27 +241,102 @@ export class MessageService {
       }
     }
 
+    const outcome = await this.analyzeAndApply(m, body, needsReview);
+    if (outcome) this.broadcast({ type: 'message.updated', data: outcome.message });
+  }
+
+  /**
+   * LLM 分析 + 落库：ingest 富化与「重新生成」共用同一条链路，避免两套规则漂移。
+   * 除 intent / replyDraft / intentSource 外，还如实记录本次生效的厂商、模型、
+   * 置信度与精度档，供前端标签显示——历史消息保留当时的值，配置变更后不会被回溯改写。
+   * 低精度仍写 source=llm（结果来自模型），只有真实调用失败才抹掉这些 AI 字段。
+   */
+  private async analyzeAndApply(
+    m: UnifiedMessage,
+    body: string,
+    needsReview = m.needsReview,
+  ): Promise<AnalysisOutcome | undefined> {
     const lr = await this.llm.analyze({ ...m, body });
+    let fallbackReason: string | undefined;
     let intent: string;
     let replyDraft = m.replyDraft;
     let intentSource: 'llm' | 'rules';
+    let aiProvider: string | undefined;
+    let aiModel: string | undefined;
+    let aiConfidence: number | undefined;
+    let aiPrecision: 'high' | 'low' | undefined;
     if (lr.ok) {
       intent = lr.intent;
       replyDraft = lr.replyDraft;
       intentSource = lr.source;
+      if (lr.source === 'llm') {
+        // 生产链路用运行时的厂商显示名（MiMo / 火山方舟 …）；单测注入的假服务保留其标识
+        aiProvider = lr.provider === config.llm.provider
+          ? config.llm.providerLabel
+          : (lr.provider ?? config.llm.providerLabel);
+        aiModel = lr.model ?? config.llm.model;
+        aiConfidence = lr.confidence;
+        aiPrecision = lr.precision;
+      }
       const via = lr.source === 'llm'
         ? `${lr.provider ?? 'llm'}/${lr.model ?? ''} ${lr.latencyMs ?? 0}ms ${lr.tokens ?? 0}tok`
         : 'rules';
       writeTrace(this.repo, m, 'intent', `${lr.intent}(${lr.confidence}) via ${via}`);
+      // 低精度不是回退：留一条独立 trace，说明结果仍来自模型、只是把握较低
+      if (lr.precision === 'low') {
+        writeTrace(
+          this.repo, m, 'intent_low_precision',
+          `模型已生成建议但把握 ${lr.confidence}（精度线 ${config.llm.minConfidence}）：草稿偏简短，未回退规则`,
+        );
+      }
+      fallbackReason = lr.fallbackReason;
       if (lr.fallbackReason) writeTrace(this.repo, m, 'intent_fallback', lr.fallbackReason);
     } else {
       intent = '未分类';
       intentSource = 'rules';
+      fallbackReason = lr.reason;
       writeTrace(this.repo, m, 'intent_fallback', lr.reason);
     }
 
-    const updated = this.repo.update(m.traceId, { body, needsReview, intent, replyDraft, intentSource });
-    if (updated) this.broadcast({ type: 'message.updated', data: updated });
+    // AI 字段显式写 undefined：规则兜底时必须抹掉上一次的真实模型痕迹
+    const updated = this.repo.update(m.traceId, {
+      body, needsReview, intent, replyDraft, intentSource,
+      aiProvider, aiModel, aiConfidence, aiPrecision,
+    });
+    if (!updated) return undefined;
+    return { message: updated, source: intentSource, fallbackReason };
+  }
+
+  /**
+   * 用当前配置重新生成 AI 建议（详情页「重新生成」按钮的真实后端动作）。
+   * 不重跑 OCR（body 已含识别文本）、不改业务状态，只重写 AI 字段并广播 message.updated。
+   * 历史消息因此不用等新消息进来也能重算。
+   */
+  async reanalyze(id: string): Promise<AnalysisOutcome> {
+    const m = this.repo.get(id);
+    if (!m) throw new Error('message not found');
+    if (this.reanalyzing.has(id)) {
+      return { message: m, source: m.intentSource === 'llm' ? 'llm' : 'rules' };
+    }
+    this.reanalyzing.add(id);
+    try {
+      writeTrace(
+        this.repo, m, 'reanalyze_requested',
+        `provider=${config.llm.provider} model=${config.llm.model} mode=${config.llm.mode}`,
+      );
+      const outcome = await this.analyzeAndApply(m, m.body);
+      if (!outcome) throw new Error('message not found');
+      const updated = outcome.message;
+      writeTrace(
+        this.repo, updated, 'reanalyze_done',
+        `source=${outcome.source}${updated.aiProvider ? ` via ${updated.aiProvider}/${updated.aiModel ?? ''}` : ''}`
+        + (outcome.fallbackReason ? ` fallback=${outcome.fallbackReason.slice(0, 180)}` : ''),
+      );
+      this.broadcast({ type: 'message.updated', data: updated });
+      return outcome;
+    } finally {
+      this.reanalyzing.delete(id);
+    }
   }
 
   // ---------- 展示 ----------
@@ -372,6 +480,8 @@ export class MessageService {
         ? { mailMeta: { account: mailKey, inReplyTo: '', subject: req.text.slice(0, 60) || 'LinkHub 文件' } }
         : {}),
       status: MsgStatus.RECEIVED,
+      // 主动发送是「我们发出的」：会话列表不把它算成新来信，聊天区渲染在右侧
+      direction: 'out',
       createdAt: now,
       updatedAt: now,
       ...(req.identity ? { sendIdentity: req.identity } : {}),
@@ -414,6 +524,18 @@ export class MessageService {
     try {
       const result = await this.limiter.send(cur.platform, () => connector.send(outgoing, attachments));
       const at = new Date().toISOString();
+
+      // 登记「刚发出」的文本：钉钉个人事件会把本人发出的消息再推回来（回声），
+      // 个人事件流用它做「同会话 + 同文本 + 时间窗」比对，避免同一条内容入库两次。
+      if (result.mode === 'real') {
+        rememberSent({
+          platform: cur.platform,
+          conversationId: cur.conversation?.id,
+          text: normalizeEchoText(cur.reply ?? cur.body),
+          at: Date.now(),
+          traceId: id,
+        });
+      }
 
       // 把"本次到底走了真实接口还是本地模拟、用了哪个身份"写进消息与闭环日志，绝不静默假装成功。
       // Mock 模式不写 identity（契约 §4：模拟通道不冒充本人/机器人）。

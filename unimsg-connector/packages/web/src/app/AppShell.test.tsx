@@ -10,7 +10,6 @@ import { render, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { AppShell } from './AppShell';
 import { ThemeProvider } from './ThemeProvider';
-import { DEFAULT_PROFILE } from '../features/settings/profile';
 
 const hoisted = vi.hoisted(() => ({
   state: {
@@ -66,12 +65,12 @@ describe('AppShell 顶栏布局', () => {
 
   it('「我」头像占据侧栏顶部，顶栏不再有个人入口', () => {
     const { container } = renderShell();
-    const railBrand = container.querySelector('.rail__brand');
-    expect(railBrand).not.toBeNull();
+    const sideBrand = container.querySelector('.side__brand');
+    expect(sideBrand).not.toBeNull();
 
-    const avatar = within(railBrand as HTMLElement).getByRole('button', { name: '打开个人设置' });
+    const avatar = within(sideBrand as HTMLElement).getByRole('button', { name: '打开个人设置' });
     expect(avatar).toBeInTheDocument();
-    expect(within(railBrand as HTMLElement).getByText(DEFAULT_PROFILE.name)).toBeInTheDocument();
+    expect(within(sideBrand as HTMLElement).getByText('LinkHub')).toBeInTheDocument();
 
     const cmdbar = container.querySelector('.cmdbar') as HTMLElement;
     expect(within(cmdbar).queryByRole('button', { name: '打开个人设置' })).toBeNull();
@@ -93,7 +92,7 @@ describe('AppShell 顶栏布局', () => {
     expect(within(cmdbar).queryByText(/实时连接/)).toBeNull();
     expect(cmdbar.querySelector('.connection-dot')).toBeNull();
 
-    expect(container.querySelector('.rail-status')).not.toBeNull();
+    expect(container.querySelector('.side-status')).not.toBeNull();
   });
 
   it('明暗切换在「新建发送」左侧，新建发送是顶栏最右操作', () => {
@@ -101,7 +100,7 @@ describe('AppShell 顶栏布局', () => {
     const actions = container.querySelector('.cmdbar__actions') as HTMLElement;
     const buttons = within(actions).getAllByRole('button');
     expect(buttons.map((el) => el.getAttribute('aria-label'))).toEqual([
-      '返回浮光主界面',
+      '打开设计实验室',
       '切换明暗主题',
       '新建发送',
     ]);

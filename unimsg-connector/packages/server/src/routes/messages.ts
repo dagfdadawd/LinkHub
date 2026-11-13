@@ -3,6 +3,7 @@ import { Platform, MsgStatus, type IdentityRole } from '@unimsg/shared';
 import { MessageService } from '../services/message';
 import { listAccounts } from '../services/account';
 import { IdentityUnavailableError } from '../services/identity';
+import { config } from '../config';
 import {
   InvalidOutboundRequest,
   normalizeAttachments,
@@ -48,6 +49,44 @@ export function messagesRouter(svc: MessageService) {
       return;
     }
     res.json({ ok: true, data: m });
+  });
+
+  /**
+   * 重新生成 AI 建议：POST /api/messages/:id/reanalyze
+   * 用「当前」LLM 配置重跑一次分析（历史消息也适用），返回完整消息 + 降级原因；
+   * 同一条消息并发请求由 service 去重。密钥不出服务端。
+   */
+  r.post('/messages/:id/reanalyze', async (req, res) => {
+    try {
+      const outcome = await svc.reanalyze(req.params.id);
+      const rawReason = outcome.fallbackReason?.slice(0, 180);
+      const message = outcome.message;
+      // 三种结论分开说，别让「输入太短」被误读成 API / Key 坏了：
+      // ① 调用失败 → 回退规则；② 模型成功但信息量不足 → 仍采用，只是低精度；③ 正常高精度结果。
+      const reason = rawReason
+        ? `本次真实调用失败，已回退规则：${rawReason}`
+        : message.intentSource === 'llm' && message.aiPrecision === 'low'
+          ? `真实模型已生成建议，但信息量较少（把握 ${message.aiConfidence ?? '未知'}），草稿偏简短、精度较低，未回退规则`
+          : config.llm.reason;
+      res.json({
+        ok: true,
+        data: message,
+        llm: {
+          mode: config.llm.mode,
+          reason,
+          providerLabel: config.llm.providerLabel,
+          precision: message.aiPrecision,
+          confidence: message.aiConfidence,
+        },
+      });
+    } catch (e) {
+      const reason = e instanceof Error ? e.message : String(e);
+      if (/not found/i.test(reason)) {
+        res.status(404).json({ ok: false, error: 'not found' });
+        return;
+      }
+      res.status(500).json({ ok: false, error: `重新生成失败：${reason}` });
+    }
   });
 
   // 异步回写：202 + 入队即返回 processing，结果经 WS 推送。

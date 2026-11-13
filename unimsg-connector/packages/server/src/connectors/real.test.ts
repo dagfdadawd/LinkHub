@@ -12,6 +12,7 @@ import { feishuEncrypt, dingtalkEncrypt, dingtalkSign } from './crypto';
 import { resetTokenCache } from './real';
 
 const origFetch = globalThis.fetch;
+const origDingtalkPolicy = config.identity.dingtalk.policy;
 
 interface Call {
   url: string;
@@ -52,11 +53,15 @@ before(() => {
   config.platforms.dingtalk.robotCode = 'robot_test';
   config.platforms.dingtalk.aesToken = 'aes_token_test';
   config.platforms.dingtalk.aesKey = 'MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY';
+  // 现有用例断言的是机器人发送通道；显式锁 bot，避免误读开发者本机 .env 的
+  // DINGTALK_IDENTITY=user（否则会走 dws 本人通道，未登录时直接抛错）
+  config.identity.dingtalk.policy = 'bot';
 });
 
 after(() => {
   globalThis.fetch = origFetch;
   forceAllModes('mock');
+  config.identity.dingtalk.policy = origDingtalkPolicy;
   resetTokenCache();
 });
 
@@ -249,6 +254,24 @@ test('钉钉 receive：单聊不误判成群聊，也不带群名', () => {
   });
   assert.equal(msg.conversation?.type, 'p2p');
   assert.equal(msg.conversation?.title, undefined);
+});
+
+test('钉钉 receive：richText 是对象，取 richText 段拼成正文（不能是 [object Object]）', () => {
+  const msg = dingtalkConnector.receive({
+    msgId: 'm-rich', msgtype: 'richText',
+    content: { richText: [{ text: '明早评审' }, { text: '改到 10 点' }] },
+    senderStaffId: 'staff1', senderNick: '小王', conversationId: 'cid4',
+  });
+  assert.equal(msg.body, '明早评审改到 10 点');
+  assert.equal(msg.type, 'text');
+});
+
+test('钉钉 receive：未知对象结构不把 [object Object] 塞进正文', () => {
+  const msg = dingtalkConnector.receive({
+    msgId: 'm-unknown', msgtype: 'text', content: { weird: 1 },
+    senderStaffId: 'staff1', conversationId: 'cid5',
+  });
+  assert.equal(msg.body, '');
 });
 
 test('钉钉入站日志摘要：群聊写明群名、单聊不写群名（判断平台到底推没推）', () => {

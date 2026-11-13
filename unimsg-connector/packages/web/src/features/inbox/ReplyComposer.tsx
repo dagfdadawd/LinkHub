@@ -10,6 +10,9 @@ import { filesToAttachments, formatBytes, validateFiles } from '../../utils/atta
 
 const { TextArea } = Input;
 
+/** 单条回复的字符上限（与后端契约一致，计数在输入框下方展示） */
+const MAX_LENGTH = 2000;
+
 export function ReplyComposer({
   message,
   value,
@@ -81,8 +84,7 @@ export function ReplyComposer({
           enterToSend ? '输入回复内容…（Enter 发送 · Shift + Enter 换行）' : '输入回复内容…'
         }
         autoSize={{ minRows: 3, maxRows: 6 }}
-        maxLength={2000}
-        showCount
+        maxLength={MAX_LENGTH}
         onKeyDown={(e) => {
           if (e.key !== 'Enter' || !canSend) return;
           // 中文输入法确认候选词时也会触发 Enter，必须排除
@@ -134,6 +136,9 @@ export function ReplyComposer({
         >
           <UploadOutlined /> 添加文件
         </button>
+        <span className="composer__count" aria-live="off">
+          {value.length} / {MAX_LENGTH}
+        </span>
         <RippleButton
           loading={sending}
           disabled={!canSend}

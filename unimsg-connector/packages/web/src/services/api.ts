@@ -26,6 +26,22 @@ export interface ReplyAck {
   taskId: string;
 }
 
+/**
+ * 「重新生成」结果：完整消息 + 后端当前 LLM 通道结论。
+ * 带上 reason 是为了在仍是规则兜底时如实告诉用户原因，而不是弹一句无信息量的提示。
+ */
+export interface ReanalyzeResult {
+  message: UnifiedMessage;
+  llm: {
+    mode: 'mock' | 'real';
+    reason: string;
+    providerLabel: string;
+    /** 仅真实模型结果：精度档与把握程度，低精度仍是模型生成，不是规则兜底 */
+    precision?: 'high' | 'low';
+    confidence?: number;
+  };
+}
+
 /** 通道策略：auto=按凭据自动选择（有凭据走真实，否则 Mock）；real / mock=强制指定 */
 export type AccountPolicy = 'auto' | 'real' | 'mock';
 
@@ -383,6 +399,8 @@ export interface MessageApi {
   reply(id: string, text: string, attachments?: OutboundAttachment[]): Promise<ReplyAck>;
   /** 从统一入口主动向指定平台/会话发送，不依赖先收到消息 */
   compose(req: ComposeRequest): Promise<ComposeAck>;
+  /** 用当前 AI 配置重新分析这条消息（真实后端会调模型，Mock 走本地规则） */
+  reanalyze(id: string): Promise<ReanalyzeResult>;
   /** 各平台发送能力与体积上限，供新建发送表单渲染 */
   capabilities(): Promise<SendCapabilities[]>;
   /** 发起飞书用户身份授权，返回需要打开的飞书授权页 URL */
@@ -415,7 +433,7 @@ export interface MessageApi {
   /** 保存平台应用凭据 / 身份模式（部分更新；返回是否需要重启） */
   updateAppConfig(patch: AppConfigUpdate): Promise<AppConfigSaveResult>;
   markDone(id: string): Promise<UnifiedMessage>;
-  /** 把任意消息手动加入待办（不改闭环状态、不触发平台回写） */
+/** 把任意消息手动加入待办（不改闭环状态、不触发平台回写） */
   markTodo(id: string): Promise<UnifiedMessage>;
   /** 标记已读 / 未读（阅读状态独立于业务状态） */
   markRead(id: string, read: boolean): Promise<UnifiedMessage>;

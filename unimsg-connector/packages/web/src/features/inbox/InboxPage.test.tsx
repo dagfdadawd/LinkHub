@@ -39,6 +39,8 @@ vi.mock('../../store', () => ({
     dismissError: vi.fn(),
     reply: vi.fn(),
     markDone: vi.fn(),
+    markRead: vi.fn(),
+    markAllRead: vi.fn(async () => 0),
     getTrace: vi.fn(),
     refreshHealth: vi.fn(),
     simulateIncoming: vi.fn(),
@@ -202,5 +204,28 @@ describe('首启入口（连接账号横幅）', () => {
     });
     renderInboxPage();
     expect(screen.queryByTestId('onboarding-banner')).toBeNull();
+  });
+});
+
+describe('收件箱筛选与搜索接线（三栏工作台）', () => {
+  it('搜索框输入即写入 filters.keyword（走既有筛选能力，不是本地假过滤）', async () => {
+    const { store } = await import('../../store');
+    mockState({ messages: [MESSAGE], accounts: ACCOUNTS });
+    renderInboxPage();
+
+    fireEvent.change(screen.getByLabelText('搜索消息'), { target: { value: '周报' } });
+    expect(store.setFilters).toHaveBeenCalledWith({ keyword: '周报' });
+  });
+
+  it('「未读 / 待处理」快捷胶囊分别切换 onlyUnread / onlyReview', async () => {
+    const { store } = await import('../../store');
+    mockState({ messages: [MESSAGE], accounts: ACCOUNTS });
+    renderInboxPage();
+
+    fireEvent.click(screen.getByRole('button', { name: '未读' }));
+    expect(store.setFilters).toHaveBeenCalledWith({ onlyUnread: true });
+
+    fireEvent.click(screen.getByRole('button', { name: '待处理' }));
+    expect(store.setFilters).toHaveBeenCalledWith({ onlyReview: true });
   });
 });

@@ -69,9 +69,32 @@ export function describeInbound(raw: unknown): string {
   return `收到钉钉消息：${where} · 发送者=${sender} · 类型=${r?.msgtype ?? 'unknown'} · msgId=${r?.msgId ?? '?'}`;
 }
 
+/**
+ * 提取钉钉入站正文。
+ *
+ * `msgtype=text` 时是 `text.content` 字符串；但 `msgtype=richText` 时 `content` 是一个
+ * 对象（`{ richText: [{ text }, ...] }`），直接 String() 会得到 "[object Object]"。
+ * 这里把富文本段拼成纯文本；未知结构退回空串，绝不把对象塞进消息正文。
+ */
+export function extractInboundText(raw: unknown): string {
+  const r = raw as any;
+  const direct = r?.text?.content ?? r?.content;
+  if (typeof direct === 'string') return direct;
+  if (direct && typeof direct === 'object') {
+    const segments = (direct as any).richText;
+    if (Array.isArray(segments)) {
+      return segments
+        .map((seg: any) => (typeof seg?.text === 'string' ? seg.text : ''))
+        .join('')
+        .trim();
+    }
+  }
+  return '';
+}
+
 export function receive(raw: unknown): UnifiedMessage {
   const r = raw as any;
-  const text = r?.text?.content ?? r?.content ?? '';
+  const text = extractInboundText(r);
   const senderId = r?.senderStaffId ?? r?.senderId ?? 'unknown';
   const now = new Date().toISOString();
   const type = r?.msgtype === 'image' ? 'image'

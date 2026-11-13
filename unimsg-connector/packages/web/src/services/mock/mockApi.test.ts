@@ -203,4 +203,20 @@ describe('MockApi 应用配置（演示模式）', () => {
     expect(verified.ok).toBe(false);
     expect(verified.message).toContain('演示模式');
   });
+
+  it('reanalyze：演示模式用本地规则重算，如实标注 source=rules 且不冒充大模型', async () => {
+    const { api } = makeApi();
+    const all = await api.list();
+    const target = all[0]!;
+
+    const result = await api.reanalyze(target.traceId);
+
+    expect(result.message.traceId).toBe(target.traceId);
+    expect(result.message.intentSource).toBe('rules');
+    expect(result.message.aiProvider).toBeUndefined();
+    expect(result.message.replyDraft).toBeTruthy();
+    expect(result.llm.mode).toBe('mock');
+    expect(result.llm.reason).toMatch(/本地规则/);
+    await expect(api.reanalyze('not-exist')).rejects.toThrow(/not found/);
+  });
 });
