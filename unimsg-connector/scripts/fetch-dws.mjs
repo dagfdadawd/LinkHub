@@ -16,7 +16,7 @@
  * 失败一律中文提示并 exit 1；不写入任何凭据、不触碰用户登录态。
  */
 import { spawnSync } from 'node:child_process';
-import { createWriteStream, existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
+import { copyFileSync, createWriteStream, existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
@@ -194,6 +194,24 @@ async function download(target, targetFile) {
   info(`下载完成（${(size / 1024 / 1024).toFixed(1)} MB）`);
 }
 
+/**
+ * 把文件移动到目标路径。
+ * renameSync 在同盘内是原子的、最快的；但 Windows 上临时目录（C:）与仓库（可能是 D:）
+ * 不在同一个卷时会抛 EXDEV: cross-device link not permitted，此时退回「复制 + 删源」。
+ */
+function moveFile(from, to) {
+  try {
+    renameSync(from, to);
+    return;
+  } catch (e) {
+    if (e?.code !== 'EXDEV') throw e;
+  }
+  copyFileSync(from, to);
+  try {
+    rmSync(from, { force: true });
+  } catch { /* 忽略：临时目录随后会整体清理 */ }
+}
+
 async function main() {
   info(`目标目录：${DEST_DIR}`);
   info(`版本：${VERSION}（可用 DWS_VERSION / DWS_DOWNLOAD_URL 覆盖）`);
@@ -241,7 +259,7 @@ async function main() {
         );
       }
     }
-    renameSync(found, destExe);
+    moveFile(found, destExe);
     if (!IS_WIN) {
       try {
         spawnSync('chmod', ['755', destExe]);
