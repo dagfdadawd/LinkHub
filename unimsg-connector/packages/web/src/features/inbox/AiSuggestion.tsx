@@ -6,6 +6,7 @@ import {
   CopyOutlined,
   DownOutlined,
   HistoryOutlined,
+  LoadingOutlined,
   MailOutlined,
   ReloadOutlined,
   RobotOutlined,
@@ -40,6 +41,7 @@ export function AiSuggestion({
   message,
   onUseDraft,
   onRegenerate,
+  regenerating = false,
   onCopyBody,
   onMarkRead,
   onMarkDone,
@@ -48,6 +50,8 @@ export function AiSuggestion({
   message: UnifiedMessage;
   onUseDraft: (draft: string) => void;
   onRegenerate: () => void;
+  /** 后端正在重新分析：按钮进入 loading，避免连点重复调用模型 */
+  regenerating?: boolean;
   /** 快捷工具：复制原文 / 切换已读 / 标记完成 / 打开回放（详情页注入真实回调） */
   onCopyBody?: () => void;
   onMarkRead?: () => void;
@@ -59,6 +63,20 @@ export function AiSuggestion({
   const [tab, setTab] = useState<AiTab>('analyze');
   const pending = !message.intent;
   const fallback = !message.intent || message.intent === '未分类';
+
+  // 来源标签取消息上记录的「当时」厂商，绝不固定写 MiMo；旧数据没有记录就只说「大模型识别」
+  const sourceIsLlm = message.intentSource === 'llm';
+  // 低精度仍来自真实模型：只提示「信息不足、草稿偏短」，绝不写成规则兜底
+  const lowPrecision = sourceIsLlm && message.aiPrecision === 'low';
+  const confidenceText = typeof message.aiConfidence === 'number'
+    ? `${Math.round(message.aiConfidence * 100)}%`
+    : '较低';
+  const sourceLabel = sourceIsLlm
+    ? (message.aiProvider ? `${message.aiProvider} 识别` : '大模型识别')
+    : '规则兜底';
+  const sourceTitle = sourceIsLlm
+    ? `由真实大模型识别${message.aiModel ? `（模型 ${message.aiModel}）` : ''}${lowPrecision ? '；本次信息量较少，属低精度结果' : ''}`
+    : '真实模型不可用，已回退关键词规则';
 
   /** 建议动作：按现有状态做确定性推断，不是模型输出，所以单独标注 */
   const nextAction = message.needsReview
@@ -101,6 +119,18 @@ export function AiSuggestion({
           <span className="ai-panel__title">AI 智能助手</span>
           <span className="ai-panel__sub">意图识别 · 回复建议 · 快捷操作</span>
         </span>
+        {/* 重新分析作用于整条消息（意图 + 草稿），所以放在面板级，切标签也随时可用 */}
+        <Tooltip title="用当前 AI 配置重新分析这条消息">
+          <button
+            type="button"
+            className="ai-panel__action"
+            aria-label="重新生成"
+            disabled={regenerating}
+            onClick={onRegenerate}
+          >
+            {regenerating ? <LoadingOutlined /> : <ReloadOutlined />}
+          </button>
+        </Tooltip>
         <button
           type="button"
           className="ai-panel__collapse"
@@ -131,6 +161,13 @@ export function AiSuggestion({
             ))}
           </div>
 
+          {/* 低精度是整条消息的属性（信息量不足），与当前停在哪个标签无关，放在面板级 */}
+          {lowPrecision && (
+            <p className="ai-precision" role="note">
+              信息量较少 · 模型把握 {confidenceText}，草稿偏简短、精度较低，建议补充上下文后再发送
+            </p>
+          )}
+
           <div
             className="ai-panel__body"
             role="tabpanel"
@@ -149,17 +186,17 @@ export function AiSuggestion({
                         <IntentTag intent={message.intent} />
                         {message.intentSource && (
                           <span
-                            className={`ai-panel__source${message.intentSource === 'llm' ? ' is-llm' : ''}`}
-                            title={
-                              message.intentSource === 'llm'
-                                ? '由真实大模型识别'
-                                : '真实模型不可用，已回退关键词规则'
-                            }
+                            className={`ai-panel__source${sourceIsLlm ? ' is-llm' : ''}`}
+                            title={sourceTitle}
                           >
-                            {message.intentSource === 'llm' ? 'MiMo 识别' : '规则兜底'}
+                            {sourceLabel}
                           </span>
                         )}
-                        {fallback && <span className="ai-facts__muted">未识别</span>}
+                        {fallback && (
+                          <span className="ai-facts__muted">
+                            {sourceIsLlm ? '信息不足，模型暂未归类' : '未识别，已回退未分类'}
+                          </span>
+                        )}
                       </>
                     )}
                   </div>
@@ -231,17 +268,6 @@ export function AiSuggestion({
                   >
                     复制
                   </Button>
-                  <Tooltip
-                    title={
-                      message.intentSource === 'llm'
-                        ? '重新分析并生成草稿'
-                        : '当前使用关键词规则，未调用大模型；重新生成前请先在 .env 配置 LLM'
-                    }
-                  >
-                    <Button size="small" type="text" icon={<ReloadOutlined />} onClick={onRegenerate}>
-                      重新生成
-                    </Button>
-                  </Tooltip>
                 </div>
               </section>
             )}

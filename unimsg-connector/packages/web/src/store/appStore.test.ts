@@ -76,6 +76,7 @@ describe('AppStore', () => {
       get: async () => undefined,
       reply: async () => Promise.reject(new Error('unused')),
       compose: async () => Promise.reject(new Error('unused')),
+      reanalyze: async () => Promise.reject(new Error('unused')),
       capabilities: async () => [],
       feishuOAuthStart: async () => ({ url: '' }),
       dingtalkPersonalLogin: async () => Promise.reject(new Error('unused')),

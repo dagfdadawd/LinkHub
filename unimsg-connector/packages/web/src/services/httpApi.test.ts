@@ -686,4 +686,38 @@ describe('GET /api/app-config 契约对齐（二轮审计 P3 #8）', () => {
     expect(view.platforms.feishu.fields.stream.value).toBe(true);
     expect(view.platforms.feishu.fields.stream.configured).toBe(true);
   });
+
+  it('reanalyze：POST 正确端点，解包消息与 LLM 通道结论', async () => {
+    const updated = message({ intent: '待办', intentSource: 'llm', aiProvider: '火山方舟' });
+    const fn = mockFetch(jsonResponse({
+      ok: true,
+      data: updated,
+      llm: { mode: 'real', reason: '真实大模型已就绪', providerLabel: '火山方舟' },
+    }));
+    const api = new HttpApi(BASE, TOKEN);
+
+    const result = await api.reanalyze('t-1');
+
+    const [url, init] = callArgs(fn);
+    expect(url).toBe(`${BASE}/api/messages/t-1/reanalyze`);
+    expect(init.method).toBe('POST');
+    expect((init.headers as Record<string, string>).Authorization).toBe(`Bearer ${TOKEN}`);
+    expect(result.message.intent).toBe('待办');
+    expect(result.llm.mode).toBe('real');
+    expect(result.llm.providerLabel).toBe('火山方舟');
+  });
+
+  it('reanalyze：旧后端只回 {ok:true} 时重取消息兜底', async () => {
+    const fn = mockFetch(
+      jsonResponse({ ok: true }),
+      jsonResponse({ ok: true, data: message({ intent: '咨询' }) }),
+    );
+    const api = new HttpApi(BASE, TOKEN);
+
+    const result = await api.reanalyze('t-1');
+
+    expect(result.message.intent).toBe('咨询');
+    expect(result.llm.mode).toBe('mock');
+    expect(callArgs(fn, 1)[0]).toBe(`${BASE}/api/messages/t-1`);
+  });
 });

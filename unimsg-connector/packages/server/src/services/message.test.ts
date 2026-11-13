@@ -383,6 +383,79 @@ test('processSend 失败：failureReason 上浮到消息（截断 300 字）、�
   assert.ok(failedEvent!.data.failureReason, '广播数据带 failureReason');
 });
 
+/** 可切换来源的 LLM：验证「重新生成」用当前配置重算且如实标注来源 */
+class SwitchableLlm extends LlmService {
+  calls = 0;
+  source: 'llm' | 'rules' = 'llm';
+  precision: 'high' | 'low' = 'high';
+  constructor() { super({ mode: 'mock' }); }
+  async analyze(): Promise<LlmResult> {
+    this.calls += 1;
+    return {
+      ok: true,
+      intent: '待办',
+      confidence: 0.9,
+      summary: '摘要',
+      replyDraft: this.source === 'llm' ? '模型草稿' : '规则草稿',
+      source: this.source,
+      ...(this.source === 'llm'
+        ? { provider: 'mimo', model: 'mimo-v2.6-flash', precision: this.precision }
+        : {}),
+    };
+  }
+}
+
+test('reanalyze：历史消息按当前配置重算，写厂商标签 / 闭环日志 / 广播；规则回退时抹掉旧标签', async () => {
+  const repo = new InMemoryRepository();
+  const llm = new SwitchableLlm();
+  const events: string[] = [];
+  const svc = new MessageService(
+    repo, connectors, llm, new OcrService(), new RateLimiter(3, 5), (e) => events.push(e.type),
+  );
+  const { message } = await svc.ingest(Platform.FEISHU, feishuSample);
+  await waitFor(() => Boolean(repo.get(message.traceId)?.intent));
+  const first = repo.get(message.traceId)!;
+  assert.equal(first.intentSource, 'llm');
+  assert.ok(first.aiProvider, '真实模型应记录厂商显示名');
+  assert.equal(first.replyDraft, '模型草稿');
+  assert.equal(first.aiConfidence, 0.9, '置信度要落到消息上供前端显示精度');
+  assert.equal(first.aiPrecision, 'high');
+
+  const outcome = await svc.reanalyze(message.traceId);
+  const updated = outcome.message;
+  assert.equal(llm.calls, 2, '重新生成必须真的再调用一次 LLM');
+  assert.equal(outcome.source, 'llm');
+  assert.equal(outcome.fallbackReason, undefined);
+  assert.equal(updated.intentSource, 'llm');
+  assert.equal(updated.replyDraft, '模型草稿');
+  assert.ok(events.filter((t) => t === 'message.updated').length >= 2);
+  const log = repo.getLoopLog(message.traceId).map((e) => e.event);
+  assert.ok(log.includes('reanalyze_requested'));
+  assert.ok(log.includes('reanalyze_done'));
+
+  // 低精度仍来自模型：只留一条说明性 trace，绝不能变成规则兜底
+  llm.precision = 'low';
+  const lowOutcome = await svc.reanalyze(message.traceId);
+  assert.equal(lowOutcome.message.intentSource, 'llm');
+  assert.equal(lowOutcome.message.aiPrecision, 'low');
+  assert.equal(lowOutcome.message.replyDraft, '模型草稿');
+  assert.equal(lowOutcome.fallbackReason, undefined);
+  assert.ok(repo.getLoopLog(message.traceId).map((e) => e.event).includes('intent_low_precision'));
+
+  llm.source = 'rules';
+  const fallbackOutcome = await svc.reanalyze(message.traceId);
+  const fallback = fallbackOutcome.message;
+  assert.equal(fallbackOutcome.source, 'rules');
+  assert.equal(fallback.intentSource, 'rules');
+  assert.equal(fallback.aiProvider, undefined);
+  assert.equal(fallback.aiModel, undefined);
+  assert.equal(fallback.aiConfidence, undefined, '规则兜底要抹掉上一次模型的置信度');
+  assert.equal(fallback.aiPrecision, undefined);
+  assert.equal(fallback.replyDraft, '规则草稿');
+
+  await assert.rejects(() => svc.reanalyze('not-exist'), /not found/);
+});
+
 test('reply 重试时清掉上一次失败原因', async () => {
   const repo = new InMemoryRepository();
   const svc = new MessageService(repo, connectors, new LlmService(), new OcrService(), new RateLimiter(1, 5), () => {});

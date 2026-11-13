@@ -12,6 +12,7 @@ import type {
   AccountInfo, AppConfigSaveResult, AppConfigUpdate, AppConfigView,
   DingtalkLoginOptions, DingtalkLoginStart, DingtalkPersonalStatus, FeishuOAuthStart, HealthInfo,
   MailAccountInput, MailAccountTestResult, MailAccountView, MessageApi, OnboardingView,
+  ReanalyzeResult,
 } from '../services/api';
 import { isDemoApi } from '../services/api';
 import type { RealtimeClient, RealtimeStatus } from '../services/realtime';
@@ -188,6 +189,13 @@ export class AppStore {
     this.upsertReply(ack.message);
     await this.refreshHealth();
     return ack.taskId;
+  }
+
+  /** 重新生成 AI 建议：把结果写回本地（WS 也会广播同一条），并把后端通道结论交给页面提示 */
+  async reanalyze(id: string): Promise<ReanalyzeResult> {
+    const result = await this.api.reanalyze(id);
+    this.upsert(result.message);
+    return result;
   }
 
   async markDone(id: string): Promise<void> {

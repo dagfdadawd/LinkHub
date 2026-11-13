@@ -187,7 +187,9 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   return (
     <ThemeContext.Provider value={value}>
       <ConfigProvider locale={zhCN} theme={antdTheme} button={{ autoInsertSpace: false }}>
-        <AntApp>{children}</AntApp>
+        {/* 短提示统一 2.4s、最多叠 2 条：默认 3s 且不限条数，连点会堆成一排遮住操作区。
+            需要长停留的提示（发送失败带「查看详情」）在调用处显式传 duration，不受此影响。 */}
+        <AntApp message={{ duration: 2.4, maxCount: 2 }}>{children}</AntApp>
       </ConfigProvider>
     </ThemeContext.Provider>
   );
