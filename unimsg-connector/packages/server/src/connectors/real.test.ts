@@ -12,6 +12,7 @@ import { feishuEncrypt, dingtalkEncrypt, dingtalkSign } from './crypto';
 import { resetTokenCache } from './real';
 
 const origFetch = globalThis.fetch;
+const origDingtalkPolicy = config.identity.dingtalk.policy;
 
 interface Call {
   url: string;
@@ -52,11 +53,15 @@ before(() => {
   config.platforms.dingtalk.robotCode = 'robot_test';
   config.platforms.dingtalk.aesToken = 'aes_token_test';
   config.platforms.dingtalk.aesKey = 'MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY';
+  // 现有用例断言的是机器人发送通道；显式锁 bot，避免误读开发者本机 .env 的
+  // DINGTALK_IDENTITY=user（否则会走 dws 本人通道，未登录时直接抛错）
+  config.identity.dingtalk.policy = 'bot';
 });
 
 after(() => {
   globalThis.fetch = origFetch;
   forceAllModes('mock');
+  config.identity.dingtalk.policy = origDingtalkPolicy;
   resetTokenCache();
 });
 

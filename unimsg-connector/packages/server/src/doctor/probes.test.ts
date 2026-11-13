@@ -289,6 +289,20 @@ test('钉钉配置检查：缺 ROBOT_CODE 且无 Stream/回调 → 两条 FAIL �
   assert.ok(failed.some((c) => c.hint?.includes('DINGTALK_STREAM=true')));
 });
 
+test('钉钉配置检查：仅本人身份关闭机器人 Stream 是有意配置，不再误报 FAIL', () => {
+  const base = { ...DINGTALK, stream: false, aesToken: '', aesKey: '' };
+  const personal = dingtalkConfigChecks({ ...base, personalReceive: true });
+  const personalStream = personal.find((c) => c.id === 'dingtalk:stream');
+  assert.equal(personalStream?.status, 'PASS');
+  assert.match(personalStream?.detail ?? '', /本人事件流/);
+  assert.match(personalStream?.hint ?? '', /DINGTALK_STREAM/);
+
+  // 未固定本人身份（auto/bot）时，关掉机器人通道仍是真实的收信故障
+  const bot = dingtalkConfigChecks({ ...base, personalReceive: false });
+  assert.equal(bot.find((c) => c.id === 'dingtalk:stream')?.status, 'FAIL');
+  assert.equal(dingtalkConfigChecks(base).find((c) => c.id === 'dingtalk:stream')?.status, 'FAIL');
+});
+
 // ---------------------------------------------------------------------------
 // 企业微信探针 + 出口 IP
 // ---------------------------------------------------------------------------
