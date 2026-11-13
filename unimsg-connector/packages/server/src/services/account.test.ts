@@ -23,6 +23,7 @@ const original = {
   // 只注入 appId 会让测试在「无 .env 的干净 checkout / CI」下靠环境碰巧通过。
   appSecret: config.platforms.feishu.appSecret,
   policy: config.identity.feishu.policy,
+  dingtalkPolicy: config.identity.dingtalk.policy,
   runtime: Object.values(Platform).map((p) => [p, { ...config.runtime[p] }] as const),
 };
 
@@ -79,6 +80,7 @@ after(() => {
   config.platforms.feishu.appId = original.appId;
   config.platforms.feishu.appSecret = original.appSecret;
   config.identity.feishu.policy = original.policy;
+  config.identity.dingtalk.policy = original.dingtalkPolicy;
   for (const [platform, snapshot] of original.runtime) Object.assign(config.runtime[platform], snapshot);
   resetFeishuUserAuthCache();
   resetDingtalkPersonalClientCache();
@@ -145,6 +147,9 @@ test('飞书身份视图：平台 Mock 时收发都标「模拟」，不冒充�
 });
 
 test('钉钉身份视图：全 Mock 时不探测 dws、不启动个人身份，如实标模拟/不可用', () => {
+  // 测试自洽：不依赖开发者本机 .env 恰好没写 DINGTALK_IDENTITY=user
+  config.identity.dingtalk.policy = 'auto';
+  resetIdentityCaches();
   const dingtalk = listAccounts().find((a) => a.platform === Platform.DINGTALK)!;
   assert.ok(dingtalk.identity, '钉钉必须下发 identity 视图');
   const identity = dingtalk.identity!;

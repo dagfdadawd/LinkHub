@@ -2,9 +2,14 @@
  * 大模型服务：OpenAI 兼容协议（默认小米 MiMo）。
  *
  * - mock 模式：按关键词给出确定性的意图/摘要/回复草稿，零密钥可跑。
- * - real 模式：调 `{endpoint}/chat/completions`，要求模型只输出 JSON；
- *   超时 / 非 2xx / 畸形 JSON / 枚举越界 / 低置信一律回退规则识别，
+ * - real 模式：调 `{endpoint}/chat/completions`，要求模型只输出 JSON。
+ *   **只要模型成功响应就一律采用**，哪怕 confidence 很低——低把握只影响
+ *   「内容精度」（草稿更短、界面标注低精度），不影响「有没有 AI 建议」。
+ *   仅超时 / 非 2xx / 畸形 JSON / 枚举越界 / 缺字段才回退规则识别，
  *   并在结果里带 fallbackReason，由调用方写进闭环日志——绝不静默假装成功。
+ * - 推理模型（豆包 seed 一类）默认把输出预算全部耗在思维链上，会返回
+ *   `content: ""` + `finish_reason: "length"`。这里对火山方舟自动关闭深度思考，
+ *   并在仍被截断时放大输出预算重试一次；最终失败会带上可诊断的原因。
  * - 单测环境由 config 强制 mock，绝不在测试里外呼。
  */
 import { UnifiedMessage } from '@unimsg/shared';
@@ -22,6 +27,8 @@ export type LlmResult =
       replyDraft: string;
       /** llm = 真实模型给出；rules = 内置规则（含真实调用失败后的回退） */
       source: 'llm' | 'rules';
+      /** 仅 source=llm：按 confidence 划分的精度档，低档仍采用模型结果 */
+      precision?: 'high' | 'low';
       /** source=rules 且本应走真实模型时的回退原因 */
       fallbackReason?: string;
       provider?: string;
@@ -38,18 +45,70 @@ export interface LlmServiceOptions {
   model: string;
   apiKey: string;
   timeoutMs: number;
+  /** 精度分档线：低于它标为 low（仍采用模型结果），不再是「是否丢弃」的开关 */
   minConfidence: number;
+  /** 单次输出 token 预算（推理模型需要更大预算），默认 800 */
+  maxCompletionTokens?: number;
 }
 
 const SYSTEM_PROMPT = [
   '你是统一消息中枢的意图识别器。',
   '只输出一个 JSON 对象，不要 markdown 代码块，不要任何解释。',
   '字段：intent（必须是 待办/咨询/通知/未分类 之一）、',
-  'confidence（0 到 1 的小数）、summary（不超过 40 字的中文摘要）、',
-  'replyDraft（一句可直接发送的中文回复草稿）。',
+  'confidence（0 到 1 的小数，如实反映把握程度）、',
+  'summary（不超过 40 字的中文摘要）、replyDraft（可直接发送的中文回复草稿）。',
+  '按信息量自适应，绝不编造事实：',
+  '① 信息充分（有明确事项、时间或问题）时，summary 写明具体事项，replyDraft 给针对性强、可直接发送的完整回复；',
+  '② 信息不足（只有一个数字、问候、表情或含糊短语）时，intent 用「未分类」并给低 confidence，',
+  'summary 如实说明信息不足，replyDraft 只给一句简短的澄清追问（不超过 25 字），不要臆测对方要什么。',
+  '两种情况的 replyDraft 都必须是非空中文；长短与精度随信息量变化，但都要有内容。',
 ].join('');
 
 const MAX_ATTEMPTS = 2;
+
+/** 单次输出预算：实测豆包 seed 开深度思考时 400 token 会被思维链全部吃光 */
+export const DEFAULT_MAX_COMPLETION_TOKENS = 800;
+/** 首次被 finish_reason=length 截断时放大预算重试；封顶避免现场演示被拖慢/烧钱 */
+const LENGTH_RETRY_MULTIPLIER = 3;
+const MAX_RETRY_COMPLETION_TOKENS = 2400;
+
+/**
+ * 火山方舟的豆包 seed 系列默认开启深度思考，`thinking` 是该平台私有参数。
+ * 别的服务商/模型传未知字段可能直接 400，所以只对「火山端点 + 豆包模型」加；
+ * 其余推理模型靠放大输出预算重试兜底。
+ */
+export function shouldDisableThinking(endpoint: string, model: string): boolean {
+  let host = '';
+  try {
+    host = new URL(endpoint).hostname.toLowerCase();
+  } catch {
+    host = endpoint.toLowerCase();
+  }
+  return /volces|volcengine|ark\./.test(host) && /doubao|seed/i.test(model);
+}
+
+/** 兼容 content 为字符串或多模态文本片段数组（部分兼容网关返回后者） */
+function messageContent(message: any): string {
+  const raw = message?.content;
+  if (typeof raw === 'string') return raw;
+  if (Array.isArray(raw)) {
+    return raw
+      .map((part: any) => (typeof part === 'string' ? part : typeof part?.text === 'string' ? part.text : ''))
+      .join('');
+  }
+  return '';
+}
+
+/** 正文为空时带上服务商给的关键字段，避免只看到一句 empty_content 无从下手 */
+function emptyContentReason(json: any, choice: any): string {
+  const finish = String(choice?.finish_reason ?? 'unknown');
+  const reasoningTokens = Number(json?.usage?.completion_tokens_details?.reasoning_tokens ?? 0);
+  const hasReasoning = Boolean(choice?.message?.reasoning_content);
+  const detail = `finish_reason=${finish}${reasoningTokens > 0 ? `, reasoning_tokens=${reasoningTokens}` : ''}`;
+  return hasReasoning || reasoningTokens > 0
+    ? `empty_content: 推理模型把输出预算全用在思维链（${detail}），未生成正式答案`
+    : `empty_content: 响应缺少正文（${detail}）`;
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -91,6 +150,7 @@ interface RawAnalysis {
 
 export class LlmService {
   private readonly o: LlmServiceOptions;
+  private readonly maxCompletionTokens: number;
 
   /** 不传参数时读取 config（启动即固定）；单测直接注入本地假端点 */
   constructor(opts: Partial<LlmServiceOptions> = {}) {
@@ -104,6 +164,7 @@ export class LlmService {
       timeoutMs: opts.timeoutMs ?? c.timeoutMs,
       minConfidence: opts.minConfidence ?? c.minConfidence,
     };
+    this.maxCompletionTokens = opts.maxCompletionTokens ?? DEFAULT_MAX_COMPLETION_TOKENS;
   }
 
   async analyze(msg: UnifiedMessage): Promise<LlmResult> {
@@ -112,8 +173,10 @@ export class LlmService {
 
     const started = Date.now();
     const real = await this.callReal(body);
+    // 只有「调用本身失败」才回退规则。模型成功响应却没把握是常态（例如对方只发了一个「1」）：
+    // 此时照常采用模型给出的意图 / 摘要 / 草稿，只是标成低精度，由前端如实提示，
+    // 绝不把已经生成好的 AI 建议丢掉换成关键词规则。
     if (!real.ok) return this.fallback(body, real.reason);
-    if (real.data.confidence < this.o.minConfidence) return this.fallback(body, 'low_confidence');
 
     return {
       ok: true,
@@ -122,6 +185,7 @@ export class LlmService {
       summary: real.data.summary,
       replyDraft: real.data.replyDraft,
       source: 'llm',
+      precision: real.data.confidence >= this.o.minConfidence ? 'high' : 'low',
       provider: this.o.provider,
       model: this.o.model,
       latencyMs: Date.now() - started,
@@ -155,9 +219,28 @@ export class LlmService {
   private async callReal(body: string): Promise<{ ok: true; data: RawAnalysis } | { ok: false; reason: string }> {
     const url = `${this.o.endpoint}/chat/completions`;
     const started = Date.now();
+    const disableThinking = shouldDisableThinking(this.o.endpoint, this.o.model);
     let reason = 'unknown';
+    let scaleUpTokens = false;
 
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+      const maxTokens = scaleUpTokens
+        ? Math.min(this.maxCompletionTokens * LENGTH_RETRY_MULTIPLIER, MAX_RETRY_COMPLETION_TOKENS)
+        : this.maxCompletionTokens;
+      const payload: Record<string, unknown> = {
+        model: this.o.model,
+        messages: [
+          { role: 'system', content: SYSTEM_PROMPT },
+          { role: 'user', content: body },
+        ],
+        max_completion_tokens: maxTokens,
+        temperature: 0.2,
+        stream: false,
+      };
+      // 火山方舟豆包 seed 默认开深度思考：不关掉的话输出预算全被 reasoning 吃掉，
+      // 返回 content="" + finish_reason=length，看上去像「模型不返回结果」。
+      if (disableThinking) payload.thinking = { type: 'disabled' };
+
       let res: Response;
       try {
         res = await fetch(url, {
@@ -166,16 +249,7 @@ export class LlmService {
             Authorization: `Bearer ${this.o.apiKey}`,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({
-            model: this.o.model,
-            messages: [
-              { role: 'system', content: SYSTEM_PROMPT },
-              { role: 'user', content: body },
-            ],
-            max_completion_tokens: 400,
-            temperature: 0.2,
-            stream: false,
-          }),
+          body: JSON.stringify(payload),
           signal: AbortSignal.timeout(this.o.timeoutMs),
         });
       } catch (e) {
@@ -192,7 +266,21 @@ export class LlmService {
         }
         return { ok: false, reason };
       }
-      if (!res.ok) return { ok: false, reason: `http_${res.status}` };
+      if (!res.ok) {
+        // 服务商的 4xx 响应体通常直接写明「模型 ID 不存在 / 模型未开通」，
+        // 只留 `http_404` 会让用户完全无从下手。截取有限长度写进 trace，
+        // 绝不把请求头 / API Key 写进去。
+        const raw = typeof res.text === 'function' ? await res.text().catch(() => '') : '';
+        let detail = '';
+        try {
+          const parsed: any = JSON.parse(raw);
+          detail = String(parsed?.error?.message ?? parsed?.error?.code ?? parsed?.message ?? parsed?.msg ?? '');
+        } catch {
+          detail = raw;
+        }
+        const brief = detail.replace(/\s+/g, ' ').trim().slice(0, 180);
+        return { ok: false, reason: `http_${res.status}${brief ? `: ${brief}` : ''}` };
+      }
 
       let json: any;
       try {
@@ -201,8 +289,17 @@ export class LlmService {
         return { ok: false, reason: 'invalid_response_body' };
       }
 
-      const content = json?.choices?.[0]?.message?.content;
-      if (typeof content !== 'string' || !content.trim()) return { ok: false, reason: 'empty_content' };
+      const choice = json?.choices?.[0];
+      const content = messageContent(choice?.message);
+      if (!content.trim()) {
+        reason = emptyContentReason(json, choice);
+        // 输出预算被思维链耗尽：放大预算再给一次机会（推理模型常见）。
+        if (attempt < MAX_ATTEMPTS && String(choice?.finish_reason ?? '') === 'length') {
+          scaleUpTokens = true;
+          continue;
+        }
+        return { ok: false, reason };
+      }
 
       const obj = extractJson(content);
       if (!obj) return { ok: false, reason: 'invalid_json' };

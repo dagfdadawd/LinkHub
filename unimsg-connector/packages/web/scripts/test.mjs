@@ -30,7 +30,16 @@ const binRelative = typeof bin === 'string' ? bin : bin.vitest;
 const vitestEntry = join(dirname(vitestPkgPath), binRelative);
 
 const forwarded = process.argv.slice(2);
-const child = spawn(process.execPath, [vitestEntry, ...(forwarded.length ? forwarded : ['run'])], {
+const args = forwarded.length ? forwarded : ['run'];
+// Windows 下多个 Vitest worker 并发写 node_modules/.tmp 里的转换缓存会触发 EPERM：
+// 实测 34 文件 / 316 用例会退化成 33 文件 / 300 用例（静默漏测）+ 退出码 1。
+// 固定单 worker 后干净通过；用户显式传了并发参数时尊重其选择。
+const hasConcurrencyFlag = args.some((a) =>
+  /--maxWorkers|--minWorkers|--pool|--no-file-parallelism|--fileParallelism/.test(a));
+const finalArgs = process.platform === 'win32' && !hasConcurrencyFlag
+  ? [...args, '--maxWorkers=1', '--minWorkers=1']
+  : args;
+const child = spawn(process.execPath, [vitestEntry, ...finalArgs], {
   stdio: 'inherit',
   env: { ...process.env, TEMP: tmpDir, TMP: tmpDir, TMPDIR: tmpDir },
 });

@@ -68,6 +68,8 @@ export function DetailPanel({
   const state = useAppState();
   const [text, setText] = useState(message.replyDraft ?? '');
   const [sending, setSending] = useState(false);
+  /** 重新生成 AI 建议：按钮 loading，避免连点重复调用模型 */
+  const [regenerating, setRegenerating] = useState(false);
   /** 发送成功后短暂冷却：清空输入框 + 禁用按钮，避免手滑把同一内容再发一次（P2-2） */
   const [cooldown, setCooldown] = useState(false);
   const cooldownTimer = useRef<number>();
@@ -130,6 +132,29 @@ export function DetailPanel({
       );
     } finally {
       setSending(false);
+    }
+  }
+
+  /**
+   * 「重新生成」真接后端：用当前 LLM 配置重跑分析，store 会就地刷新消息。
+   *
+   * 成功（含低精度）不弹 toast：草稿、来源标签、低精度说明和回复框都已经就地更新，
+   * 再浮一条提示既重复又会挡住底部「发送」按钮。只有结果可能没变化的
+   * 规则兜底 / 调用失败才需要浮层把后端原因说出来。
+   */
+  async function handleRegenerate() {
+    if (regenerating) return;
+    setRegenerating(true);
+    try {
+      const result = await store.reanalyze(message.traceId);
+      if (result.message.intentSource !== 'llm') {
+        const reason = (result.llm.reason || '请检查 AI 模型配置并重启后端').slice(0, 220);
+        toast.warning(`本次仍由关键词规则生成：${reason}`);
+      }
+    } catch (e) {
+      toast.error(`重新生成失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setRegenerating(false);
     }
   }
 
@@ -369,7 +394,8 @@ export function DetailPanel({
               setText(draft);
               focusComposer();
             }}
-            onRegenerate={() => toast.info('当前草稿由关键词规则生成，可直接编辑或重新撰写')}
+            onRegenerate={() => void handleRegenerate()}
+            regenerating={regenerating}
           />
         )}
 

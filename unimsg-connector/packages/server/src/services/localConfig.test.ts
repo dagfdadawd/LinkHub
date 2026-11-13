@@ -17,6 +17,7 @@ import {
   computeRestartRequired,
   localConfigFilePath,
   readLocalConfig,
+  resetLocalAppliedEnvKeysForTests,
   resetRestartBaselineForTests,
   sanitizeLocalConfig,
   writeLocalConfigFile,
@@ -182,4 +183,36 @@ test('restartRequired（P1-1）：identity 热应用不算；静态键变化才�
   // 模式（modes.*）也是静态键
   const modeChange = applyConfigPatch(withCreds.config, { modes: { mail: 'real' } });
   assert.equal(computeRestartRequired('/unused', env, modeChange.config), true);
+});
+
+test('llm.baseUrl 写进服务端真正读取的 LLM_ENDPOINT（兼容别名也保留）', () => {
+  resetLocalAppliedEnvKeysForTests();
+  const env = {} as NodeJS.ProcessEnv;
+  applyLocalConfigToEnv({ version: 1, llm: { baseUrl: 'https://ark.cn-beijing.volces.com/api/v3' } }, env);
+  assert.equal(env.LLM_ENDPOINT, 'https://ark.cn-beijing.volces.com/api/v3');
+  assert.equal(env.LLM_BASE_URL, 'https://ark.cn-beijing.volces.com/api/v3');
+  resetLocalAppliedEnvKeysForTests();
+});
+
+test('本地配置补进 process.env 的值不算「显式 .env」，重启后 GUI 仍可修改自己保存的 AI 配置', () => {
+  resetLocalAppliedEnvKeysForTests();
+  const env = {} as NodeJS.ProcessEnv;
+  const saved = { version: 1 as const, llm: { provider: 'openai', baseUrl: 'https://a.example/v1', model: 'm1' } };
+  applyLocalConfigToEnv(saved, env);
+
+  const patched = applyConfigPatch(saved, { llm: { baseUrl: 'https://b.example/v1' } }, env);
+  assert.deepEqual(patched.errors, []);
+  assert.deepEqual(patched.ignoredByEnv, [], '本地补入的值不能被误判成运维显式 .env');
+  assert.deepEqual(patched.changedKeys, ['llm.baseUrl']);
+  assert.equal(patched.config.llm?.baseUrl, 'https://b.example/v1');
+
+  // 真·显式 .env 仍保持不可覆盖
+  const explicit = applyConfigPatch(
+    { version: 1 },
+    { llm: { baseUrl: 'https://gui.example/v1' } },
+    { LLM_ENDPOINT: 'https://env.example/v1' },
+  );
+  assert.deepEqual(explicit.ignoredByEnv, ['LLM_ENDPOINT']);
+  assert.equal(explicit.config.llm?.baseUrl, undefined);
+  resetLocalAppliedEnvKeysForTests();
 });
