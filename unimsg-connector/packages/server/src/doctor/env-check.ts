@@ -41,6 +41,8 @@ export const KNOWN_ENV_KEYS: readonly string[] = [
   'LLM_API_KEY',
   'LLM_MODEL',
   'LLM_ENDPOINT',
+  // GUI「AI 模型 Base URL」与旧版 .env 的兼容别名：runtime 会回退读取，不算拼错
+  'LLM_BASE_URL',
   'LLM_MIN_CONFIDENCE',
   'OCR_PROVIDER',
   'OCR_API_KEY',

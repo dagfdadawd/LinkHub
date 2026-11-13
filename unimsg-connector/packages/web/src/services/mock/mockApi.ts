@@ -21,6 +21,7 @@ import type {
   MailAccountView,
   MessageFilter,
   OnboardingView,
+  ReanalyzeResult,
   ReplyAck,
   TraceResult,
 } from '../api';
@@ -349,6 +350,33 @@ export class MockApi implements DemoApi {
 
   async updateAppConfig(_patch: AppConfigUpdate): Promise<AppConfigSaveResult> {
     throw new Error('演示模式不会保存平台应用凭据：启动真实后端后再配置');
+  }
+
+  /** 演示模式的「重新生成」：本地规则重算，如实标注 source=rules，不冒充大模型 */
+  async reanalyze(id: string): Promise<ReanalyzeResult> {
+    await this.wait();
+    const cur = this.messages.get(id);
+    if (!cur) throw new Error(`message not found: ${id}`);
+    const body = cur.body ?? '';
+    const intent = /周报|待办|任务|提醒|截止|deadline/i.test(body) ? '待办'
+      : /[?？]|怎么|如何|为什么|吗/.test(body) ? '咨询'
+        : /通知|公告|会议|安排/.test(body) ? '通知' : '未分类';
+    const replyDraft = intent === '待办' ? '收到，我会在截止前完成。'
+      : intent === '咨询' ? '收到，我确认后回复你。' : '收到。';
+    const message = this.patch(
+      id,
+      {
+        intent, replyDraft, intentSource: 'rules',
+        aiProvider: undefined, aiModel: undefined,
+        aiConfidence: undefined, aiPrecision: undefined,
+      },
+      'reanalyze',
+      '演示模式：本地规则重新生成（未调用大模型）',
+    );
+    return {
+      message,
+      llm: { mode: 'mock', reason: '演示模式使用本地规则，不会调用大模型', providerLabel: '演示规则' },
+    };
   }
 
   async markDone(id: string): Promise<UnifiedMessage> {

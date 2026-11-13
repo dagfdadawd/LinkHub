@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { App as AntApp } from 'antd';
 import { MemoryRouter } from 'react-router-dom';
 import { DetailPanel } from './DetailPanel';
@@ -69,5 +69,64 @@ describe('DetailPanel 发送失败原因（P1-2）', () => {
     renderPanel({ ...FAILED, reply: undefined });
     expect(screen.getByTestId('retry-send')).toBeDisabled();
     expect(screen.getByText('这条消息没有可重试的回复内容')).toBeInTheDocument();
+  });
+});
+
+describe('DetailPanel 重新生成 AI 建议', () => {
+  it('点「重新生成」真调后端，不再只弹一句提示', async () => {
+    const reanalyze = vi.spyOn(store, 'reanalyze').mockResolvedValue({
+      message: {
+        ...FAILED,
+        intent: '待办',
+        intentSource: 'llm',
+        aiProvider: '火山方舟',
+        aiModel: 'doubao-seed-1-6-250615',
+        replyDraft: '收到，周五前发你。',
+      },
+      llm: { mode: 'real', reason: '真实大模型已就绪', providerLabel: '火山方舟' },
+    });
+    renderPanel();
+
+    fireEvent.click(screen.getByRole('button', { name: /重新生成/ }));
+
+    await waitFor(() => expect(reanalyze).toHaveBeenCalledWith('t-fail-1'));
+    // 成功时结果已在 AI 面板就地更新：不额外弹 toast（右下浮层会挡住发送按钮）
+    await act(async () => { await new Promise((r) => setTimeout(r, 50)); });
+    expect(document.querySelector('.ant-message-notice')).toBeNull();
+  });
+
+  it('低精度结果仍就地更新：不弹 toast、不误报规则兜底', async () => {
+    const reanalyze = vi.spyOn(store, 'reanalyze').mockResolvedValue({
+      message: {
+        ...FAILED,
+        intent: '未分类', intentSource: 'llm', aiProvider: '火山方舟',
+        aiPrecision: 'low', aiConfidence: 0.3, replyDraft: '请问您具体需要什么？',
+      },
+      llm: {
+        mode: 'real', reason: '真实模型已生成建议，但信息量较少（把握 0.3），草稿偏简短、精度较低，未回退规则',
+        providerLabel: '火山方舟', precision: 'low', confidence: 0.3,
+      },
+    });
+    renderPanel();
+
+    fireEvent.click(screen.getByRole('button', { name: /重新生成/ }));
+
+    await waitFor(() => expect(reanalyze).toHaveBeenCalledWith('t-fail-1'));
+    // 低精度也是真实模型结果：面板里有常驻精度说明，无需（也不该）再弹浮层
+    await act(async () => { await new Promise((r) => setTimeout(r, 50)); });
+    expect(document.querySelector('.ant-message-notice')).toBeNull();
+    expect(screen.queryByText(/仍由关键词规则生成/)).not.toBeInTheDocument();
+  });
+
+  it('重新分析仍走规则时把后端原因如实展示，不假装成功', async () => {
+    vi.spyOn(store, 'reanalyze').mockResolvedValue({
+      message: { ...FAILED, intent: '未分类', intentSource: 'rules', replyDraft: '收到。' },
+      llm: { mode: 'mock', reason: '缺少 LLM_API_KEY，已降级为规则识别', providerLabel: 'MiMo' },
+    });
+    renderPanel();
+
+    fireEvent.click(screen.getByRole('button', { name: /重新生成/ }));
+
+    expect(await screen.findByText(/仍由关键词规则生成/)).toBeInTheDocument();
   });
 });

@@ -46,6 +46,8 @@ function rawMsg(id: string, createTime: number, text = '你好'): FeishuUserMess
     body: { content: JSON.stringify({ text }) },
     sender: { id: 'ou_other', id_type: 'open_id', sender_type: 'user' },
     chat_id: 'oc_a',
+    // chatA 是群聊：产品口径「群聊只收 @我」，所以测试消息默认带上 @本人
+    mentions: [{ id: { open_id: 'ou_self' }, key: '@_user_1', name: '我' }],
   };
 }
 

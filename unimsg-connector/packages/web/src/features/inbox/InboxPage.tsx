@@ -1,15 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { App as AntApp, Button, Select, Skeleton } from 'antd';
-import { FilterOutlined } from '@ant-design/icons';
+import { App as AntApp, Button, Input, Popover, Select, Skeleton } from 'antd';
+import { CloseOutlined, FilterOutlined, SearchOutlined } from '@ant-design/icons';
 import { useAppState } from '../../hooks/useAppState';
 import { useHotkeys } from '../../hooks/useHotkeys';
 import { store } from '../../store';
 import { filterMessages } from '../../store/appStore';
 import { MsgStatus, Platform } from '../../types';
-import type { UnifiedMessage } from '../../types';
-import { PLATFORM_META, STATUS_META, TYPE_LABEL, isSelfComposedMock } from '../../utils/format';
+import { PLATFORM_META, STATUS_META, TYPE_LABEL } from '../../utils/format';
 import { navigateWithMorph } from '../../utils/morph';
+import {
+  buildConversations,
+  findConversation,
+  type Conversation,
+} from '../../utils/conversations';
 import { injectSample, type InjectPlatform } from '../../services/demoSamples';
 import { EmptyState } from '../../components/EmptyState';
 import {
@@ -25,10 +29,9 @@ import {
   markOnboarded,
   shouldShowOnboardingBanner,
 } from '../../utils/onboarding';
-import { MessageCard } from './MessageCard';
 import { DetailPanel } from './DetailPanel';
 import { ChannelTabs, CHANNEL_DEFS, type ChannelOption } from './ChannelTabs';
-import { MessageGroup, MarkAllReadAction } from './MessageGroup';
+import { ConversationRow } from './ConversationRow';
 
 const STATUS_OPTIONS = Object.values(MsgStatus).map((s) => ({
   value: s,
@@ -107,6 +110,22 @@ export function InboxPage() {
   const selected = traceId ? state.messages.find((m) => m.traceId === traceId) : undefined;
 
   /**
+   * 会话视图：列表按「人 / 群 / 邮件主题」聚合，不再一条消息一行。
+   * 选中态用「URL 里的 traceId 属于哪个会话」反查，因此任何一条消息的深链都能定位到会话。
+   */
+  const conversations = useMemo(() => buildConversations(visible), [visible]);
+  const allConversations = useMemo(() => buildConversations(state.messages), [state.messages]);
+  const selectedConv = useMemo(
+    () => findConversation(allConversations, traceId),
+    [allConversations, traceId],
+  );
+  const imConversations = useMemo(() => conversations.filter((c) => c.kind === 'im'), [conversations]);
+  const mailConversations = useMemo(
+    () => conversations.filter((c) => c.kind === 'mail'),
+    [conversations],
+  );
+
+  /**
    * 渠道数量：按「除平台外的其他筛选」计算。
    * 这样切到某个渠道时，其余渠道的数字不会因为自身筛选而坍缩；
    * 搜索/状态筛选变化时，数字又能跟着真实结果走。
@@ -121,13 +140,6 @@ export function InboxPage() {
     }));
   }, [state.messages, state.filters]);
 
-  // 分组按当前筛选结果切分：渠道、搜索、分页改动后计数自然对齐
-  const unreadList = useMemo(
-    () => visible.filter((m) => !m.readAt && !isSelfComposedMock(m)),
-    [visible],
-  );
-  const readList = useMemo(() => visible.filter((m) => m.readAt), [visible]);
-
   /**
    * 旧 traceId 失效时回退到列表（内存存储重启 / 消息被清空后很常见）。
    * 不替用户选中某一条，避免「我明明点的是 A，怎么打开了 B」。
@@ -139,8 +151,8 @@ export function InboxPage() {
     }
   }, [traceId, selected, visible, state.loading, navigate]);
 
-  /** 打开详情：走共享元素转场（卡片长大成详情）；不支持的环境自动退化为普通跳转 */
-  const openMessage = (id: string) => navigateWithMorph(navigate, `/inbox/${id}`);
+  /** 打开会话：走共享元素转场；不支持的环境自动退化为普通跳转 */
+  const openConversation = (id: string) => navigateWithMorph(navigate, `/inbox/${id}`);
 
   /** 空态一键注入：真实后端走 webhook（真实入站链路），Mock 模式走本地模拟 */
   const handleInject = async (platform?: InjectPlatform) => {
@@ -160,9 +172,9 @@ export function InboxPage() {
     }
   };
 
-  /** 全部标为已读：只标记「当前筛选结果里的未读」，不动其他渠道 */
+  /** 全部标为已读：只标记「当前筛选结果里的入站未读」，不动自己发出的消息 */
   const handleMarkAllRead = async () => {
-    const ids = unreadList.map((m) => m.traceId);
+    const ids = visible.filter((m) => m.direction !== 'out' && !m.readAt).map((m) => m.traceId);
     if (ids.length === 0) return;
     try {
       const changed = await store.markAllRead(ids);
@@ -176,33 +188,40 @@ export function InboxPage() {
     Boolean(state.filters.status) ||
     Boolean(state.filters.type) ||
     state.filters.onlyReview ||
+    state.filters.onlyUnread ||
     Boolean(state.filters.keyword);
 
   /**
-   * 已读规则：打开详情后停留 ≥800ms 才标已读。
-   * 键盘 j/k 上下浏览会把整列表刷成已读，800ms 既过滤误触又不会「看完了还是未读」。
+   * 已读规则：打开会话后停留 ≥800ms 才标已读，且只标该会话里的入站消息。
+   * 键盘 j/k 上下浏览会把整个列表刷成已读，800ms 既过滤误触又不会「看完了还是未读」。
    */
+  const selectedConvKey = selectedConv?.key;
   useEffect(() => {
-    if (!selected || selected.readAt) return;
-    const id = selected.traceId;
+    if (!selectedConv) return;
+    const ids = selectedConv.messages
+      .filter((m) => m.direction !== 'out' && !m.readAt)
+      .map((m) => m.traceId);
+    if (ids.length === 0) return;
     const timer = window.setTimeout(() => {
-      void store.markRead(id, true);
+      void store.markAllRead(ids);
     }, 800);
     return () => window.clearTimeout(timer);
-  }, [selected?.traceId, selected?.readAt]);
+    // 只依赖会话键：同一会话里再来新消息不该重置计时器
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedConvKey]);
 
-  // 键盘流：j/k 上下、Enter 打开、r 回复、e 完成、Esc 收起详情
-  const selectedIndex = traceId ? visible.findIndex((m) => m.traceId === traceId) : -1;
+  // 键盘流：j/k 在会话间移动、Enter 打开、r 回复、e 完成、Esc 收起详情
+  const selectedIndex = selectedConv ? conversations.findIndex((c) => c.key === selectedConv.key) : -1;
   const openAt = (index: number) => {
-    const target = visible[Math.max(0, Math.min(visible.length - 1, index))];
-    if (target) openMessage(target.traceId);
+    const target = conversations[Math.max(0, Math.min(conversations.length - 1, index))];
+    if (target) openConversation(target.lastMessage.traceId);
   };
 
   useHotkeys({
     j: () => openAt(selectedIndex + 1),
     k: () => openAt(selectedIndex < 0 ? 0 : selectedIndex - 1),
     enter: () => {
-      if (!traceId && visible[0]) openMessage(visible[0].traceId);
+      if (!traceId && conversations[0]) openConversation(conversations[0].lastMessage.traceId);
     },
     e: () => {
       if (selected && !selected.done) void store.markDone(selected.traceId);
@@ -226,20 +245,17 @@ export function InboxPage() {
     dismissed: firstRunDismissed,
   });
 
-  const renderCard = (message: UnifiedMessage, variant: 'row' | 'compact') => (
-    <MessageCard
-      key={message.traceId}
-      message={message}
-      active={message.traceId === traceId}
-      variant={variant}
-      onSelect={openMessage}
-      onReply={(id) => {
-        openMessage(id);
-        focusReplyComposer();
-      }}
-      onDone={(id) => void store.markDone(id)}
-      onTrace={(id) => navigate(`/trace/${id}`)}
-    />
+  const renderConversations = (list: Conversation[]) => (
+    <div className="conv-list">
+      {list.map((conv) => (
+        <ConversationRow
+          key={conv.key}
+          conversation={conv}
+          active={conv.key === selectedConv?.key}
+          onSelect={openConversation}
+        />
+      ))}
+    </div>
   );
 
   const listBody = state.loading ? (
@@ -250,7 +266,7 @@ export function InboxPage() {
         </div>
       ))}
     </div>
-  ) : visible.length === 0 ? (
+  ) : conversations.length === 0 ? (
     state.error ? (
       <EmptyState
         title="消息加载失败"
@@ -267,7 +283,7 @@ export function InboxPage() {
       )
     ) : (
       <EmptyState
-        title="没有匹配的消息"
+        title="没有匹配的会话"
         description="换一个渠道或状态，或者清空搜索条件。"
         action={
           <Button
@@ -282,35 +298,40 @@ export function InboxPage() {
         }
       />
     )
-  ) : traceId ? (
-    /* 详情打开后：列表收窄成「时间轴 + 平台色点」的紧凑流 */
-    <div className="list-stream">{visible.map((m) => renderCard(m, 'compact'))}</div>
   ) : (
     <>
-      <MessageGroup
-        title="未读"
-        count={unreadList.length}
-        tone="unread"
-        action={<MarkAllReadAction disabled={unreadList.length === 0} onClick={() => void handleMarkAllRead()} />}
-      >
-        {unreadList.length === 0 ? (
-          <p className="msg-group__empty">没有未读消息</p>
-        ) : (
-          unreadList.map((m) => renderCard(m, 'row'))
-        )}
-      </MessageGroup>
+      {imConversations.length > 0 && (
+        <section className="conv-group" aria-label="消息会话">
+          <header className="conv-group__head">
+            <span className="conv-group__title">消息</span>
+            <span className="conv-group__count">{imConversations.length}</span>
+            <span className="conv-group__spacer" />
+            <button
+              type="button"
+              className="conv-group__action"
+              disabled={visible.every((m) => m.direction === 'out' || m.readAt)}
+              onClick={() => void handleMarkAllRead()}
+            >
+              全部标为已读
+            </button>
+          </header>
+          {renderConversations(imConversations)}
+        </section>
+      )}
 
-      <MessageGroup title="已读" count={readList.length} tone="read" collapsible defaultOpen={false}>
-        {readList.length === 0 ? (
-          <p className="msg-group__empty">还没有已读消息</p>
-        ) : (
-          readList.map((m) => renderCard(m, 'row'))
-        )}
-      </MessageGroup>
+      {mailConversations.length > 0 && (
+        <section className="conv-group" aria-label="邮件会话">
+          <header className="conv-group__head">
+            <span className="conv-group__title">邮件</span>
+            <span className="conv-group__count">{mailConversations.length}</span>
+          </header>
+          {renderConversations(mailConversations)}
+        </section>
+      )}
 
       <div className="list-summary">
         <span>
-          共 {visible.length} 条消息，已读 {readList.length} 条
+          共 {conversations.length} 个会话 · {visible.length} 条消息
         </span>
         {hasFilter && (
           <button type="button" className="link-btn" onClick={() => store.resetFilters()}>
@@ -350,65 +371,148 @@ export function InboxPage() {
         onDismiss={() => setFirstRunDismissed(true)}
       />
       <div
-        className={`inbox${traceId ? ' inbox--detail' : ' inbox--list'}${
-          traceId && listCollapsed ? ' is-collapsed' : ''
+        className={`inbox${selectedConv ? ' inbox--detail' : ' inbox--list'}${
+          selectedConv && listCollapsed ? ' is-collapsed' : ''
         }`}
       >
-        <section className="list-pane" aria-label="消息列表">
+        <section className="list-pane" aria-label="会话列表">
           <div className="list-header">
+            <div className="list-header__title-row">
+              <h2 className="list-header__title">会话</h2>
+              <span className="list-header__count">
+                共 {conversations.length} 个会话 · {visible.length} 条消息
+              </span>
+            </div>
+
+            {/* 关键词搜索：直接走既有 filters.keyword（与 ⌘K 命令面板同一套筛选） */}
+            <Input
+              className="list-search"
+              size="middle"
+              allowClear={{ clearIcon: <CloseOutlined /> }}
+              prefix={<SearchOutlined className="list-search__icon" />}
+              placeholder="搜索联系人、消息内容…"
+              value={state.filters.keyword}
+              onChange={(e) => store.setFilters({ keyword: e.target.value })}
+              aria-label="搜索消息"
+            />
+
             <ChannelTabs
               options={channelOptions}
               value={state.filters.platform}
               onChange={(platform) => store.setFilters({ platform })}
             />
 
-            <div className="list-header__tools">
-              <Select
-                size="small"
-                allowClear
-                placeholder="状态"
-                value={state.filters.status}
-                options={STATUS_OPTIONS}
-                onChange={(value) => store.setFilters({ status: value })}
-                style={{ width: 96 }}
-              />
-              <Select
-                size="small"
-                allowClear
-                placeholder="类型"
-                value={state.filters.type}
-                options={TYPE_OPTIONS}
-                onChange={(value) => store.setFilters({ type: value })}
-                style={{ width: 88 }}
-              />
-              <Button
-                size="small"
-                type={state.filters.onlyReview ? 'primary' : 'default'}
-                icon={<FilterOutlined />}
-                onClick={() => store.setFilters({ onlyReview: !state.filters.onlyReview })}
+            <div className="list-filters">
+              <div className="list-quick" role="group" aria-label="阅读状态筛选">
+                <button
+                  type="button"
+                  className={`quick-pill${!state.filters.onlyUnread && !state.filters.onlyReview ? ' is-active' : ''}`}
+                  aria-pressed={!state.filters.onlyUnread && !state.filters.onlyReview}
+                  onClick={() => store.setFilters({ onlyUnread: false, onlyReview: false })}
+                >
+                  全部
+                </button>
+                <button
+                  type="button"
+                  className={`quick-pill${state.filters.onlyUnread ? ' is-active' : ''}`}
+                  aria-pressed={Boolean(state.filters.onlyUnread)}
+                  onClick={() => store.setFilters({ onlyUnread: !state.filters.onlyUnread })}
+                >
+                  未读
+                </button>
+                <button
+                  type="button"
+                  className={`quick-pill${state.filters.onlyReview ? ' is-active' : ''}`}
+                  aria-pressed={Boolean(state.filters.onlyReview)}
+                  onClick={() => store.setFilters({ onlyReview: !state.filters.onlyReview })}
+                >
+                  待处理
+                </button>
+              </div>
+
+              {/* 状态 / 类型筛选收进一个弹层：默认只占一个按钮的宽度，把垂直空间留给列表 */}
+              <Popover
+                trigger="click"
+                placement="bottomRight"
+                arrow={false}
+                title="筛选条件"
+                content={
+                  <div className="list-filter-pop">
+                    <label className="list-filter-pop__row">
+                      <span>闭环状态</span>
+                      <Select
+                        size="small"
+                        allowClear
+                        placeholder="全部"
+                        value={state.filters.status}
+                        options={STATUS_OPTIONS}
+                        onChange={(value) => store.setFilters({ status: value })}
+                        style={{ width: 132 }}
+                      />
+                    </label>
+                    <label className="list-filter-pop__row">
+                      <span>消息类型</span>
+                      <Select
+                        size="small"
+                        allowClear
+                        placeholder="全部"
+                        value={state.filters.type}
+                        options={TYPE_OPTIONS}
+                        onChange={(value) => store.setFilters({ type: value })}
+                        style={{ width: 132 }}
+                      />
+                    </label>
+                    <label className="list-filter-pop__row">
+                      <span>只看待确认</span>
+                      <Button
+                        size="small"
+                        type={state.filters.onlyReview ? 'primary' : 'default'}
+                        onClick={() => store.setFilters({ onlyReview: !state.filters.onlyReview })}
+                      >
+                        {state.filters.onlyReview ? '已开启' : '未开启'}
+                      </Button>
+                    </label>
+                    <div className="list-filter-pop__foot">
+                      <button
+                        type="button"
+                        className="link-btn"
+                        onClick={() => store.resetFilters()}
+                      >
+                        清空全部筛选
+                      </button>
+                    </div>
+                  </div>
+                }
               >
-                需确认
-              </Button>
+                <Button
+                  size="small"
+                  className={`list-filter-btn${hasFilter ? ' is-on' : ''}`}
+                  icon={<FilterOutlined />}
+                  aria-label="筛选条件"
+                />
+              </Popover>
             </div>
           </div>
 
-          <div className={`list-scroll${traceId ? '' : ' list-scroll--grouped'}`}>{listBody}</div>
+          <div className={`list-scroll${selectedConv ? '' : ' list-scroll--grouped'}`}>{listBody}</div>
         </section>
 
-        <section className="detail-pane" aria-label="消息详情">
+        <section className="detail-pane" aria-label="会话详情">
           {state.loading ? (
             <div className="detail-loading">
               <Skeleton active paragraph={{ rows: 6 }} />
             </div>
-          ) : selected ? (
+          ) : selectedConv ? (
             <DetailPanel
-              key={selected.traceId}
-              message={selected}
+              key={selectedConv.key}
+              message={selected ?? selectedConv.lastMessage}
+              thread={selectedConv.messages}
+              conversationTitle={selectedConv.title}
               listCollapsed={listCollapsed}
               onToggleList={() => setListCollapsed((v) => !v)}
             />
           ) : (
-            <EmptyState title="选择一条消息" description="从左侧列表中点击任意消息，查看详情并直接回复。" />
+            <EmptyState title="选择一个会话" description="从左侧列表中点击任意会话，查看完整对话并直接回复。" />
           )}
         </section>
       </div>

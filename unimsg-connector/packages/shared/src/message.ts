@@ -234,6 +234,19 @@ export interface UnifiedMessage {
    * 与 DeliveryMode 同一原则——前端如实标注，绝不把规则结果说成大模型。
    */
   intentSource?: 'llm' | 'rules';
+  /**
+   * 生成这条建议时实际生效的厂商显示名与模型 ID（仅 source=llm 时存在）。
+   * 消息保留「当时」的值：配置换了以后历史消息不会被回溯改写，前端标签也不再固定写「MiMo 识别」。
+   */
+  aiProvider?: string;
+  aiModel?: string;
+  /**
+   * 模型本次给出的把握程度（0–1）与据此划分的精度档（仅 source=llm 时存在）。
+   * 低精度**不等于失败**：结果仍来自真实模型，只是信息量不足，草稿更短、精度更低；
+   * 前端如实标注，不把它伪装成高置信，也不回退成关键词规则。
+   */
+  aiConfidence?: number;
+  aiPrecision?: 'high' | 'low';
   replyDraft?: string; // 大模型给出的可编辑回复草稿
   reply?: string; // 用户最终回写的文本（回写时发送此内容）
   done?: boolean; // 是否已标记完成（待办类）
@@ -247,6 +260,15 @@ export interface UnifiedMessage {
    * 未设置 = 未读。与 status（业务流转）正交——「已同步」不代表「我看过」。
    */
   readAt?: string;
+  /**
+   * 消息方向：`in` = 对方发来的，`out` = 通过 LinkHub 或本人账号发出的。
+   *
+   * 为什么需要：钉钉个人事件会把「自己刚发出的消息」再推回来（回声），
+   * 平台不提供 openDingTalkId 因而无法按身份过滤。识别为 out 之后，
+   * 会话列表不再把它算成新消息、不产生未读，聊天区渲染在右侧。
+   * 缺省（旧数据 / Mock）按 `in` 处理，保持向后兼容。
+   */
+  direction?: 'in' | 'out';
   /**
    * 待办截止时间（ISO）。演示环境由服务端从正文做启发式推断（"明天 18:00"/"周三"/"12月3日"），
    * 解析不出就是 undefined —— 前端归入"未设置截止"，不伪造时间。

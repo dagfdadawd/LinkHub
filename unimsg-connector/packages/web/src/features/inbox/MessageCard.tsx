@@ -107,11 +107,6 @@ export function MessageCard({
           <span className="msg-card__sep" aria-hidden="true">·</span>
           <PlatformTag platform={message.platform} small />
           <span className="msg-card__spacer" />
-          {isRow && (
-            <span className={`msg-card__badge msg-card__badge--${unread ? 'unread' : 'read'}`}>
-              {unread ? '未读' : '已读'}
-            </span>
-          )}
           <span className="msg-card__time">{formatRelative(message.createdAt)}</span>
           {isRow && <RightOutlined className="msg-card__chevron" aria-hidden="true" />}
         </div>
@@ -119,15 +114,32 @@ export function MessageCard({
         <div className="msg-card__row msg-card__row--meta">
           <StatusBadge status={message.status} small />
           <IntentTag intent={message.intent} />
-          {/* 身份如实标注：真实接收写「本人账号接收 / 机器人接收」；回写看 delivery.identity / Mock */}
-          {message.receivedAs && <IdentityTag role={message.receivedAs} action="receive" />}
-          {message.delivery?.mode === 'mock' && (
-            <IdentityTag role="mock" action={selfMock ? 'receive' : 'send'} />
+          {/* 身份如实标注：真实接收写「本人账号接收 / 机器人接收」；回写看 delivery.identity / Mock。
+              列表行只留一枚身份标签（回写优先）——两枚会在 380px 的列表栏里换行；
+              两种身份在详情页气泡下方与「更多信息」里都完整保留。 */}
+          {isRow ? (
+            <>
+              {message.delivery?.mode === 'mock' && (
+                <IdentityTag role="mock" action={selfMock ? 'receive' : 'send'} />
+              )}
+              {message.delivery?.mode === 'real' && message.delivery.identity ? (
+                <IdentityTag role={message.delivery.identity} action="send" />
+              ) : (
+                message.receivedAs && <IdentityTag role={message.receivedAs} action="receive" />
+              )}
+            </>
+          ) : (
+            <>
+              {message.receivedAs && <IdentityTag role={message.receivedAs} action="receive" />}
+              {message.delivery?.mode === 'mock' && (
+                <IdentityTag role="mock" action={selfMock ? 'receive' : 'send'} />
+              )}
+              {message.delivery?.mode === 'real' && message.delivery.identity && (
+                <IdentityTag role={message.delivery.identity} action="send" />
+              )}
+            </>
           )}
           {selfMock && <span className="chip chip--warn">我发出的（模拟）</span>}
-          {message.delivery?.mode === 'real' && message.delivery.identity && (
-            <IdentityTag role={message.delivery.identity} action="send" />
-          )}
           {message.needsReview && <span className="chip chip--warn">需人工确认</span>}
           {message.done && <span className="chip chip--done">已完成</span>}
 

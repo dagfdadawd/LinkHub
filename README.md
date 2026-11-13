@@ -217,7 +217,7 @@ MAIL_MODE=real
 
 - **接收**：四类数据源统一接入。飞书 **长连接（WebSocket，免公网回调，事件明文推送）** 或 Webhook（校验 Verification Token，配置 Encrypt Key 时 AES 解密，支持 `url_verification` challenge）；钉钉 **Stream 长连接**（本机免公网）或 HTTP 回调（`timestamp + HMAC` 签名 + AES 解密）；企业微信 XML 回调（SHA1 验签 + AES 解密 + GET `echostr` 握手）；邮箱 IMAP 轮询（UID 水位，首轮只立基线）。Mock 下签名带 `mock` 或 `dev*` 前缀即通过。此外飞书 / 钉钉支持**本人身份接收**：飞书用用户身份 token 轮询本人可见会话的增量消息，钉钉用 `dws event +listen-im` 个人事件订阅（默认全部单聊 + @我）；入库消息标 `receivedAs`，与机器人消息区分。
 - **展示**：REST 列表 + WebSocket 实时推送，按平台 / 状态筛选；本人 / 机器人接收来源在卡片与详情如实标注。
-- **处理**：直接回复、标记完成；意图 / 摘要 / 回复草稿走大模型真实调用（OpenAI 兼容协议，默认 MiMo `mimo-v2.6-flash`），失败 / 超时 / 低置信一律回退内置关键词规则，界面如实标注「MiMo 识别」或「规则兜底」，见 [docs/ai-integration.md](docs/ai-integration.md)。
+- **处理**：直接回复、标记完成；意图 / 摘要 / 回复草稿走大模型真实调用（OpenAI 兼容协议，默认 MiMo `mimo-v2.6-flash`），仅真实调用失败（超时 / 404 / 网络 / 响应不合法）才回退内置关键词规则；低置信结果照常采用，只按信息量调整草稿长短并标注低精度。界面按**本次实际生效的厂商**动态标注（如「火山方舟 识别」/「MiMo 识别」，消息上存 `aiProvider` / `aiModel`）或「规则兜底」，历史消息保留当时值；改过配置后可在详情页点「**重新生成**」用当前配置重算（真调后端，不再只是弹提示），见 [docs/ai-integration.md](docs/ai-integration.md)。
 - **回写**：按目标平台格式转换后异步发送，结果经 WS 推送，并写入 `delivery`。真实接口：飞书 `im/v1/messages`（机器人或**本人 `user_access_token`**，由 `FEISHU_IDENTITY` 决定）、钉钉机器人 `groupMessages/send` / `oToMessages/batchSend`（或 **dws 以本人身份发送**，由 `DINGTALK_IDENTITY` 决定）、企微 `cgi-bin/message/send`、邮箱 SMTP（带 `In-Reply-To` 串回会话）；真实发送成功后 `delivery.identity` 标注实际身份。
 - **回流**：平台状态事件经 Webhook 回流（邮箱由轮询回收），`syncStatus` 更新本地并留痕，支持按 `traceId` 或 `externalId` 定位消息。
 
@@ -233,7 +233,7 @@ received → processing → replied → sent → synced
 - **可替换性**：换账号只改 `.env`；每个平台的 `mode / policy / 收 / 发 / missing / warnings / reason` 是纯函数解析结果，可单测、可被 API、日志、doctor 复用。
 - **幂等**：以 `(platform, externalId)` 为唯一键，平台重推直接返回已有记录（`duplicate=true`），不重复入库（DDL 中有 `UNIQUE` 约束）。邮箱的 `externalId` 为 `<账号>:<目录>:<UID>`，多账号、多目录互不撞车；飞书的 `externalId` 为平台 `message_id`（机器人通道与本人轮询共用同一 ID，跨通道幂等）；钉钉本人事件为 `dingtalk:<openMessageId>`。
 - **异步回写**：`reply` 先同步推进到 `replied`，随即返回 `202 + taskId`，真正发送在后台完成，避免接口阻塞。
-- **边界降级**：限流令牌桶 + 指数退避只作用于发送路径（每平台容量 60、每秒补 30，重试上限 `SEND_MAX_RETRY`）；OCR 置信度低于 `OCR_CONFIDENCE_THRESHOLD`（默认 0.7）标记「待人工确认」；LLM 超时 / 失败 / 低置信回退内置关键词规则并标注「规则兜底」，绝不伪造意图；重试耗尽写入 DLQ。
+- **边界降级**：限流令牌桶 + 指数退避只作用于发送路径（每平台容量 60、每秒补 30，重试上限 `SEND_MAX_RETRY`）；OCR 置信度低于 `OCR_CONFIDENCE_THRESHOLD`（默认 0.7）标记「待人工确认」；LLM 真实调用失败才回退内置关键词规则并标注「规则兜底」，低置信仍采用模型结果（标低精度、草稿更短），绝不伪造意图；重试耗尽写入 DLQ。
 - **密钥安全**：平台 / 大模型 / OCR 凭据只从服务端环境变量读取，绝不以 `VITE_` 注入前端，`.env` 已被 `.gitignore` 忽略。
 
 ## 前端设计与可访问性
@@ -444,7 +444,8 @@ pnpm install
 | `RETRY_BASE_MS` | 重试退避基数，默认 `1000`（ms） |
 | `LLM_TIMEOUT_MS` | 大模型单次调用超时，默认 `15000`（ms）。实测 flash 单次 2.9–9.3s，8s 会把长尾全部打成降级 |
 | `PLATFORM_TIMEOUT_MS` | 平台 HTTP 调用超时，默认 `8000`（ms）。与 LLM 解耦，避免 LLM 长尾传染平台接口 |
-| `LLM_PROVIDER` / `LLM_API_KEY` / `LLM_MODEL` / `LLM_ENDPOINT` / `LLM_MIN_CONFIDENCE` | 大模型：`mock`（默认，规则识别）/ `openai`（OpenAI 兼容协议，MiMo / 通义 / DeepSeek / 智谱 通用）。默认模型 `mimo-v2.6-flash`、端点 `https://api.xiaomimimo.com/v1`、置信阈值 `0.6`。未填 Key 自动回退规则，绝不假装真实调用 |
+| `LLM_PROVIDER` / `LLM_API_KEY` / `LLM_MODEL` / `LLM_ENDPOINT` / `LLM_MIN_CONFIDENCE` | 大模型：`mock`（默认，规则识别）/ `openai`（OpenAI 兼容协议，火山方舟 / 通义 / DeepSeek / 智谱 / MiMo 通用）。**这个字段填的是协议类型，不是厂商中文名**；页面填「火山引擎 / deepseek / 通义」等也会自动归一到 `openai`，厂商由端点推断。默认模型 `mimo-v2.6-flash`、端点 `https://api.xiaomimimo.com/v1`、精度分档线 `0.6`（低于它**仍采用模型结果**，只标低精度，不再回退规则）；`LLM_MODEL` 必须填控制台里的**模型 ID**（不是显示名）且该模型已开通，否则 404 回退规则。未填 Key 自动回退规则，绝不假装真实调用；**推理模型（豆包 seed 等）默认把输出预算全部耗在思维链、返回空正文**，服务端已对火山方舟自动关闭深度思考并在 `finish_reason=length` 时放大输出预算重试，详见 [ai-integration.md](docs/ai-integration.md) |
+| `LLM_BASE_URL` | 页面「AI 模型 Base URL」与旧版配置的兼容别名；服务端同时读 `LLM_ENDPOINT` 与它，**前者优先**。页面保存的值现在直接写入 `LLM_ENDPOINT`，不再出现「填了却不生效」 |
 | `OCR_PROVIDER` / `OCR_API_KEY` / `OCR_SECRET_ID` | OCR 配置：`mock`（默认）/ `tencent`；**真实调用尚未实现，填了也仍走 Mock** |
 
 ### 身份能力（本人收 / 发）
@@ -555,6 +556,7 @@ pnpm install
 | POST | `/api/messages/:id/reply` | Bearer | 回复（`202`，异步回写）；请求可带 `identity: 'bot' \| 'user'` 覆盖发送身份，不可用时 400 中文报错 |
 | POST | `/api/messages/compose` | Bearer | 统一入口新建发送（平台 / 目标会话 / 文本 / 附件；可选 `identity` 指定本人或机器人） |
 | POST | `/api/messages/:id/done` | Bearer | 标记待办完成（置 `done`，不改状态机状态） |
+| POST | `/api/messages/:id/reanalyze` | Bearer | **重新生成 AI 建议**：用当前 LLM 配置重跑分析（历史消息也适用），返回完整消息 + `llm{mode,reason,providerLabel}`，写 `reanalyze_requested` / `reanalyze_done` 闭环日志并广播 `message.updated`；同一条并发请求只跑一次，密钥不出服务端 |
 | GET | `/api/messages/trace/:traceId` | Bearer | 全链路回放（消息 + 闭环日志；未知 traceId 返回空数组） |
 | POST | `/api/feishu/oauth/start` | Bearer | 获取飞书本人身份授权链接：`{url, redirectUri}`；缺 App 凭据时 400 中文错误 |
 | GET | `/api/feishu/oauth/callback` | 公开 | 飞书 OAuth 回调（浏览器跳转，校验 state）；成功/失败都返回中文结果页 |
@@ -644,7 +646,7 @@ pnpm install
 | 独立部署：可在纯净服务器零依赖启动 | ✅ 已实现（单容器方案） | `Dockerfile` + `docker-compose.yml` + [docs/deploy.md](docs/deploy.md)：server 同源托管前端，单端口 3001，含健康检查与数据卷；镜像可 `docker save/load` 离线搬运 |
 | 闭环数据重启后仍可回放 | ✅ 已实现（文件快照） | `DATA_DIR` / `DATA_FILE` 开启原子快照，消息 / trace / DLQ 落盘；Docker 默认挂载 `linkhub-data` 卷 |
 | PostgreSQL / Redis 持久化 | ❌ 未实现 | 仅有 `001_init.sql` 与仓储接口；当前为单实例内存 + 文件快照，不是关系库 |
-| 真实大模型意图识别 | ✅ 已实现（OpenAI 兼容协议，默认 MiMo flash） | 2026-11-11 实测：5 条业务样例 **5/5** 命中（同批关键词规则仅 2/5），平均 5.47s、最大 9.3s；doctor 探针实跑 2.5s PASS。失败/超时/低置信一律回退规则并标注来源 |
+| 真实大模型意图识别 | ✅ 已实现（OpenAI 兼容协议，默认 MiMo flash） | 2026-11-11 实测：5 条业务样例 **5/5** 命中（同批关键词规则仅 2/5），平均 5.47s、最大 9.3s；doctor 探针实跑 2.5s PASS。仅真实调用失败才回退规则并标注来源；低置信结果一律采用，按 `aiPrecision` 标注精度 |
 | OCR 真实调用 | ❌ 未实现 | 仍是占位实现；赛题 A 不依赖 OCR，配置项已预留 |
 | 三平台真实收发 | 🟡 部分 | **历史记录（2026-11-10）**：用真实 `.env` 跑 `doctor`，钉钉 accessToken / 机器人编码 / 收消息通道、企微 access_token、163+QQ 邮箱 IMAP+SMTP 全部 PASS；唯一 FAIL 是飞书租户策略 `21001`（`start.bat doctor` 可复现）。**2026-11-12 复测本机租户 `21001` 已解除**（`tenant_access_token` 返回 `code:0`），并完成飞书本人身份真实端到端（收单聊 + 群聊、发本人）；企微真实发送仍卡可信 IP `60020`。计数以实际输出为准 |
 | 入口鉴权（Bearer + WS）| ✅ 已实现 | `/api/*` 与 `/ws` 同一 token；默认 `dev-token` 仅演示用，对外需改 |

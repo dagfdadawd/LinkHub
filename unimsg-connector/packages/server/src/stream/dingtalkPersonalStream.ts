@@ -31,6 +31,7 @@ import {
   parseEventLine,
 } from '../connectors/dingtalkPersonal';
 import { identityChannelsReal, resolveIdentity } from '../services/identity';
+import { isSelfId, learnSelfId, matchEcho } from '../services/echoRegistry';
 
 /** 重启退避：1s → 2s → 4s … 上限 60s */
 export const RESTART_BASE_MS = 1_000;
@@ -162,6 +163,29 @@ export async function ingestPersonalEvent(
     counters.ignored += 1;
     return null;
   }
+
+  /**
+   * 自环处理（钉钉不返回 openDingTalkId，无法按身份直接过滤，见 echoRegistry 注释）：
+   *  ① 已学习到的本人 ID → 直接标 out（你在手机钉钉上直接发的消息走这条）；
+   *  ② 命中「我们刚发出」的回声 → 跳过入库（内容已作为原消息的 reply 存在），
+   *     并把本次事件的 sender 学成「本人」，供下一次手机消息识别。
+   */
+  const senderId = evt.senderOpenDingtalkId;
+  if (isSelfId(Platform.DINGTALK, senderId)) {
+    msg.direction = 'out';
+    await svc.ingestUnified(Platform.DINGTALK, msg);
+    return msg;
+  }
+  if (matchEcho({ platform: Platform.DINGTALK, conversationId: evt.conversationId, text: evt.content })) {
+    if (learnSelfId(Platform.DINGTALK, senderId)) {
+      // 刚学到本人 ID：把历史里误当「来信」入库的本人消息立刻改标，
+      // 不用等下次重启（否则列表会一直挂着几行自己发的"消息"）
+      svc.applyLearnedSelfDirections();
+    }
+    counters.ignored += 1;
+    return null;
+  }
+
   await svc.ingestUnified(Platform.DINGTALK, msg);
   return msg;
 }

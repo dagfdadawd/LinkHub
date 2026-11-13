@@ -1,0 +1,5 @@
+# Windows 批处理必须以 CRLF 检出：cmd.exe 解析纯 LF 的 .bat 时会按字节重新定位、
+# 落到行中间，把注释片段（如 read-only / double-click）当命令执行。
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.ps1   text eol=crlf
