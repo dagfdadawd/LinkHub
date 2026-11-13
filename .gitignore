@@ -158,3 +158,6 @@ vite.config.ts.timestamp-*
 
 # Turbo Repo
 .turbo
+
+# 本机 UI 验收截图（临时产物，不入库）
+.shots/
