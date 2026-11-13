@@ -46,6 +46,29 @@ function mailSubject(m: UnifiedMessage): string {
   return normalizeSubject(raw);
 }
 
+/** 平台原始 ID（没有昵称时的标题）：飞书 ou_/oc_、钉钉 cid… 这类 */
+const RAW_ID_RE = /^(ou_|oc_|on_|open_|cid|user_)[A-Za-z0-9_+/=-]{6,}$/;
+
+/**
+ * 会话标题的可读化兜底。
+ *
+ * 飞书「本人身份」轮询回来的单聊没有昵称（sender.name 直接是 open_id），
+ * 直接把 ou_43c4… 摆给用户看等于没说「发给谁」。这里把纯 ID 标题降级成
+ * 「未命名会话（…2084）」，原始 ID 仍保留在 title 属性里可查。
+ */
+export function formatConversationTitle(title: string, platform: Platform): string {
+  const text = (title ?? '').trim();
+  if (!text) return '未命名会话';
+  if (!RAW_ID_RE.test(text)) return text;
+  const tail = text.slice(-4);
+  return platform === Platform.MAIL ? `未命名邮件（…${tail}）` : `未命名会话（…${tail}）`;
+}
+
+/** 标题是否只是平台 ID（用于给 title 属性补原文、以及决定是否显示「未命名」暗示） */
+export function isRawIdTitle(title: string): boolean {
+  return RAW_ID_RE.test((title ?? '').trim());
+}
+
 /** 会话键：同一条链路的消息必须落到同一个键上 */
 export function conversationKey(m: UnifiedMessage): string {
   const convId = m.conversation?.id?.trim();

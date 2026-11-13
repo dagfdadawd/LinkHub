@@ -1,7 +1,7 @@
 import { Platform } from '../../types';
-import { SendOutlined } from '@ant-design/icons';
+import { SendOutlined, UserOutlined } from '@ant-design/icons';
 import type { Conversation } from '../../utils/conversations';
-import { conversationSnippet } from '../../utils/conversations';
+import { conversationSnippet, formatConversationTitle, isRawIdTitle } from '../../utils/conversations';
 import { PLATFORM_META, formatRelative } from '../../utils/format';
 import { PlatformGlyph } from '../../components/PlatformGlyph';
 import { initials } from '../../utils/format';
@@ -25,6 +25,8 @@ export function ConversationRow({
   const isGroup = conversation.conversationType === 'group';
   const isMail = conversation.platform === Platform.MAIL;
   const unread = conversation.unread > 0;
+  /** 平台只给了 open_id 时降级成「未命名会话（…2084）」，不把 ID 直接摆给用户 */
+  const title = formatConversationTitle(conversation.title, conversation.platform);
   /** 整段都是自己发的（只有出站）：头像不取名字首字，用自己的发送图标 */
   const outOnly = conversation.messages.every((m) => m.direction === 'out');
   const avatarText = outOnly
@@ -33,7 +35,10 @@ export function ConversationRow({
       ? <PlatformGlyph platform={Platform.MAIL} size={16} />
       : isGroup
         ? '群'
-        : initials(conversation.title);
+        : isRawIdTitle(conversation.title)
+          /* 平台没给昵称时，拿首字做头像会得到括号/数字，用人形图标更稳 */
+          ? <UserOutlined />
+          : initials(title);
 
   return (
     <article
@@ -41,7 +46,7 @@ export function ConversationRow({
       role="button"
       tabIndex={0}
       aria-current={active}
-      aria-label={`${unread ? '未读，' : ''}${conversation.title}`}
+      aria-label={`${unread ? '未读，' : ''}${title}`}
       data-conv={conversation.key}
       onClick={() => onSelect(conversation.lastMessage.traceId)}
       onKeyDown={(e) => {
@@ -65,7 +70,7 @@ export function ConversationRow({
       <div className="conv-row__main">
         <div className="conv-row__top">
           <span className="conv-row__title" title={conversation.title}>
-            {conversation.title}
+            {title}
           </span>
           {isGroup && <span className="conv-row__tag">群</span>}
           <span className="conv-row__spacer" />
