@@ -49,6 +49,9 @@ const svc = new MessageService(
   wsBroadcast,
 );
 
+// 已学习到的本人 ID 落到历史数据上：把以前误当「来信」入库的本人消息改标为「我发出的」
+svc.applyLearnedSelfDirections();
+
 /**
  * 邮箱账号「运行时导入」初始化：
  *  - 启动时把本地文件（DATA_DIR/mail-accounts.json 或 .linkhub-mail-accounts.json）并入 config.mail.accounts；

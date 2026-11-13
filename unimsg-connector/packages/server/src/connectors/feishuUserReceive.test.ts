@@ -220,3 +220,35 @@ test('describeFeishuError：区分缺权限与需重新授权', () => {
   assert.equal(unknown.kind, 'http');
   assert.match(unknown.hint, /123456/);
 });
+const chatGroup: FeishuChat = { chatId: 'oc_group_1', name: '项目群', chatMode: 'group' };
+
+test('mapFeishuUserMessage：群聊只收「@我」——没 @ 我的普通群消息跳过', () => {
+  const notMentioned = mapFeishuUserMessage(raw({ chat_id: 'oc_group_1' }), chatGroup, 'ou_self');
+  assert.equal(notMentioned, null, '群聊普通消息不该入库（会把会话列表刷满）');
+
+  const mentioned = mapFeishuUserMessage(
+    raw({
+      message_id: 'om_group_at',
+      chat_id: 'oc_group_1',
+      body: { content: JSON.stringify({ text: '@_user_1 明天评审改到 10 点' }) },
+      mentions: [{ id: { open_id: 'ou_self' }, key: '@_user_1', name: '我' }],
+    }),
+    chatGroup,
+    'ou_self',
+  );
+  assert.ok(mentioned, '@我 的群消息必须入库');
+  assert.equal(mentioned.conversation?.type, 'group');
+});
+
+test('mapFeishuUserMessage：单聊不受「@我」过滤影响', () => {
+  const msg = mapFeishuUserMessage(raw(), chatP2p, 'ou_self');
+  assert.ok(msg);
+  assert.equal(msg.conversation?.type, 'p2p');
+});
+
+test('mapFeishuUserMessage：onlyMentionMe=false 时群聊保留全量（排障用）', () => {
+  const msg = mapFeishuUserMessage(raw({ chat_id: 'oc_group_1' }), chatGroup, 'ou_self', {
+    onlyMentionMe: false,
+  });
+  assert.ok(msg);
+});
