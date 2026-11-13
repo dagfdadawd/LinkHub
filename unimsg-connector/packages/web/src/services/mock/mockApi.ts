@@ -244,9 +244,13 @@ export class MockApi implements DemoApi {
       externalId: mailKey ? `${mailKey}:compose:${traceId}` : `compose:${traceId}`,
       sender: { id: 'linkhub', name: 'LinkHub 统一入口' },
       conversation: { id: req.conversationId || 'mock-conversation', type: req.conversationType ?? 'group' },
-      type: 'text',
+      // 与后端一致：勾选「同时加为待办」时，这条消息本身就是待办（不另造幽灵消息）
+      type: req.todo ? 'todo' : 'text',
       body: display,
       reply: req.text,
+      ...(req.todo ? { done: false } : {}),
+      ...(req.todo?.title ? { todoTitle: req.todo.title } : {}),
+      ...(req.todo?.dueAt ? { dueAt: req.todo.dueAt } : {}),
       ...(info.length > 0 ? { attachments: info } : {}),
       ...(mailKey
         ? { mailMeta: { account: mailKey, inReplyTo: '', subject: req.text.slice(0, 60) || 'LinkHub 文件' } }
@@ -257,6 +261,20 @@ export class MockApi implements DemoApi {
     };
     this.messages.set(traceId, message);
     this.traces.set(traceId, []);
+    // 回放里能分清「自动识别成待办」与「新建发送时用户手动加的」
+    if (req.todo) {
+      const todoParts = ['新建发送时手动加入待办'];
+      if (req.todo.title) todoParts.push(`标题：${req.todo.title}`);
+      if (req.todo.dueAt) todoParts.push(`截止：${req.todo.dueAt}`);
+      this.traces.get(traceId)!.push({
+        traceId,
+        platform: message.platform,
+        status: message.status,
+        event: 'todo_added',
+        detail: todoParts.join(' · '),
+        at: now,
+      });
+    }
     this.metrics.received += 1;
     this.realtime.emit({ type: 'message.received', data: message });
     this.patch(traceId, { status: MsgStatus.PROCESSING }, 'processing');

@@ -128,6 +128,25 @@ export interface SendCapabilities {
 }
 
 /**
+ * 手动待办标题长度上限（前后端同一份常量，避免两层阈值漂移）。
+ * 待办标题是清单里的一行字，不替代正文，因此不需要消息正文那么长。
+ */
+export const TODO_TITLE_MAX = 120;
+
+/**
+ * 手动待办草稿（新建发送时「同时加为待办」填写，也可用于对已有消息手动加待办）。
+ *
+ * 设计：待办就是一条消息记录本身（不另造一条幽灵消息），所以这里只带
+ * 用户手填的补充信息——标题默认用消息内容，截止时间不填 = 未设置截止。
+ */
+export interface TodoDraft {
+  /** 待办标题（选填，最长 120 字符）；不填时展示消息内容 */
+  title?: string;
+  /** 截止时间（ISO 8601，选填）；不填 = 未设置截止，前端不伪造时间 */
+  dueAt?: string;
+}
+
+/**
  * 从统一入口「主动」向指定平台发送请求（赛题 A 功能需求 3）。
  * 与 reply 的区别：不依赖先收到某条消息，可指定平台 + 目标会话 + 文本 + 文件。
  */
@@ -145,6 +164,12 @@ export interface ComposeRequest {
   identity?: IdentityRole;
   text: string;
   attachments?: OutboundAttachment[];
+  /**
+   * 手动加一条待办（选填）：发送的这条消息同时进入待办清单。
+   * 不传 = 普通发送；传 `{}` = 只加待办、标题与截止都用默认（标题回退消息内容）。
+   * 服务端在同一条消息记录上原子写入，不额外发一次「加入待办」请求，避免并发竞态。
+   */
+  todo?: TodoDraft;
 }
 
 /** 主动发送回执：与 reply 的 202 响应同构，便于前端复用同一套状态推进 */
@@ -292,6 +317,12 @@ export interface UnifiedMessage {
    * 解析不出就是 undefined —— 前端归入"未设置截止"，不伪造时间。
    */
   dueAt?: string;
+  /**
+   * 手动添加待办时用户自己填的标题。
+   * 待办本身仍是一条消息（`type='todo'`），正文保留原消息内容；
+   * 前端待办清单优先展示 todoTitle，没有时回退 body —— 不覆盖正文，回放仍看得到原话。
+   */
+  todoTitle?: string;
   needsReview?: boolean; // OCR 低置信/失败时标记“待人工确认”
   status: MsgStatus;
   createdAt: string;

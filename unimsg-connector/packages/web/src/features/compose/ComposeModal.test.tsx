@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { App as AntApp } from 'antd';
+import dayjs from 'dayjs';
 import type { PlatformIdentityView, UserIdentityStatus } from '@unimsg/shared';
 import { Platform } from '../../types';
 
@@ -115,6 +116,20 @@ async function fillAndSend(targetName = '张三', text = '请查收周报') {
   await pickTarget(targetName);
   fireEvent.change(screen.getByLabelText('发送文本'), { target: { value: text } });
   fireEvent.click(screen.getByTestId('compose-send'));
+}
+
+/**
+ * 在「截止时间」里输入并回车提交。
+ * 走输入框而不是点日历格子：不依赖「本月有哪几天」，测试不会随运行日期变化。
+ */
+async function setTodoDue(value: string) {
+  const input = document.querySelector<HTMLInputElement>('.compose-todo__fields .ant-picker-input input');
+  if (!input) throw new Error('没有找到截止时间输入框');
+  fireEvent.mouseDown(input);
+  fireEvent.focus(input);
+  fireEvent.change(input, { target: { value } });
+  fireEvent.keyDown(input, { key: 'Enter', code: 'Enter', keyCode: 13 });
+  await waitFor(() => expect(input.value).toBe(value));
 }
 
 beforeEach(() => {
@@ -324,6 +339,59 @@ describe('ComposeModal 发送身份（本人 / 机器人）', () => {
 
     expect(await screen.findByText(/本人身份发送/)).toBeInTheDocument();
     expect(screen.queryByText(/本人身份未连接，连接后可用本人身份发送/)).toBeNull();
+  });
+});
+
+describe('ComposeModal 同时加为待办（手动添加）', () => {
+  it('默认不勾选：不渲染待办字段，请求里也不带 todo', async () => {
+    const { compose } = setup();
+
+    expect(screen.queryByTestId('compose-todo-toggle')).toBeInTheDocument();
+    expect(screen.queryByTestId('compose-todo-title')).toBeNull();
+    expect(document.querySelector('.compose-todo__fields')).toBeNull();
+
+    await fillAndSend();
+    await waitFor(() => expect(compose).toHaveBeenCalledTimes(1));
+    expect(compose.mock.calls[0][0]).not.toHaveProperty('todo');
+  });
+
+  it('勾选后手填标题与截止时间，随同一次 compose 下发（不额外发「加入待办」请求）', async () => {
+    const { compose } = setup();
+
+    fireEvent.click(screen.getByTestId('compose-todo-toggle'));
+    fireEvent.change(await screen.findByLabelText('待办标题'), { target: { value: '跟进周报' } });
+    await setTodoDue('2026-11-20 18:00');
+
+    await fillAndSend();
+    await waitFor(() => expect(compose).toHaveBeenCalledTimes(1));
+
+    const req = compose.mock.calls[0][0];
+    expect(req.todo).toEqual({
+      title: '跟进周报',
+      dueAt: dayjs('2026-11-20 18:00').toISOString(),
+    });
+  });
+
+  it('只勾选、不填标题和截止：todo 传空对象，后端回退用消息内容做标题', async () => {
+    const { compose } = setup();
+
+    fireEvent.click(screen.getByTestId('compose-todo-toggle'));
+    await fillAndSend();
+
+    await waitFor(() => expect(compose).toHaveBeenCalledTimes(1));
+    expect(compose.mock.calls[0][0].todo).toEqual({});
+  });
+
+  it('发送成功后清空待办选项（下一次发送默认是普通消息）', async () => {
+    const { compose } = setup();
+
+    fireEvent.click(screen.getByTestId('compose-todo-toggle'));
+    fireEvent.change(await screen.findByLabelText('待办标题'), { target: { value: '跟进周报' } });
+    await fillAndSend();
+    await waitFor(() => expect(compose).toHaveBeenCalledTimes(1));
+
+    // 弹窗关闭前组件状态已重置：重新渲染打开时不应带着上一条的待办设置
+    expect(screen.queryByTestId('compose-todo-title')).toBeNull();
   });
 });
 

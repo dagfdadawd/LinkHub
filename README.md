@@ -203,13 +203,13 @@ MAIL_MODE=real
 | 安全：Bearer 鉴权 + WebSocket 握手校验 | ✅ 完成 |
 | 闭环日志（traceId 全链路可回放） | ✅ 完成（Mock 与真实通道分开描述） |
 | 边界降级：限流退避、OCR 置信度、意图失败回退、DLQ | ✅ 完成 |
-| 单元测试 / 端到端冒烟 | ✅ **2026-11-12 本轮实测**：`typecheck` 通过；server **466 tests** 全过（2026-11-12 本轮实测，含本轮新增「`types` 被拒自动降级」「水位内消息不重复 ingest」用例）；web **304 tests**（34 文件）全过；`pnpm e2e` **20 项断言 PASS + SMOKE OK**；契约自检 **81 PASS / 0 FAIL**（含 2 个邮箱账号；含 `identity`、钉钉 personal status 等新接口，N 视是否配置邮箱账号：有邮箱 81 / 无邮箱 75） |
+| 单元测试 / 端到端冒烟 | ✅ **2026-11-13 本轮实测**：`typecheck` 通过；server **509 tests** 全过；web **365 tests**（38 文件）全过（本轮新增「新建发送同时加为待办」服务端 / HTTP / 前端用例）；`pnpm e2e` 与契约自检沿用 2026-11-12 实测结果（**20 项断言 PASS + SMOKE OK**；契约自检 **81 PASS / 0 FAIL**，N 视是否配置邮箱账号：有邮箱 81 / 无邮箱 75） |
 | 上手与交付文档 | ✅ [quickstart.md](docs/quickstart.md)（5 分钟上手）/ [personal-identity.md](docs/personal-identity.md)（本人身份收发配置与边界）/ [demo-script.md](docs/demo-script.md)（演示脚本）/ [delivery-checklist.md](docs/delivery-checklist.md)（交付打包）/ [ai-integration.md](docs/ai-integration.md)（AI 服务集成说明）/ [risk-register.md](docs/risk-register.md)（风险台账）；README 顶部有「30 秒选路径」 |
 | 健壮性加固（本轮） | ✅ webhook 空/畸形事件 400 不入库、端口占用中文提示、CORS 白名单、状态回流防倒退、日志脱敏、空 `API_TOKEN` 不关鉴权、邮箱嵌套 MIME/水位持久化/中文目录 |
 | 大模型真实调用（意图 / 摘要 / 回复草稿） | ✅ OpenAI 兼容协议（默认小米 MiMo `mimo-v2.6-flash`）；失败一律回退规则识别并如实标注来源；见 [ai-integration.md](docs/ai-integration.md) |
 | OCR 真实调用 | 🚧 仍为占位实现（赛题 A 不依赖 OCR；配置项已预留） |
 | PostgreSQL / Redis 实装 | 🚧 仅有 DDL 与仓储接口，实际始终走内存 |
-| 前端统一入口 | ✅ 收件箱 / 待办 / 全链路回放 / 平台账号；首启「3 步上手」改为客户语言（主 CTA 去连接账号、次 CTA 先体验演示，开发者命令折叠）、侧栏导航有文字标签、页脚写明「服务就绪 · 本地后端已连接（不代表平台账号已连接）」、账号页给出「变量齐 ≠ 连通」说明与可复制 doctor 自检命令、`.env` 改而未重启有提示、飞书 OAuth 失败回跳有中文反馈、页脚有可见连接状态（已连接 / 重连中 / 未连接 / 异常 / 演示）；飞书 / 钉钉账号卡有「身份 · 谁在收、谁在发」块（本人 / 机器人 / 模拟 Tag + 连接入口），收件箱与回放标注 `receivedAs` / `delivery.identity`，新建发送可选发送身份，发送失败原因显示在详情并可重试 |
+| 前端统一入口 | ✅ 收件箱 / 待办 / 全链路回放 / 平台账号；首启「3 步上手」改为客户语言（主 CTA 去连接账号、次 CTA 先体验演示，开发者命令折叠）、侧栏导航有文字标签、页脚写明「服务就绪 · 本地后端已连接（不代表平台账号已连接）」、账号页给出「变量齐 ≠ 连通」说明与可复制 doctor 自检命令、`.env` 改而未重启有提示、飞书 OAuth 失败回跳有中文反馈、页脚有可见连接状态（已连接 / 重连中 / 未连接 / 异常 / 演示）；飞书 / 钉钉账号卡有「身份 · 谁在收、谁在发」块（本人 / 机器人 / 模拟 Tag + 连接入口），收件箱与回放标注 `receivedAs` / `delivery.identity`，新建发送可选发送身份，**「同时加为待办」可手填标题 / 截止时间，发送后同一条消息直接进入待办清单（手动加待办，正文不被覆盖）**，发送失败原因显示在详情并可重试 |
 | 小白用户上手修复（本轮，来自 docs/qa/naive-user-report.md 阶段一） | ✅ P1：账号页自检命令与「已配置 ≠ 连通」、首启引导挂载、`pnpm run doctor` 全文档写全、`.env` 改而未重启提示、飞书 OAuth 失败回跳反馈、发送失败原因上浮 + 重试；P2：页脚可见连接状态、运行指标「本次启动以来」并拆真实/模拟、空态注入按钮可点性、回复成功后冷却防重复；P3：启动器 Token 打码、前端固定 5173 如实写；平台限制项（企微 `60020`、钉钉企业 CLI 授权）与历史租户策略 `21001`（2026-11-12 本机租户已解除，仍保留为其他租户的排查项）仍如实标注 |
 | 前端设计系统与可访问性 | ✅ 设计令牌化（标签色板从一个品牌色派生明暗两套、圆角与字号成尺阶）、标签文字对比度 ≥4.5 有回归测试锁定、移动端安全区 + 44px 命中区、`pnpm --filter @unimsg/web lint:css` 样式护栏 |
 
@@ -217,7 +217,7 @@ MAIL_MODE=real
 
 - **接收**：四类数据源统一接入。飞书 **长连接（WebSocket，免公网回调，事件明文推送）** 或 Webhook（校验 Verification Token，配置 Encrypt Key 时 AES 解密，支持 `url_verification` challenge）；钉钉 **Stream 长连接**（本机免公网）或 HTTP 回调（`timestamp + HMAC` 签名 + AES 解密）；企业微信 XML 回调（SHA1 验签 + AES 解密 + GET `echostr` 握手）；邮箱 IMAP 轮询（UID 水位，首轮只立基线）。Mock 下签名带 `mock` 或 `dev*` 前缀即通过。此外飞书 / 钉钉支持**本人身份接收**：飞书用用户身份 token 轮询本人可见会话的增量消息，钉钉用 `dws event +listen-im` 个人事件订阅（默认全部单聊 + @我）；入库消息标 `receivedAs`，与机器人消息区分。
 - **展示**：REST 列表 + WebSocket 实时推送，按平台 / 状态筛选；本人 / 机器人接收来源在卡片与详情如实标注。
-- **处理**：直接回复、标记完成；意图 / 摘要 / 回复草稿走大模型真实调用（OpenAI 兼容协议，默认 MiMo `mimo-v2.6-flash`），仅真实调用失败（超时 / 404 / 网络 / 响应不合法）才回退内置关键词规则；低置信结果照常采用，只按信息量调整草稿长短并标注低精度。界面按**本次实际生效的厂商**动态标注（如「火山方舟 识别」/「MiMo 识别」，消息上存 `aiProvider` / `aiModel`）或「规则兜底」，历史消息保留当时值；改过配置后可在详情页点「**重新生成**」用当前配置重算（真调后端，不再只是弹提示），见 [docs/ai-integration.md](docs/ai-integration.md)。
+- **处理**：直接回复、标记完成；**待办既可自动识别，也可手动添加**——任意消息一键「加入待办」（`POST /api/messages/:id/todo`），或在「新建发送」里勾选「同时加为待办」手填标题 / 截止时间（同一条消息即待办，正文不被覆盖，回放仍看得到原话）；意图 / 摘要 / 回复草稿走大模型真实调用（OpenAI 兼容协议，默认 MiMo `mimo-v2.6-flash`），仅真实调用失败（超时 / 404 / 网络 / 响应不合法）才回退内置关键词规则；低置信结果照常采用，只按信息量调整草稿长短并标注低精度。界面按**本次实际生效的厂商**动态标注（如「火山方舟 识别」/「MiMo 识别」，消息上存 `aiProvider` / `aiModel`）或「规则兜底」，历史消息保留当时值；改过配置后可在详情页点「**重新生成**」用当前配置重算（真调后端，不再只是弹提示），见 [docs/ai-integration.md](docs/ai-integration.md)。
 - **回写**：按目标平台格式转换后异步发送，结果经 WS 推送，并写入 `delivery`。真实接口：飞书 `im/v1/messages`（机器人或**本人 `user_access_token`**，由 `FEISHU_IDENTITY` 决定）、钉钉机器人 `groupMessages/send` / `oToMessages/batchSend`（或 **dws 以本人身份发送**，由 `DINGTALK_IDENTITY` 决定）、企微 `cgi-bin/message/send`、邮箱 SMTP（带 `In-Reply-To` 串回会话）；真实发送成功后 `delivery.identity` 标注实际身份。
 - **回流**：平台状态事件经 Webhook 回流（邮箱由轮询回收），`syncStatus` 更新本地并留痕，支持按 `traceId` 或 `externalId` 定位消息。
 
@@ -554,8 +554,9 @@ pnpm install
 | GET | `/api/messages` | Bearer | 消息列表，支持 `?platform=&status=` |
 | GET | `/api/messages/:id` | Bearer | 消息详情（`:id` 传 `traceId`；消息内含 `delivery` 投递标注、`receivedAs` 接收身份，发送失败时有 `failureReason` 可读原因 + 详情页「重试发送」） |
 | POST | `/api/messages/:id/reply` | Bearer | 回复（`202`，异步回写）；请求可带 `identity: 'bot' \| 'user'` 覆盖发送身份，不可用时 400 中文报错 |
-| POST | `/api/messages/compose` | Bearer | 统一入口新建发送（平台 / 目标会话 / 文本 / 附件；可选 `identity` 指定本人或机器人） |
+| POST | `/api/messages/compose` | Bearer | 统一入口新建发送（平台 / 目标会话 / 文本 / 附件；可选 `identity` 指定本人或机器人；可选 `todo: {title?, dueAt?}` 同时手动加一条待办——待办就是这条消息本身，`type=todo` 并写 `todo_added` 闭环日志，不额外发一次请求） |
 | POST | `/api/messages/:id/done` | Bearer | 标记待办完成（置 `done`，不改状态机状态） |
+| POST | `/api/messages/:id/todo` | Bearer | **手动加入待办**：任意消息转成 `type=todo`（幂等、已完成会重新打开），不改状态机、不触发平台回写 |
 | POST | `/api/messages/:id/reanalyze` | Bearer | **重新生成 AI 建议**：用当前 LLM 配置重跑分析（历史消息也适用），返回完整消息 + `llm{mode,reason,providerLabel}`，写 `reanalyze_requested` / `reanalyze_done` 闭环日志并广播 `message.updated`；同一条并发请求只跑一次，密钥不出服务端 |
 | GET | `/api/messages/trace/:traceId` | Bearer | 全链路回放（消息 + 闭环日志；未知 traceId 返回空数组） |
 | POST | `/api/feishu/oauth/start` | Bearer | 获取飞书本人身份授权链接：`{url, redirectUri}`；缺 App 凭据时 400 中文错误 |

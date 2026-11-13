@@ -9,11 +9,12 @@
  *  4. 平台能力集中声明，前端据此决定文件按钮可用性，不靠前端硬编码平台差异。
  */
 import {
-  Platform, FILE_LIMITS,
+  Platform, FILE_LIMITS, TODO_TITLE_MAX,
   type OutboundAttachment,
   type AttachmentInfo,
   type SendCapabilities,
   type ComposeRequest,
+  type TodoDraft,
   type UnifiedMessage,
 } from '@unimsg/shared';
 import { modeOf } from '../config';
@@ -118,6 +119,41 @@ export function describeAttachmentsWithPreview(list: OutboundAttachment[]): Atta
 }
 
 /**
+ * 「同时加为待办」请求体归一化：标题与截止时间都选填，但给了就必须合法。
+ *
+ * 返回 undefined = 本次不创建待办；返回对象（可能为空 {}）= 创建待办但用默认值。
+ * 截止时间统一转成 ISO：后端与前端（formatDue / groupTodos）只认一种格式，
+ * 避免把「明天下午」这类自然语言直接落库造成展示漂移。
+ */
+export function normalizeTodo(raw: unknown): TodoDraft | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new InvalidOutboundRequest('todo 必须是对象（{ title?, dueAt? }），或省略表示不加待办');
+  }
+  const v = raw as Record<string, unknown>;
+
+  let title: string | undefined;
+  if (v.title !== undefined && v.title !== null && v.title !== '') {
+    if (typeof v.title !== 'string') throw new InvalidOutboundRequest('todo.title 必须是字符串');
+    title = v.title.trim();
+    if (!title) title = undefined;
+    else if (title.length > TODO_TITLE_MAX) {
+      throw new InvalidOutboundRequest(`待办标题最长 ${TODO_TITLE_MAX} 字符`);
+    }
+  }
+
+  let dueAt: string | undefined;
+  if (v.dueAt !== undefined && v.dueAt !== null && v.dueAt !== '') {
+    if (typeof v.dueAt !== 'string') throw new InvalidOutboundRequest('todo.dueAt 必须是 ISO 时间字符串');
+    const ms = Date.parse(v.dueAt);
+    if (Number.isNaN(ms)) throw new InvalidOutboundRequest('todo.dueAt 不是合法时间（需要 ISO 8601，如 2026-11-20T18:00:00+08:00）');
+    dueAt = new Date(ms).toISOString();
+  }
+
+  return { ...(title ? { title } : {}), ...(dueAt ? { dueAt } : {}) };
+}
+
+/**
  * 主动发送请求体归一化。
  * 允许「只有文本」「只有文件」「文本 + 文件」，但两者不能同时为空。
  */
@@ -172,12 +208,16 @@ export function normalizeCompose(raw: unknown): ComposeRequest {
     identity = v.identity;
   }
 
+  // 手动待办：选填；给了就校验（标题长度 / 截止时间合法性），脏数据不进状态机
+  const todo = normalizeTodo(v.todo);
+
   return {
     platform: platform as Platform,
     ...(conversationId ? { conversationId } : {}),
     ...(conversationType ? { conversationType } : {}),
     ...(mailAccount ? { mailAccount } : {}),
     ...(identity ? { identity } : {}),
+    ...(todo ? { todo } : {}),
     text,
     ...(attachments.length > 0 ? { attachments } : {}),
   };

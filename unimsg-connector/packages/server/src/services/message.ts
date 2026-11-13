@@ -477,9 +477,14 @@ export class MessageService {
       externalId: mailKey ? `${mailKey}:compose:${uid}` : `compose:${uid}`,
       sender: { id: 'linkhub', name: 'LinkHub 统一入口' },
       conversation: { id: conversationId, type: conversationType ?? 'group' },
-      type: 'text',
+      // 「同时加为待办」不是旁路：同一条消息记录就是待办本身（type=todo），
+      // 标题 / 截止时间手填；发送链路仍按文本投递，connector 只看 reply/body。
+      type: req.todo ? 'todo' : 'text',
       body: display,
       reply: req.text,
+      ...(req.todo ? { done: false } : {}),
+      ...(req.todo?.title ? { todoTitle: req.todo.title } : {}),
+      ...(req.todo?.dueAt ? { dueAt: req.todo.dueAt } : {}),
       ...(info.length > 0 ? { attachments: info } : {}),
       ...(mailKey
         ? { mailMeta: { account: mailKey, inReplyTo: '', subject: req.text.slice(0, 60) || 'LinkHub 文件' } }
@@ -503,6 +508,13 @@ export class MessageService {
         + `${info.length > 0 ? ` · 附件 ${info.length} 个` : ''}`
         + `${req.identity ? ` · 指定身份：${req.identity === 'user' ? '本人' : '机器人'}` : ''}`,
     );
+    // 手动待办单独留一条闭环事件：回放里能分清「自动识别成待办」与「用户手动加的」
+    if (req.todo) {
+      const todoParts = ['新建发送时手动加入待办'];
+      if (req.todo.title) todoParts.push(`标题：${req.todo.title}`);
+      if (req.todo.dueAt) todoParts.push(`截止：${req.todo.dueAt}`);
+      writeTrace(this.repo, msg, 'todo_added', todoParts.join(' · '));
+    }
     this.broadcast({ type: 'message.received', data: msg });
 
     let m = this.repo.update(msg.traceId, { status: MsgStatus.PROCESSING })!;

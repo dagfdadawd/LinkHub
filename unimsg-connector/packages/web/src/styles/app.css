@@ -4713,6 +4713,31 @@ html.vt-morph .detail {
   font-size: 0.75rem;
 }
 
+/* 「同时加为待办」：勾选后才展开标题 / 截止时间两栏，不勾选不占阅读空间 */
+.compose-todo {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-10);
+  background: var(--surface-2);
+}
+
+.compose-todo .compose-field__hint {
+  margin-top: 4px;
+}
+
+.compose-todo__fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+  margin-top: 10px;
+}
+
+@media (max-width: 560px) {
+  .compose-todo__fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 /* ---------------- 本人身份（谁在收 / 谁在发） ----------------
    小白用户先看结论再看原因：两行「接收 / 发送」Tag + 一句人话说明。
    身份色相与 components/IdentityTag 一致：本人=绿、机器人=蓝、模拟=橙。 */
