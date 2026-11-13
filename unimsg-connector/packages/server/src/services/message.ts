@@ -9,6 +9,7 @@
  *  - getTrace / getLoopLog：全链路回放
  */
 import { randomUUID } from 'node:crypto';
+import { normalizeEchoText, rememberSent, learnedSelfIds } from './echoRegistry';
 import {
   Platform, MsgStatus, UnifiedMessage, PlatformConnector,
   type ComposeAck, type ComposeRequest, type IdentityRole, type OutboundAttachment,
@@ -151,6 +152,28 @@ export class MessageService {
    *  - (platform, externalId) 幂等：重复投递返回 duplicate，不重复入库、不重复广播；
    *  - 写 received trace、counters，异步富化（OCR/LLM）并补广播 message.updated。
    */
+  /**
+   * 启动时按「已学习的本人 ID」补标历史消息：把以前误当成来信入库的本人消息
+   * （钉钉回声 / 手机直发）标成 direction=out，会话列表不再把它们算成未读。
+   * 返回被修正的条数；没有学习记录时是纯 no-op。
+   */
+  applyLearnedSelfDirections(): number {
+    const ids = learnedSelfIds(Platform.DINGTALK);
+    if (ids.length === 0) return 0;
+    let changed = 0;
+    for (const m of this.repo.list()) {
+      if (m.platform !== Platform.DINGTALK) continue;
+      if (m.direction === 'out') continue;
+      if (!ids.includes(m.sender.id)) continue;
+      this.repo.update(m.traceId, { direction: 'out' });
+      changed += 1;
+    }
+    if (changed > 0) {
+      console.log(`[identity] 已把 ${changed} 条本人发出的历史消息标为「我发出的」（不再计入未读）`);
+    }
+    return changed;
+  }
+
   async ingestUnified(platform: Platform, incoming: UnifiedMessage): Promise<IngestResult> {
     // 平台侧唯一 ID 是幂等键的唯一来源：缺失/兜底成 'unknown' 时必须拒收，
     // 否则多条不同消息会互相去重（或占死 unknown 键）。
@@ -372,6 +395,8 @@ export class MessageService {
         ? { mailMeta: { account: mailKey, inReplyTo: '', subject: req.text.slice(0, 60) || 'LinkHub 文件' } }
         : {}),
       status: MsgStatus.RECEIVED,
+      // 主动发送是「我们发出的」：会话列表不把它算成新来信，聊天区渲染在右侧
+      direction: 'out',
       createdAt: now,
       updatedAt: now,
       ...(req.identity ? { sendIdentity: req.identity } : {}),
@@ -414,6 +439,18 @@ export class MessageService {
     try {
       const result = await this.limiter.send(cur.platform, () => connector.send(outgoing, attachments));
       const at = new Date().toISOString();
+
+      // 登记「刚发出」的文本：钉钉个人事件会把本人发出的消息再推回来（回声），
+      // 个人事件流用它做「同会话 + 同文本 + 时间窗」比对，避免同一条内容入库两次。
+      if (result.mode === 'real') {
+        rememberSent({
+          platform: cur.platform,
+          conversationId: cur.conversation?.id,
+          text: normalizeEchoText(cur.reply ?? cur.body),
+          at: Date.now(),
+          traceId: id,
+        });
+      }
 
       // 把"本次到底走了真实接口还是本地模拟、用了哪个身份"写进消息与闭环日志，绝不静默假装成功。
       // Mock 模式不写 identity（契约 §4：模拟通道不冒充本人/机器人）。
