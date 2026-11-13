@@ -10,9 +10,9 @@ import { Alert, App as AntApp, Button, Input, Modal, Radio, Select, Space, Tag }
 import { PaperClipOutlined, SendOutlined, UploadOutlined } from '@ant-design/icons';
 import { FILE_LIMITS, Platform } from '../../types';
 import type { ComposeRequest, IdentityRole, SendCapabilities } from '../../types';
-import type { AccountInfo, MailAccountInfo } from '../../services/api';
+import type { AccountInfo, ContactDirectory, MailAccountInfo } from '../../services/api';
 import { PLATFORM_META, formatRelative } from '../../utils/format';
-import { buildConversations, formatConversationTitle, isRawIdTitle } from '../../utils/conversations';
+import { buildConversations } from '../../utils/conversations';
 import { UserOutlined } from '@ant-design/icons';
 import { useAppState } from '../../hooks/useAppState';
 import { IdentityTag } from '../../components/IdentityTag';
@@ -59,6 +59,25 @@ export function ComposeModal({
   const [files, setFiles] = useState<File[]>([]);
   const [caps, setCaps] = useState<SendCapabilities[]>([]);
   const [sending, setSending] = useState(false);
+  /** 平台会话名录（飞书可用）：补齐「还没聊过的人 / 群」 */
+  const [directory, setDirectory] = useState<ContactDirectory>();
+
+  // 拉一次该平台的会话名录（只读、后端有缓存）；旧后端没有该接口时保持 undefined
+  useEffect(() => {
+    if (!open || platform === Platform.MAIL) return;
+    let alive = true;
+    services.api
+      .contacts(platform)
+      .then((result) => {
+        if (alive) setDirectory(result);
+      })
+      .catch(() => {
+        if (alive) setDirectory(undefined);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [open, platform]);
 
   useEffect(() => {
     if (!open) return;
@@ -100,28 +119,46 @@ export function ComposeModal({
   }, [open, platform, mailAccounts]);
 
   /**
- * 可选目标 = 当前平台下「已经聊过的会话」。
- * 会话名、类型、最近时间都来自真实消息，所以用户看到的是人/群，不是一串 ID。
+ * 可选目标 = 「已有会话」 ∪ 「平台会话名录」。
+ *
+ * 已有会话保证任何平台都能用；名录（飞书）能补上「还没聊过的人/群」，
+ * 解决「为什么只能选三个」——只要这个人/群在本人账号的会话列表里就能选到。
  */
   const targetOptions = useMemo(() => {
-    return buildConversations(state.messages)
+    const fromMessages = buildConversations(state.messages)
       .filter((c) => c.platform === platform)
       .map((c) => {
         const withConv = c.messages.find((m) => m.conversation?.id);
         return {
           value: c.key,
-          // 平台只给了 open_id 时降级成「未命名会话（…2084）」，不把 ID 当名字给用户看
-          label: formatConversationTitle(c.title, c.platform),
+          label: c.title || '（未命名会话）',
           rawTitle: c.title,
-          rawTitleIsId: isRawIdTitle(c.title),
           conversationId: withConv?.conversation?.id ?? '',
           conversationType: withConv?.conversation?.type ?? c.conversationType,
-          lastAt: c.lastAt,
+          lastAt: c.lastAt as string | undefined,
           group: c.conversationType === 'group',
+          fromDirectory: false,
         };
       })
       .filter((o) => Boolean(o.conversationId));
-  }, [state.messages, platform]);
+
+    const known = new Set(fromMessages.map((o) => o.conversationId));
+    const extra = (directory?.platform === platform ? directory.items : [])
+      .filter((it) => it.id && !known.has(it.id))
+      .map((it) => ({
+        value: `${platform}:${it.id}`,
+        label: it.name,
+        rawTitle: it.name,
+        conversationId: it.id,
+        conversationType: it.type,
+        lastAt: undefined as string | undefined,
+        group: it.type === 'group',
+        fromDirectory: true,
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label, 'zh-Hans-CN'));
+
+    return [...fromMessages, ...extra];
+  }, [state.messages, platform, directory]);
 
   const selectedTarget = targetOptions.find((o) => o.value === targetKey);
 
@@ -346,11 +383,13 @@ export function ComposeModal({
                   return (
                     <div className="compose-target__option" title={item.rawTitle}>
                       <span className={`compose-target__avatar${item.group ? ' is-group' : ''}`}>
-                        {item.group ? '群' : item.rawTitleIsId ? <UserOutlined /> : item.label.slice(0, 1)}
+                        {item.group ? '群' : <UserOutlined />}
                       </span>
                       <span className="compose-target__name">{item.label}</span>
                       <span className="compose-target__meta">
-                        {item.group ? '群聊' : '单聊'} · {formatRelative(item.lastAt)}
+                        {item.group ? '群聊' : '单聊'}
+                        {item.lastAt ? ` · ${formatRelative(item.lastAt)}` : ''}
+                        {item.fromDirectory ? ' · 通讯录' : ''}
                       </span>
                     </div>
                   );
@@ -358,8 +397,13 @@ export function ComposeModal({
               />
               <div className="compose-field__hint">
                 {targetOptions.length === 0
-                  ? '该平台还没有可发送的会话：先在收件箱收到一条消息（或从会话行点「发送消息」），再回到这里发送。'
-                  : '列表来自真实的收件箱会话；选中后按该会话的类型（单聊 / 群聊）发送。'}
+                  ? directory?.reason
+                    || '该平台还没有可发送的会话：先在收件箱收到一条消息，再回到这里发送。'
+                  : directory && !directory.available
+                    ? `可发送给已有会话；${directory.reason ?? '当前平台不提供通讯录。'}`
+                    : directory?.available
+                      ? `已包含飞书本人账号可见的全部会话（${directory.items.length} 个），可直接搜索人名或群名。`
+                      : '列表来自真实的收件箱会话；选中后按该会话的类型（单聊 / 群聊）发送。'}
               </div>
             </>
           )}

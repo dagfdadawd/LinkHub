@@ -22,6 +22,8 @@ export interface Conversation {
   platform: Platform;
   /** 展示名：单聊=对方，群聊=群名，邮件=主题 */
   title: string;
+  /** 会话 ID（平台侧），用于按名录反查可读名字 */
+  conversationId?: string;
   /** 会话类型（p2p / group），邮件为空 */
   conversationType?: 'p2p' | 'group';
   /** 时间升序 */
@@ -44,29 +46,6 @@ export function normalizeSubject(subject: string): string {
 function mailSubject(m: UnifiedMessage): string {
   const raw = m.mailMeta?.subject ?? '';
   return normalizeSubject(raw);
-}
-
-/** 平台原始 ID（没有昵称时的标题）：飞书 ou_/oc_、钉钉 cid… 这类 */
-const RAW_ID_RE = /^(ou_|oc_|on_|open_|cid|user_)[A-Za-z0-9_+/=-]{6,}$/;
-
-/**
- * 会话标题的可读化兜底。
- *
- * 飞书「本人身份」轮询回来的单聊没有昵称（sender.name 直接是 open_id），
- * 直接把 ou_43c4… 摆给用户看等于没说「发给谁」。这里把纯 ID 标题降级成
- * 「未命名会话（…2084）」，原始 ID 仍保留在 title 属性里可查。
- */
-export function formatConversationTitle(title: string, platform: Platform): string {
-  const text = (title ?? '').trim();
-  if (!text) return '未命名会话';
-  if (!RAW_ID_RE.test(text)) return text;
-  const tail = text.slice(-4);
-  return platform === Platform.MAIL ? `未命名邮件（…${tail}）` : `未命名会话（…${tail}）`;
-}
-
-/** 标题是否只是平台 ID（用于给 title 属性补原文、以及决定是否显示「未命名」暗示） */
-export function isRawIdTitle(title: string): boolean {
-  return RAW_ID_RE.test((title ?? '').trim());
 }
 
 /** 会话键：同一条链路的消息必须落到同一个键上 */
@@ -97,7 +76,9 @@ function conversationTitle(messages: UnifiedMessage[], platform: Platform): stri
     return last.sender.name || last.sender.id || '邮件';
   }
   const conv = last.conversation;
-  if (conv?.type === 'group' && conv.title) return conv.title;
+  // 平台给了会话名就用它（飞书的单聊名就是对方昵称，比 sender 的 open_id 可读）
+  if (conv?.title) return conv.title;
+  if (conv?.type === 'group') return '群聊';
   // 单聊：取最后一条「入站」消息的发送者作为对方；全是出站时退回会话里出现过的非本人名字
   const inbound = [...messages].reverse().find((m) => !isOut(m));
   if (inbound) return inbound.sender.name || inbound.sender.id;
@@ -135,6 +116,7 @@ export function buildConversations(messages: UnifiedMessage[]): Conversation[] {
       platform,
       title: conversationTitle(ordered, platform),
       conversationType: last.conversation?.type,
+      conversationId: last.conversation?.id,
       messages: ordered,
       lastMessage: last,
       lastAt: last.updatedAt || last.createdAt,

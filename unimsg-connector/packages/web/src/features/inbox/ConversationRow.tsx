@@ -1,7 +1,7 @@
 import { Platform } from '../../types';
-import { SendOutlined, UserOutlined } from '@ant-design/icons';
+import { SendOutlined } from '@ant-design/icons';
 import type { Conversation } from '../../utils/conversations';
-import { conversationSnippet, formatConversationTitle, isRawIdTitle } from '../../utils/conversations';
+import { conversationSnippet } from '../../utils/conversations';
 import { PLATFORM_META, formatRelative } from '../../utils/format';
 import { PlatformGlyph } from '../../components/PlatformGlyph';
 import { initials } from '../../utils/format';
@@ -25,8 +25,8 @@ export function ConversationRow({
   const isGroup = conversation.conversationType === 'group';
   const isMail = conversation.platform === Platform.MAIL;
   const unread = conversation.unread > 0;
-  /** 平台只给了 open_id 时降级成「未命名会话（…2084）」，不把 ID 直接摆给用户 */
-  const title = formatConversationTitle(conversation.title, conversation.platform);
+  /** 会话标题：平台给了什么就显示什么（缺昵称是平台侧问题，不在前端编造） */
+  const title = conversation.title;
   /** 整段都是自己发的（只有出站）：头像不取名字首字，用自己的发送图标 */
   const outOnly = conversation.messages.every((m) => m.direction === 'out');
   const avatarText = outOnly
@@ -35,10 +35,7 @@ export function ConversationRow({
       ? <PlatformGlyph platform={Platform.MAIL} size={16} />
       : isGroup
         ? '群'
-        : isRawIdTitle(conversation.title)
-          /* 平台没给昵称时，拿首字做头像会得到括号/数字，用人形图标更稳 */
-          ? <UserOutlined />
-          : initials(title);
+        : initials(title);
 
   return (
     <article
