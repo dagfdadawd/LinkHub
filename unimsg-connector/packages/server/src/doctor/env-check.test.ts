@@ -109,3 +109,9 @@ test('身份能力新变量进入已知白名单（不会被误报为拼写错�
   assert.equal(typo.length, 1);
   assert.equal(typo[0]!.suggestion, 'DWS_BIN');
 });
+
+test('LLM_BASE_URL 是 GUI 的兼容别名，不应再被当成拼错变量', () => {
+  assert.equal(isKnownEnvKey('LLM_BASE_URL'), true);
+  assert.equal(isKnownEnvKey('LLM_ENDPOINT'), true);
+  assert.equal(findSuspiciousEnvVars({ LLM_BASE_URL: 'https://ark.cn-beijing.volces.com/api/v3' }).length, 0);
+});

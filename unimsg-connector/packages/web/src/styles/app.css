@@ -3887,12 +3887,13 @@ html.vt-morph .detail {
   }
 }
 
-/* ---------------- Toast：右下角玻璃条 ----------------
-   antd 默认把 message 放在顶部居中，读起来像后台系统。
-   挪到右下 + 半透明 + 同一条缓动曲线，跟抽屉/面板的语言一致。 */
+/* ---------------- Toast：顶栏下方右侧玻璃条 ----------------
+   antd 默认把 message 放在顶部居中，读起来像后台系统；半透明玻璃条跟抽屉/面板的语言一致。
+   原先钉在右下角会压住详情页回复区的「发送 / 添加文件」按钮，
+   因此统一抬到顶栏下方右侧：既不遮底部主操作，也不盖住顶栏按钮。 */
 .ant-message {
-  top: auto !important;
-  bottom: calc(22px + env(safe-area-inset-bottom, 0px));
+  top: calc(var(--header-h) + 12px) !important;
+  bottom: auto !important;
   left: auto !important;
   right: 22px;
   inset-inline-start: auto !important;
@@ -4345,10 +4346,11 @@ html.vt-morph .detail {
     padding: 0 8px;
   }
 
-  /* Toast 不能被底部导航压住：抬到导航之上 */
+  /* 移动端同样固定在顶栏下方：底部留给底部导航与回复操作区 */
   .ant-message {
     right: 14px;
-    bottom: calc(58px + env(safe-area-inset-bottom, 0px) + 14px);
+    top: calc(var(--header-h) + 10px) !important;
+    bottom: auto !important;
   }
 }
 
@@ -6257,6 +6259,18 @@ html.vt-morph .detail {
 
 .ai-draft.is-pending {
   color: var(--text-3);
+}
+
+/* 低精度提示：结果仍来自模型，只作温和提醒，不用告警红 */
+.ai-precision {
+  margin: 8px 0 0;
+  padding: 6px 10px;
+  border-radius: var(--r-6);
+  background: var(--warning-soft);
+  border: 1px solid color-mix(in srgb, var(--warning) 32%, transparent);
+  color: var(--warning);
+  font-size: 0.75rem;
+  line-height: 1.6;
 }
 
 .ai-panel__actions {

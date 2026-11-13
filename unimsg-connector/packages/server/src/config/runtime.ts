@@ -632,8 +632,12 @@ function capability(platform: Platform, input: RuntimeBuildInput): CapabilityRes
   if (platform === Platform.DINGTALK) {
     if (!p.dingtalk.appKey) missing.push('DINGTALK_CLIENT_ID');
     if (!p.dingtalk.appSecret) missing.push('DINGTALK_CLIENT_SECRET');
+    // 仅本人身份部署：机器人接收通道有意关闭，HTTP 回调用 AES Token/Key 根本不需要，
+    // 既不能算「缺失」，也不能说「暂时收不到消息」（收信由 dws 本人事件流承担）。
+    // canReceive 仍如实表示「机器人凭据能否收信」，绝不因为策略切换就假装能收。
+    const personalOnly = (input.env.DINGTALK_IDENTITY ?? '').trim().toLowerCase() === 'user';
     // AES Token/Key 仅在 HTTP 回调模式需要；开了 Stream 长连接就不算缺失（否则启动日志会误报）
-    if (!p.dingtalk.stream) {
+    if (!p.dingtalk.stream && !personalOnly) {
       if (!p.dingtalk.aesToken) missing.push('DINGTALK_AES_TOKEN');
       if (!p.dingtalk.aesKey) missing.push('DINGTALK_AES_KEY');
     }
@@ -642,7 +646,9 @@ function capability(platform: Platform, input: RuntimeBuildInput): CapabilityRes
     const canReceive = Boolean(p.dingtalk.appKey && p.dingtalk.appSecret && (p.dingtalk.stream || (p.dingtalk.aesToken && p.dingtalk.aesKey)));
     if (canSend && !p.dingtalk.robotCode) warnings.push('缺少 DINGTALK_ROBOT_CODE，无法真实发送');
     if (!p.dingtalk.stream && !(p.dingtalk.aesToken && p.dingtalk.aesKey)) {
-      warnings.push('未开启 DINGTALK_STREAM，且没有配 HTTP 回调的 Token/AES Key：暂时收不到消息');
+      warnings.push(personalOnly
+        ? '已按「仅本人身份」关闭机器人收信（DINGTALK_STREAM=false）：收信由 dws 本人事件流承担，避免与机器人 Stream 重复入库；模式表「收信」列只统计机器人通道，真实收信以 doctor 的本人身份探针为准'
+        : '未开启 DINGTALK_STREAM，且没有配 HTTP 回调的 Token/AES Key：暂时收不到消息');
     }
     if (p.dingtalk.stream) warnings.push('已开启 Stream 长连接（本机无需公网回调）');
     return { configured: Boolean(p.dingtalk.appKey && p.dingtalk.appSecret), canSend, canReceive, missing, warnings };
@@ -766,7 +772,59 @@ export const DEFAULT_LLM_ENDPOINT = 'https://api.xiaomimimo.com/v1';
 export const DEFAULT_LLM_MODEL = 'mimo-v2.6-flash';
 /** 实测 MiMo flash 单次 2.9–9.3s，8s 会把长尾全部打成降级 */
 export const DEFAULT_LLM_TIMEOUT_MS = 15000;
+/** 精度分档线：低于它标 low（仍采用模型结果），高于等于标 high；不再决定是否回退规则 */
 export const DEFAULT_LLM_MIN_CONFIDENCE = 0.6;
+
+/**
+ * GUI 里「AI 模型服务商」常被填成厂商显示名（火山引擎 / DeepSeek / 智谱…），
+ * 但代码只需区分「规则」与「OpenAI 兼容协议」。这里把厂商名归一到协议，
+ * 避免用户填对厂商却因为不叫 `openai` 被静默降级成规则识别。
+ * 文心等**非** OpenAI 兼容的服务故意不收，仍按「不支持」显式降级。
+ */
+const LLM_PROVIDER_ALIASES: Readonly<Record<string, LlmProviderPolicy>> = {
+  mock: 'mock', rules: 'mock', rule: 'mock', off: 'mock', none: 'mock', disabled: 'mock',
+  '规则': 'mock', '内置规则': 'mock', '不使用': 'mock',
+  openai: 'openai', openaicompatible: 'openai', azure: 'openai', azureopenai: 'openai',
+  custom: 'openai', '自定义': 'openai', '兼容': 'openai',
+  mimo: 'openai', xiaomi: 'openai', xiaomimimo: 'openai', '小米': 'openai', '小米mimo': 'openai',
+  deepseek: 'openai', '深度求索': 'openai',
+  qwen: 'openai', tongyi: 'openai', dashscope: 'openai', aliyun: 'openai',
+  '通义': 'openai', '通义千问': 'openai', '阿里云': 'openai',
+  zhipu: 'openai', glm: 'openai', bigmodel: 'openai', '智谱': 'openai', '智谱清言': 'openai',
+  volcengine: 'openai', volces: 'openai', ark: 'openai', doubao: 'openai',
+  '火山': 'openai', '火山引擎': 'openai', '火山方舟': 'openai', '豆包': 'openai', '豆包大模型': 'openai',
+  moonshot: 'openai', kimi: 'openai', '月之暗面': 'openai',
+  siliconflow: 'openai', '硅基流动': 'openai', baichuan: 'openai', '百川': 'openai',
+  minimax: 'openai', stepfun: 'openai', '阶跃星辰': 'openai',
+};
+
+/** 把用户填的 provider 归一为协议类型；空 = 规则识别，未知 = 显式不支持 */
+export function normalizeLlmProvider(raw: string | undefined): LlmProviderPolicy | 'unsupported' {
+  const text = (raw ?? '').trim();
+  if (!text) return 'mock';
+  const lower = text.toLowerCase();
+  const compact = lower.replace(/[\s._-]+/g, '');
+  return LLM_PROVIDER_ALIASES[lower] ?? LLM_PROVIDER_ALIASES[compact] ?? 'unsupported';
+}
+
+/** 按 endpoint 推断真实厂商，写进 trace / 前端来源标签，绝不固定写「MiMo」冒充 */
+export function inferLlmProvider(endpoint: string): { provider: string; label: string } {
+  let host = '';
+  try {
+    host = new URL(endpoint).hostname.toLowerCase();
+  } catch {
+    host = endpoint.toLowerCase();
+  }
+  if (host.includes('xiaomimimo')) return { provider: 'mimo', label: 'MiMo' };
+  if (/volces|volcengine|ark\./.test(host)) return { provider: 'volcengine', label: '火山方舟' };
+  if (host.includes('deepseek')) return { provider: 'deepseek', label: 'DeepSeek' };
+  if (/dashscope|aliyuncs/.test(host)) return { provider: 'qwen', label: '通义千问' };
+  if (/bigmodel|zhipu/.test(host)) return { provider: 'zhipu', label: '智谱' };
+  if (/moonshot|kimi/.test(host)) return { provider: 'moonshot', label: 'Moonshot' };
+  if (host.includes('api.openai.com')) return { provider: 'openai', label: 'OpenAI' };
+  if (/siliconflow/.test(host)) return { provider: 'siliconflow', label: '硅基流动' };
+  return { provider: 'openai-compatible', label: host ? `OpenAI 兼容（${host}）` : 'OpenAI 兼容' };
+}
 
 export interface LlmRuntime {
   /** 配置意图（用户填的 LLM_PROVIDER） */
@@ -775,9 +833,14 @@ export interface LlmRuntime {
   mode: LlmMode;
   /** 真实 provider 标识（写进 trace / doctor，便于回放时辨认） */
   provider: string;
+  /** 面向用户的厂商显示名（前端 AI 来源标签用；绝不固定写 MiMo） */
+  providerLabel: string;
   model: string;
   endpoint: string;
+  /** endpoint 实际来自哪个变量，doctor 排障时用 */
+  endpointFrom: 'LLM_ENDPOINT' | 'LLM_BASE_URL' | 'default';
   timeoutMs: number;
+  /** 精度分档线（不是「是否采用模型结果」的开关） */
   minConfidence: number;
   ready: boolean;
   /** 缺哪些环境变量（只含键名，绝不含密钥值） */
@@ -796,40 +859,55 @@ function unitFloat(raw: string | undefined, def: number): number {
 }
 
 export function resolveLlmRuntime(env: NodeJS.ProcessEnv): LlmRuntime {
-  const rawPolicy = (env.LLM_PROVIDER ?? '').trim().toLowerCase();
+  const rawPolicy = (env.LLM_PROVIDER ?? '').trim();
+  const policy = normalizeLlmProvider(rawPolicy);
   const apiKey = (env.LLM_API_KEY ?? '').trim();
   const model = (env.LLM_MODEL ?? '').trim() || DEFAULT_LLM_MODEL;
-  const endpoint = ((env.LLM_ENDPOINT ?? '').trim() || DEFAULT_LLM_ENDPOINT).replace(/\/+$/, '');
+
+  // GUI / 旧版 .env 写的是 LLM_BASE_URL，服务端历史上只读 LLM_ENDPOINT。
+  // 两个键都收，显式 LLM_ENDPOINT 优先；都不填才回默认 MiMo 端点。
+  const explicitEndpoint = (env.LLM_ENDPOINT ?? '').trim();
+  const legacyEndpoint = (env.LLM_BASE_URL ?? '').trim();
+  const endpointFrom: LlmRuntime['endpointFrom'] = explicitEndpoint
+    ? 'LLM_ENDPOINT'
+    : legacyEndpoint ? 'LLM_BASE_URL' : 'default';
+  const endpoint = (explicitEndpoint || legacyEndpoint || DEFAULT_LLM_ENDPOINT).replace(/\/+$/, '');
+
   const timeoutMs = positiveInt(env.LLM_TIMEOUT_MS, DEFAULT_LLM_TIMEOUT_MS);
   const minConfidence = unitFloat(env.LLM_MIN_CONFIDENCE, DEFAULT_LLM_MIN_CONFIDENCE);
+  const inferred = inferLlmProvider(endpoint);
 
   const base = {
-    provider: 'mimo',
+    provider: inferred.provider,
+    providerLabel: inferred.label,
     model,
     endpoint,
+    endpointFrom,
     timeoutMs,
     minConfidence,
   } as const;
 
-  if (!rawPolicy || rawPolicy === 'mock') {
+  if (policy === 'mock') {
     return {
       ...base,
       policy: 'mock',
       mode: 'mock',
       ready: false,
       missing: [],
-      reason: 'LLM_PROVIDER=mock：走内置规则识别（零密钥可演示）',
+      reason: rawPolicy
+        ? `LLM_PROVIDER=${rawPolicy}：走内置规则识别（零密钥可演示）`
+        : '未配置 LLM_PROVIDER（等价 mock）：走内置规则识别（零密钥可演示）',
     };
   }
 
-  if (rawPolicy !== 'openai') {
+  if (policy === 'unsupported') {
     return {
       ...base,
       policy: 'mock',
       mode: 'mock',
       ready: false,
       missing: [],
-      reason: `不支持的 LLM_PROVIDER=${rawPolicy}，仅支持 mock | openai；已降级为规则识别`,
+      reason: `不支持的 LLM_PROVIDER=${rawPolicy}，已降级为规则识别。该字段填的是「协议类型」而非厂商名：火山方舟 / DeepSeek / 通义 / 智谱等 OpenAI 兼容服务一律填 openai，厂商靠 LLM_ENDPOINT 区分`,
     };
   }
 
@@ -850,7 +928,7 @@ export function resolveLlmRuntime(env: NodeJS.ProcessEnv): LlmRuntime {
     mode: 'real',
     ready: true,
     missing: [],
-    reason: `真实大模型已就绪：${model} @ ${endpoint}`,
+    reason: `真实大模型已就绪：${model} @ ${endpoint}（${inferred.label}${endpointFrom === 'LLM_BASE_URL' ? '，端点来自兼容键 LLM_BASE_URL' : ''}）`,
   };
 }
 

@@ -149,7 +149,9 @@ export const FIELD_SPECS: readonly FieldSpec[] = [
   // LLM（可选）
   { path: 'llm.provider', env: 'LLM_PROVIDER', kind: 'string', maxLength: 64, label: 'AI 模型服务商' },
   { path: 'llm.apiKey', env: 'LLM_API_KEY', kind: 'secret', maxLength: 512, label: 'AI 模型 API Key' },
-  { path: 'llm.baseUrl', env: 'LLM_BASE_URL', kind: 'string', maxLength: 512, label: 'AI 模型 Base URL' },
+  // 服务端真实读取 LLM_ENDPOINT；LLM_BASE_URL 是 GUI / 旧版 .env 用过的兼容别名，
+  // 两者都登记，避免 doctor 报「写了但不会被读取」，也保证显式 .env 值仍优先。
+  { path: 'llm.baseUrl', env: ['LLM_ENDPOINT', 'LLM_BASE_URL'], kind: 'string', maxLength: 512, label: 'AI 模型 Base URL' },
   { path: 'llm.model', env: 'LLM_MODEL', kind: 'string', maxLength: 128, label: 'AI 模型名称' },
 ] as const;
 
@@ -578,7 +580,12 @@ export function applyConfigPatch(
       value = text;
     }
     const envKeys = Array.isArray(spec.env) ? spec.env : [spec.env];
-    const occupied = envKeys.filter((key) => (env[key] ?? '').trim() !== '');
+    // 启动时本地配置会「只补空」写进 process.env；这些值不是运维显式 .env，
+    // 不能算占用，否则 GUI 保存过一次、重启后就再也无法修改自己保存的配置。
+    const occupied = envKeys.filter((key) => {
+      const raw = (env[key] ?? '').trim();
+      return raw !== '' && !isLocalAppliedEnvValue(key, raw);
+    });
     if (occupied.length > 0) {
       ignoredByEnv.push(...occupied);
       // 身份策略仍保存到本地（供以后删掉 env 后生效）；凭据/模式直接跳过（避免误以为已覆盖）

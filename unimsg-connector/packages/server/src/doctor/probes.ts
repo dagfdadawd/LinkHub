@@ -66,6 +66,8 @@ export interface DingtalkProbeInput {
   aesKey: string;
   /** 是否开启 Stream 长连接（config.dingtalkStream） */
   stream: boolean;
+  /** 固定本人身份且本人接收已启用：此时机器人收信通道是有意关闭，不是故障 */
+  personalReceive?: boolean;
   baseUrl: string;
 }
 
@@ -556,6 +558,18 @@ export function dingtalkConfigChecks(input: DingtalkProbeInput): CheckResult[] {
       status: 'PASS',
       detail: '未开启 Stream，但已配置 DINGTALK_AES_TOKEN / DINGTALK_AES_KEY：走 HTTP 回调收消息，需要公网可访问的回调地址。',
     });
+  } else if (input.personalReceive) {
+    // 仅本人身份部署：机器人 Stream 与 dws 个人事件流是两条独立通道，同时开会重复入库，
+    // 因此「关掉机器人收信」是预期配置而不是故障。真实收信能力由下方本人身份探针判定。
+    checks.push({
+      group: Platform.DINGTALK,
+      id: 'dingtalk:stream',
+      title: '钉钉收消息通道（本人事件流）',
+      status: 'PASS',
+      detail:
+        'DINGTALK_STREAM=false 且未配置 HTTP 回调：机器人收信通道已按「仅本人身份」有意关闭，收信由 dws 本人事件流承担（与机器人 Stream 同时开会重复入库）。模式表的「收信」列只统计机器人凭据通道，请以「钉钉本人身份（dws CLI）」探针为准。',
+      hint: '收不到消息时先确认本人身份探针为 PASS、账号页钉钉本人身份已连接；要恢复机器人接收，把 .env 的 DINGTALK_STREAM 改回 true 并重启后端。',
+    });
   } else {
     checks.push({
       group: Platform.DINGTALK,
@@ -956,9 +970,18 @@ const LLM_PROBE_SAMPLE = '麻烦把 Q3 复盘的材料在周五下班前发我�
 
 function llmFailureHint(reason: string): string {
   if (/401|403/.test(reason)) return '鉴权失败：检查 LLM_API_KEY 是否正确、是否已过期。';
+  if (/404|does not exist|not activated|has not activated|model.*not.*found/i.test(reason)) {
+    return '模型 ID 或端点不存在 / 未开通：LLM_MODEL 必须填服务商控制台里的「模型 ID」（不是显示名，例如 doubao-seed-1-6-250615）；火山方舟还需在控制台「开通管理」里激活该模型，激活后重试。端点也要与该模型的协议路径一致。';
+  }
   if (/429/.test(reason)) return '被限流：稍后重试，或确认账户额度是否用尽。';
   if (/timeout/i.test(reason)) return '超时：检查网络/代理是否可达，或调大 LLM_TIMEOUT_MS（真实 flash P100 约 9.3s）。';
-  if (/invalid_json|missing_fields|invalid_intent|invalid_confidence|empty_content/.test(reason)) {
+  if (/empty_content/.test(reason)) {
+    return '模型返回空正文：推理模型（豆包 seed / R1 一类）默认开启深度思考，会把输出预算全部耗在思维链上，返回 content="" + finish_reason=length。服务端已对火山方舟自动传 thinking:{"type":"disabled"}，并在被截断时自动放大输出预算重试一次；若仍失败，请改用非推理/更快档模型，或确认该模型支持关闭思考。';
+  }
+  if (/low_confidence/.test(reason)) {
+    return '模型返回了合法结果但置信不足：这不是接口故障，也不再回退规则。低把握的结果仍会被采用，只是标为「低精度」、草稿更简短；先用一条信息量明确的业务消息（如「请在本周五前把周报发给我」）复测，纯数字/问候语被判低精度属正常。若所有消息都低精度，再检查 LLM_MIN_CONFIDENCE（默认 0.6，现为精度分档线）是否设得过高，或换用更强的模型。';
+  }
+  if (/invalid_json|missing_fields|invalid_intent|invalid_confidence/.test(reason)) {
     return '模型没有按 JSON 约束输出：检查 LLM_MODEL 是否存在，或换用更强的模型。';
   }
   if (/network|ENOTFOUND|ECONNREFUSED|fetch failed/i.test(reason)) {
@@ -979,7 +1002,7 @@ export async function probeLlm(input: LlmProbeInput, timeoutMs = LLM_PROBE_TIMEO
       ...base,
       status: 'SKIP',
       detail: `当前走内置规则识别，未调用大模型。${input.reason ?? ''}`.trim(),
-      hint: '启用真实大模型：在 .env 设 LLM_PROVIDER=openai 与 LLM_API_KEY；默认端点为 https://api.xiaomimimo.com/v1、模型 mimo-v2.6-flash。',
+      hint: '启用真实大模型：在「连接账号 → AI 模型」填 提供方=openai（火山方舟 / DeepSeek / 通义 / 智谱等 OpenAI 兼容服务都填 openai，不要填厂商中文名）、API Key、API Base URL、模型 ID，保存后重启后端；等价 .env：LLM_PROVIDER=openai、LLM_API_KEY、LLM_ENDPOINT、LLM_MODEL。模型 ID 要填控制台里的 ID 且该模型已开通，改配置必须重启才生效。',
     };
   }
 
@@ -1297,7 +1320,11 @@ export async function runProbes(input: ProbeInput, options: RunProbesOptions = {
     const runtime = runtimeOf(Platform.DINGTALK);
     if (shouldProbe(runtime)) {
       checks.push(await probeDingtalkToken(input.dingtalk, timeoutMs));
-      checks.push(...dingtalkConfigChecks(input.dingtalk));
+      checks.push(...dingtalkConfigChecks({
+        ...input.dingtalk,
+        personalReceive: input.identity?.dingtalk.policy === 'user'
+          && input.identity.dingtalk.receiveEnabled,
+      }));
     } else {
       checks.push(skipProbe(Platform.DINGTALK, runtime));
     }

@@ -21,15 +21,32 @@ export function AiSuggestion({
   message,
   onUseDraft,
   onRegenerate,
+  regenerating = false,
 }: {
   message: UnifiedMessage;
   onUseDraft: (draft: string) => void;
   onRegenerate: () => void;
+  /** 后端正在重新分析：按钮进入 loading，避免连点重复调用模型 */
+  regenerating?: boolean;
 }) {
   const { message: toast } = AntApp.useApp();
   const [open, setOpen] = useState(true);
   const pending = !message.intent;
   const fallback = !message.intent || message.intent === '未分类';
+
+  // 来源标签取消息上记录的「当时」厂商，绝不固定写 MiMo；旧数据没有记录就只说「大模型识别」
+  const sourceIsLlm = message.intentSource === 'llm';
+  // 低精度仍来自真实模型：只提示「信息不足、草稿偏短」，绝不写成规则兜底
+  const lowPrecision = sourceIsLlm && message.aiPrecision === 'low';
+  const confidenceText = typeof message.aiConfidence === 'number'
+    ? `${Math.round(message.aiConfidence * 100)}%`
+    : '较低';
+  const sourceLabel = sourceIsLlm
+    ? (message.aiProvider ? `${message.aiProvider} 识别` : '大模型识别')
+    : '规则兜底';
+  const sourceTitle = sourceIsLlm
+    ? `由真实大模型识别${message.aiModel ? `（模型 ${message.aiModel}）` : ''}${lowPrecision ? '；本次信息量较少，属低精度结果' : ''}`
+    : '真实模型不可用，已回退关键词规则';
 
   /** 建议动作：按现有状态做确定性推断，不是模型输出，所以单独标注 */
   const nextAction = message.needsReview
@@ -74,10 +91,10 @@ export function AiSuggestion({
             意图 <IntentTag intent={message.intent} />
             {message.intentSource && (
               <span
-                className={`ai-panel__source${message.intentSource === 'llm' ? ' is-llm' : ''}`}
-                title={message.intentSource === 'llm' ? '由真实大模型识别' : '真实模型不可用，已回退关键词规则'}
+                className={`ai-panel__source${sourceIsLlm ? ' is-llm' : ''}`}
+                title={sourceTitle}
               >
-                {message.intentSource === 'llm' ? 'MiMo 识别' : '规则兜底'}
+                {sourceLabel}
               </span>
             )}
           </span>
@@ -99,7 +116,11 @@ export function AiSuggestion({
                   ) : (
                     <>
                       <IntentTag intent={message.intent} />
-                      {fallback && <span className="ai-facts__muted">未识别，已回退未分类</span>}
+                      {fallback && (
+                        <span className="ai-facts__muted">
+                          {sourceIsLlm ? '信息不足，模型暂未归类' : '未识别，已回退未分类'}
+                        </span>
+                      )}
                     </>
                   )}
                 </dd>
@@ -132,6 +153,11 @@ export function AiSuggestion({
                 ? '正在根据消息内容生成回复草稿…'
                 : message.replyDraft || '暂无草稿，可直接在下方输入回复。'}
             </div>
+            {lowPrecision && (
+              <p className="ai-precision" role="note">
+                信息量较少 · 模型把握 {confidenceText}，草稿偏简短、精度较低，建议补充上下文后再发送
+              </p>
+            )}
             <div className="ai-panel__actions">
               <Button
                 size="small"
@@ -153,12 +179,21 @@ export function AiSuggestion({
               </Button>
               <Tooltip
                 title={
-                  message.intentSource === 'llm'
-                    ? '重新分析并生成草稿'
-                    : '当前使用关键词规则，未调用大模型；重新生成前请先在 .env 配置 LLM'
+                  sourceIsLlm
+                    ? (lowPrecision
+                      ? '用当前 AI 配置重新生成；信息量较少时结果仍来自模型，只是更简短，不会回退规则'
+                      : '用当前 AI 配置重新分析并生成草稿（会真实调用一次模型）')
+                    : '用当前 AI 配置重新分析；若仍显示「规则兜底」，请到「连接账号 → AI 模型」检查服务商 / 端点 / 模型 ID / Key，保存后重启后端'
                 }
               >
-                <Button size="small" type="text" icon={<ReloadOutlined />} onClick={onRegenerate}>
+                <Button
+                  size="small"
+                  type="text"
+                  icon={<ReloadOutlined />}
+                  loading={regenerating}
+                  disabled={regenerating}
+                  onClick={onRegenerate}
+                >
                   重新生成
                 </Button>
               </Tooltip>

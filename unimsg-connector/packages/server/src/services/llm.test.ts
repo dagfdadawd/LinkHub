@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { Platform, MsgStatus, type UnifiedMessage } from '@unimsg/shared';
-import { LlmService, type LlmServiceOptions } from './llm';
+import { LlmService, DEFAULT_MAX_COMPLETION_TOKENS, shouldDisableThinking, type LlmServiceOptions } from './llm';
 
 function msg(body: string): UnifiedMessage {
   return {
@@ -108,6 +108,7 @@ test('real 模式：合法 JSON → 采用模型结果并标注来源 / 模型 /
     assert.equal(r.summary, '周五前交 Q3 复盘材料');
     assert.equal(r.replyDraft, '收到，周五前发你。');
     assert.equal(r.confidence, 0.93);
+    assert.equal(r.precision, 'high');
     assert.equal(r.model, 'mimo-v2.6-flash');
     assert.equal(r.tokens, 140);
     assert.ok((r.latencyMs ?? -1) >= 0);
@@ -158,15 +159,37 @@ test('real 模式：intent 不在枚举内 → 回退规则，不把脏值写进
   }
 });
 
-test('real 模式：置信度低于阈值 → 回退规则并标明 low_confidence', async () => {
+test('real 模式：低置信仍采用模型结果，只标为低精度（绝不回退规则）', async () => {
   const fake = await fakeOpenAI((_b, res) =>
-    reply(res, JSON.stringify({ intent: '通知', confidence: 0.41, summary: 'x', replyDraft: 'y' })));
+    reply(res, JSON.stringify({
+      intent: '未分类', confidence: 0.3,
+      summary: '仅发送数字，意图不明', replyDraft: '请问您具体需要什么？',
+    })));
   try {
-    const r = await new LlmService(opts(fake.url)).analyze(msg('系统升级'));
+    const r = await new LlmService(opts(fake.url)).analyze(msg('1'));
     assert.equal(r.ok, true);
     if (!r.ok) return;
-    assert.equal(r.source, 'rules');
-    assert.equal(r.fallbackReason, 'low_confidence');
+    assert.equal(r.source, 'llm', '模型成功响应就必须有 AI 建议');
+    assert.equal(r.precision, 'low');
+    assert.equal(r.confidence, 0.3);
+    assert.equal(r.intent, '未分类');
+    assert.equal(r.replyDraft, '请问您具体需要什么？', '草稿必须原样采用，不能换成规则模板');
+    assert.equal(r.fallbackReason, undefined, '低精度不是回退，不能带 fallbackReason');
+  } finally {
+    await fake.close();
+  }
+});
+
+test('real 模式：高置信标为高精度；阈值只分档，不影响是否采用', async () => {
+  const fake = await fakeOpenAI((_b, res) => reply(res, GOOD));
+  try {
+    const svc = new LlmService(opts(fake.url, { minConfidence: 0.99 }));
+    const r = await svc.analyze(msg('周五前交周报'));
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    assert.equal(r.source, 'llm', '即使阈值调到 0.99，0.93 也不能被丢弃');
+    assert.equal(r.precision, 'low', '只降级为低精度，不回退规则');
+    assert.equal(r.replyDraft, '收到，周五前发你。');
   } finally {
     await fake.close();
   }
@@ -246,4 +269,118 @@ test('规则失败标记 [[FAIL_LLM]] 仍返回 ok:false（保留原降级语义
   assert.equal(r.ok, false);
   if (r.ok) return;
   assert.equal(r.reason, 'mock_llm_failure');
+});
+
+test('real 模式：404 保留服务商响应体，模型不存在 / 未开通可定位', async () => {
+  const fake = await fakeOpenAI((_b, res) => {
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: { message: 'Your account has not activated the model doubao-seed' } }));
+  });
+  try {
+    const r = await new LlmService(opts(fake.url)).analyze(msg('周报'));
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    assert.equal(r.source, 'rules');
+    assert.match(r.fallbackReason ?? '', /http_404/);
+    assert.match(r.fallbackReason ?? '', /has not activated the model/);
+  } finally {
+    await fake.close();
+  }
+});
+
+/** 推理模型：输出预算全被思维链吃掉，content 为空、finish_reason=length */
+function reasoningOnlyReply(res: ServerResponse): void {
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({
+    choices: [{
+      index: 0,
+      finish_reason: 'length',
+      message: { role: 'assistant', content: '', reasoning_content: '先分析一下这条消息…' },
+    }],
+    usage: { completion_tokens: 400, completion_tokens_details: { reasoning_tokens: 400 }, total_tokens: 528 },
+  }));
+}
+
+test('real 模式：推理模型耗尽输出预算 → 自动放大预算重试并采用模型结果', async () => {
+  const budgets: number[] = [];
+  const fake = await fakeOpenAI((body, res, attempt) => {
+    budgets.push(Number(body?.max_completion_tokens));
+    if (attempt === 1) {
+      reasoningOnlyReply(res);
+      return;
+    }
+    reply(res, GOOD);
+  });
+  try {
+    const r = await new LlmService(opts(fake.url)).analyze(msg('周报'));
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    assert.equal(r.source, 'llm');
+    assert.equal(r.intent, '待办');
+    assert.equal(fake.calls(), 2);
+    assert.deepEqual(budgets, [DEFAULT_MAX_COMPLETION_TOKENS, DEFAULT_MAX_COMPLETION_TOKENS * 3]);
+  } finally {
+    await fake.close();
+  }
+});
+
+test('real 模式：两次都只有思维链 → 回退规则，原因带 finish_reason / reasoning_tokens', async () => {
+  const fake = await fakeOpenAI((_b, res) => reasoningOnlyReply(res));
+  try {
+    const r = await new LlmService(opts(fake.url)).analyze(msg('周报'));
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    assert.equal(r.source, 'rules');
+    assert.equal(fake.calls(), 2);
+    assert.match(r.fallbackReason ?? '', /empty_content/);
+    assert.match(r.fallbackReason ?? '', /finish_reason=length/);
+    assert.match(r.fallbackReason ?? '', /reasoning_tokens=400/);
+  } finally {
+    await fake.close();
+  }
+});
+
+test('real 模式：空正文且非 length → 不重试，直接回退并给诊断', async () => {
+  const fake = await fakeOpenAI((_b, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      choices: [{ finish_reason: 'stop', message: { content: '', reasoning_content: '…' } }],
+      usage: { completion_tokens: 300, completion_tokens_details: { reasoning_tokens: 300 } },
+    }));
+  });
+  try {
+    const r = await new LlmService(opts(fake.url)).analyze(msg('周报'));
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    assert.equal(r.source, 'rules');
+    assert.equal(fake.calls(), 1);
+    assert.match(r.fallbackReason ?? '', /empty_content/);
+    assert.match(r.fallbackReason ?? '', /reasoning_tokens=300/);
+  } finally {
+    await fake.close();
+  }
+});
+
+test('real 模式：content 为多模态文本片段数组时也能解析', async () => {
+  const fake = await fakeOpenAI((_b, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      choices: [{ finish_reason: 'stop', message: { content: [{ type: 'text', text: GOOD }] } }],
+    }));
+  });
+  try {
+    const r = await new LlmService(opts(fake.url)).analyze(msg('周报'));
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    assert.equal(r.source, 'llm');
+    assert.equal(r.intent, '待办');
+  } finally {
+    await fake.close();
+  }
+});
+
+test('火山方舟 + 豆包模型关闭深度思考，其它服务商不会误加私有参数', () => {
+  assert.equal(shouldDisableThinking('https://ark.cn-beijing.volces.com/api/v3', 'doubao-seed-2-1-lite-260915'), true);
+  assert.equal(shouldDisableThinking('https://api.deepseek.com/v1', 'deepseek-reasoner'), false);
+  assert.equal(shouldDisableThinking('https://ark.cn-beijing.volces.com/api/v3', 'deepseek-r1'), false);
 });

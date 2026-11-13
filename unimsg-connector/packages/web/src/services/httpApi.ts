@@ -34,6 +34,7 @@ import type {
   MessageApi,
   MessageFilter,
   OnboardingView,
+  ReanalyzeResult,
   ReplyAck,
   TraceResult,
 } from './api';
@@ -229,6 +230,29 @@ export class HttpApi implements MessageApi {
       body: JSON.stringify(patch),
     });
     return normalizeAppConfigSaveResult(body);
+  }
+
+  /** 重新生成 AI 建议：后端返回完整消息 + 当前 LLM 通道结论，兼容旧后端只回 {ok:true} */
+  async reanalyze(id: string): Promise<ReanalyzeResult> {
+    const body = await this.request<{
+      data?: UnifiedMessage;
+      llm?: {
+        mode?: string; reason?: string; providerLabel?: string;
+        precision?: 'high' | 'low'; confidence?: number;
+      };
+    }>(`/api/messages/${encodeURIComponent(id)}/reanalyze`, { method: 'POST', body: '{}' });
+    const message = body.data ?? await this.get(id);
+    if (!message) throw new ApiError('资源不存在', 404);
+    return {
+      message,
+      llm: {
+        mode: body.llm?.mode === 'real' ? 'real' : 'mock',
+        reason: body.llm?.reason ?? '',
+        providerLabel: body.llm?.providerLabel ?? '',
+        precision: body.llm?.precision,
+        confidence: body.llm?.confidence,
+      },
+    };
   }
 
   async markDone(id: string): Promise<UnifiedMessage> {

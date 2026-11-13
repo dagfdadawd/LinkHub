@@ -189,6 +189,26 @@ test('mode：只配钉钉 → 钉钉 real，其余 mock（可替换性的关键�
   assert.match(rt[Platform.DINGTALK].reason, /真实接口/);
 });
 
+test('钉钉：仅本人身份关闭机器人 Stream → 不再误报缺 AES / 收不到消息，canReceive 仍如实为 false', () => {
+  const env = {
+    DINGTALK_CLIENT_ID: 'ding1',
+    DINGTALK_CLIENT_SECRET: 'secret1',
+    DINGTALK_STREAM: 'false',
+    DINGTALK_IDENTITY: 'user',
+  };
+  const personal = runtimeOf(env)[Platform.DINGTALK];
+  assert.equal(personal.mode, 'real', '凭据齐全，auto 仍走真实通道');
+  assert.equal(personal.canReceive, false, '机器人凭据确实不能收，绝不假装成功');
+  assert.deepEqual(personal.missing, [], '仅本人身份不需要 HTTP 回调 AES Token/Key');
+  assert.match(personal.warnings.join('|'), /dws 本人事件流/);
+  assert.doesNotMatch(personal.warnings.join('|'), /暂时收不到消息/);
+
+  // 未固定本人身份时保持原诊断口径
+  const bot = runtimeOf({ ...env, DINGTALK_IDENTITY: 'auto' })[Platform.DINGTALK];
+  assert.deepEqual(bot.missing, ['DINGTALK_AES_TOKEN', 'DINGTALK_AES_KEY']);
+  assert.match(bot.warnings.join('|'), /暂时收不到消息/);
+});
+
 test('mode：显式 mock 即使有凭据也走本地模拟（绝不偷偷打真实接口）', () => {
   const rt = runtimeOf({
     FEISHU_MODE: 'mock',
@@ -365,6 +385,49 @@ test('LLM：不支持的 provider 明确降级，不静默当成真实', () => {
   assert.equal(r.mode, 'mock');
   assert.equal(r.ready, false);
   assert.match(r.reason, /wenxin|不支持/);
+  assert.match(r.reason, /协议类型/);
+  assert.match(r.reason, /openai/);
+});
+
+test('LLM：厂商中文名 / 别名归一为 OpenAI 兼容协议，不再因名字不对而降级', () => {
+  for (const provider of ['火山引擎', '火山方舟', 'DeepSeek', '通义千问', '智谱', '自定义']) {
+    const r = resolveLlmRuntime({ LLM_PROVIDER: provider, LLM_API_KEY: 'sk-test' });
+    assert.equal(r.mode, 'real', `${provider} 应识别为真实模式`);
+    assert.equal(r.policy, 'openai');
+  }
+});
+
+test('LLM：按端点推断真实厂商名，AI 来源标签不再固定写 MiMo', () => {
+  const r = resolveLlmRuntime({
+    LLM_PROVIDER: 'openai',
+    LLM_API_KEY: 'sk-test',
+    LLM_ENDPOINT: 'https://ark.cn-beijing.volces.com/api/v3',
+    LLM_MODEL: 'doubao-seed-1-6-250615',
+  });
+  assert.equal(r.provider, 'volcengine');
+  assert.equal(r.providerLabel, '火山方舟');
+  assert.equal(r.endpointFrom, 'LLM_ENDPOINT');
+  assert.equal(r.model, 'doubao-seed-1-6-250615');
+  assert.match(r.reason, /火山方舟/);
+});
+
+test('LLM：GUI 写的 LLM_BASE_URL 会被读取，显式 LLM_ENDPOINT 优先', () => {
+  const legacy = resolveLlmRuntime({
+    LLM_PROVIDER: 'openai', LLM_API_KEY: 'sk-test',
+    LLM_BASE_URL: 'https://ark.cn-beijing.volces.com/api/v3/',
+  });
+  assert.equal(legacy.endpoint, 'https://ark.cn-beijing.volces.com/api/v3');
+  assert.equal(legacy.endpointFrom, 'LLM_BASE_URL');
+  assert.equal(legacy.providerLabel, '火山方舟');
+
+  const both = resolveLlmRuntime({
+    LLM_PROVIDER: 'openai', LLM_API_KEY: 'sk-test',
+    LLM_ENDPOINT: 'https://api.deepseek.com/v1',
+    LLM_BASE_URL: 'https://ark.cn-beijing.volces.com/api/v3',
+  });
+  assert.equal(both.endpoint, 'https://api.deepseek.com/v1');
+  assert.equal(both.endpointFrom, 'LLM_ENDPOINT');
+  assert.equal(both.providerLabel, 'DeepSeek');
 });
 
 
