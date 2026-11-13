@@ -263,7 +263,7 @@ received → processing → replied → sent → synced
 LinkHub-test/
 ├── README.md
 ├── LICENSE
-├── start.bat                  # Windows 一键启动（local / mock / accounts / doctor / docker / stop / stopdocker）
+├── start.bat                  # Windows 一键启动（local / mock / accounts / doctor / docker / stop / stopdocker / restart / ports）
 ├── start-docker.bat           # 双击快捷方式：等价于 start.bat docker
 ├── setup-accounts.bat         # 双击快捷方式：等价于 start.bat accounts（编辑平台账号 .env）
 ├── docs/
@@ -334,10 +334,12 @@ LinkHub-test/
 | 配置 / 修改平台账号 | 双击 `setup-accounts.bat`（或 `start.bat accounts`） | 已有 `.env` 原样打开、没有则从模板创建，用记事本编辑 |
 | 账号自检 | `start.bat doctor` | 只读自检：凭据 / 收发能力 / 出口公网 IP / 中文修复建议 |
 | Docker 一键启动 | 双击 `start-docker.bat`（或 `start.bat docker`） | `docker compose up -d --build`，同源访问 `http://127.0.0.1:<HOST_PORT，默认 3001>` |
-| 停止本地服务 | `start.bat stop` | 结束**占用后端端口（读 `.env` 的 `SERVER_PORT`，默认 3001）与 5173 的进程**。它按端口找占用者，**可能是别的程序，会被一并结束**；不确定时直接关掉那两个服务控制台窗口更安全 |
+| 重启本地服务（改了代码 / `.env`） | `start.bat restart` | **只结束 LinkHub 自己的旧进程**（按监听进程的命令行识别，不会误杀别人的程序），然后重新启动并打开浏览器 |
+| 查端口被谁占着 | `start.bat ports` | 只读：按端口列出占用进程并标明「LinkHub / 别的程序」，不结束任何进程 |
+| 停止本地服务 | `start.bat stop` | 结束**占用后端端口（读 `.env` 的 `SERVER_PORT`，默认 3001）与 5173 的进程**。它按端口找占用者，**可能是别的程序，会被一并结束**；只想重启 LinkHub 请用 `start.bat restart`，或直接关掉那两个服务控制台窗口 |
 | 停止 Docker | `start.bat stopdocker` | `docker compose down`，数据卷保留 |
 
-脚本自动处理：Node ≥ 20 检测、无全局 pnpm 时回退 `corepack pnpm`、首次运行 `pnpm install --frozen-lockfile`、**统计 `.env` 里非空凭据组数并打印账号状态**（0 组就明确提示「全 Mock」，不会再出现「以为配了其实没配」）、每次启动重写 `packages/web/.env` 让 `VITE_API_TOKEN` 永远与后端 `API_TOKEN` 一致、`VITE_API_BASE` 指向当前 `SERVER_PORT`（避免 401 与端口漂移；指向非 `127.0.0.1` 的自定义 `VITE_API_BASE` 则不覆盖）、按 `SERVER_PORT` + 5173 做端口占用检查（重复双击不会起第二份；被别的程序占用时提示改 `SERVER_PORT` 或关掉该程序，而不是先强杀）、轮询 `/api/health` 与前端首页后再打开浏览器。启动器里的 Token 默认**打码显示**（形如 `dev-******`），完整值只在 `unimsg-connector/.env` 里。
+脚本自动处理：Node ≥ 20 检测、无全局 pnpm 时回退 `corepack pnpm`、首次运行 `pnpm install --frozen-lockfile`、**统计 `.env` 里非空凭据组数并打印账号状态**（0 组就明确提示「全 Mock」，不会再出现「以为配了其实没配」）、每次启动重写 `packages/web/.env` 让 `VITE_API_TOKEN` 永远与后端 `API_TOKEN` 一致、`VITE_API_BASE` 指向当前 `SERVER_PORT`（避免 401 与端口漂移；指向非 `127.0.0.1` 的自定义 `VITE_API_BASE` 则不覆盖）、按 `SERVER_PORT` + 5173 做端口占用检查：**占用者是 LinkHub 自己**（重复双击、上次窗口没关）时不再误报「被别的程序占用」，而是直接复用旧实例并打开浏览器，并提示用 `start.bat restart` 安全重启；**确实被别的程序占用**时提示改 `SERVER_PORT` 或关掉该程序，而不是先强杀；只有一侧残留 LinkHub 进程时提示 `start.bat restart`。端口归属由 `scripts\port-owner.mjs` 按监听进程的命令行 / 父进程链判断（`start.bat ports` 可只读查看），`restart` 只结束属于本仓库的进程。轮询 `/api/health` 与前端首页后再打开浏览器。启动器里的 Token 默认**打码显示**（形如 `dev-******`），完整值只在 `unimsg-connector/.env` 里。
 
 > **端口限制（如实说明）**：一键启动的**前端端口固定 5173**（`start.bat` 暂不支持改前端端口），后端端口可改 `.env` 的 `SERVER_PORT`。5173 被别的软件占用时脚本只会提示先关掉占用程序，不会自动换端口；确实要换前端端口，请手动起 `pnpm --filter @unimsg/web dev --port <端口>`（Vite 参数），并确保 `packages/web/.env` 的 `VITE_API_BASE` 指向后端实际端口、`VITE_API_TOKEN` 与后端 `API_TOKEN` 一致。
 > `start.bat` 的窗口提示是英文（cmd.exe 代码页限制，避免中文被拆成命令执行）；`Press any key to close THIS launcher window (services keep running)` 的意思是「按任意键只关这个启动器窗口，后端/前端服务继续运行」。完整中文说明以本文档为准。
@@ -703,6 +705,7 @@ pnpm install
 | `pnpm run deliver` | 交付打包：`git archive` 生成 zip，自动排除 `.env*` / 日志 / 状态文件 / `node_modules`（工作区不干净会拒绝） |
 | 双击 `start.bat` / `start-docker.bat` | Windows 一键启动：本地前后端 / Docker 单容器，自动装依赖、配环境变量、开浏览器（详见上文「Windows 一键启动」） |
 | `start.bat mock` / `start.bat accounts` / `start.bat doctor` | 强制离线 Mock / 打开账号配置 / 只读账号自检 |
+| `start.bat restart` / `start.bat ports` | 安全重启（只停 LinkHub 自己的旧进程）/ 只读查看端口占用者 |
 | `start.bat stop` / `start.bat stopdocker` | 一键停止本地服务 / Docker 栈 |
 | `docker compose up -d --build` | 在 `unimsg-connector/` 下执行，一键构建并启动独立部署容器（详见 [docs/deploy.md](docs/deploy.md)） |
 | `docker compose logs -f app` / `docker compose down` | 查看容器日志 / 停止并保留数据卷 |

@@ -125,6 +125,16 @@ test('markDone：待办标记完成', async () => {
   assert.equal(repo.get(message.traceId)!.done, true);
 });
 
+test('markTodo：普通消息可手动加入待办并写闭环日志', async () => {
+  const { svc, repo } = makeSvc();
+  const { message } = await svc.ingest(Platform.FEISHU, feishuSample);
+  repo.update(message.traceId, { type: 'text', done: true });
+  const updated = await svc.markTodo(message.traceId);
+  assert.equal(updated.type, 'todo');
+  assert.equal(updated.done, false);
+  assert.ok(svc.getLoopLog(message.traceId).some((entry) => entry.event === 'todo_added'));
+});
+
 // ---------------------------------------------------------------------------
 // P0：空/畸形事件守卫（不能写 trace、不能占幂等键）
 // ---------------------------------------------------------------------------

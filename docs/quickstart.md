@@ -4,7 +4,7 @@
 > 从交付包根目录开始，先 `cd unimsg-connector`；下文命令都在该目录下执行（仓库根目录没有 `package.json`，在根目录跑 `pnpm` 会报错）。
 > README 顶部也有同样的一张「30 秒选路径」表，两边内容一致。
 >
-> **Windows 用户更省事**：直接双击仓库根目录的 `start.bat`（或 `start-docker.bat` 走 Docker），脚本会自动完成下面的依赖安装、环境变量配置、启动后端与前端、打开浏览器；停止用 `start.bat stop`。详见 [README 的「Windows 一键启动」小节](../README.md)。
+> **Windows 用户更省事**：直接双击仓库根目录的 `start.bat`（或 `start-docker.bat` 走 Docker），脚本会自动完成下面的依赖安装、环境变量配置、启动后端与前端、打开浏览器；停止用 `start.bat stop`；改完代码 / `.env` 想重启用 `start.bat restart`（只停 LinkHub 自己的旧进程，不误杀别的程序）；想知道端口被谁占着用 `start.bat ports`。详见 [README 的「Windows 一键启动」小节](../README.md)。
 >
 > **账号配置只在 `unimsg-connector/.env`**，该文件被 `.gitignore` 排除，**clone / pull / 同步队友代码都不会带过来**，换工作区后会静默退回全 Mock。若发现「我明明配过」，把旧工作区的 `.env` 复制过来，或双击 `setup-accounts.bat` 重新填，再用 `start.bat doctor` 自检。
 
@@ -241,10 +241,10 @@ curl -H "Authorization: Bearer dev-token" http://127.0.0.1:3001/api/accounts
 | `pnpm: command not found` | 没装 pnpm 或没进 PATH | `corepack enable` → **重开终端** → `pnpm -v` 确认；或 `npm i -g pnpm@9`（只跑 `corepack pnpm install` 不够：依赖装了但 `pnpm` 仍不在 PATH） |
 | 首次 install 成功，前端却报 `Cannot find module ... rollup` | 依赖目录不完整（少见；本机曾出现一次，重装未复现） | 在 `unimsg-connector/` 下执行 `pnpm install --force` 后重启 Vite |
 | 报 Node 版本 / `tsx` 不兼容 | Node < 20 | 装 Node 20 或 22 LTS，重开终端再试 |
-| `启动失败：端口 3001 已被占用` | 上次进程没关 / 别的软件占用 | 改 `.env` 的 `SERVER_PORT=3101` 后重新 `start.bat`（它会自动同步前端 `VITE_API_BASE`，并用实际端口做健康检查）；手动起服务时再同步 `VITE_API_BASE`；确认占用者是 LinkHub 才用 `netstat -ano | findstr :3101` + `taskkill`（macOS/Linux 用 `lsof -i :3101` + `kill`）；e2e 用 `pnpm e2e -Port 3102` |
+| `启动失败：端口 3001 已被占用` | 上次进程没关 / 别的软件占用 | 先 `start.bat ports` 只读看占用者：是 LinkHub 就用 `start.bat restart`（只停自己的旧进程并重开，最安全）；是别的程序就改 `.env` 的 `SERVER_PORT=3101` 后重新 `start.bat`（它会自动同步前端 `VITE_API_BASE`，并用实际端口做健康检查）；手动起服务时再同步 `VITE_API_BASE`；确认占用者是 LinkHub 才用 `netstat -ano | findstr :3101` + `taskkill`（macOS/Linux 用 `lsof -i :3101` + `kill`）；e2e 用 `pnpm e2e -Port 3102` |
 | 配了账号，页面却全是 Mock | `.env` 放错目录（必须在 `unimsg-connector/.env`，仓库根的不加载）或变量名拼错（如 `FEISHU_APPID`） | 照 `.env.example` 检查拼写；`pnpm run doctor` 会提示「疑似拼错的变量」；改完**重启后端** |
 | 账号页显示「真实接口 / 已配置」，但实际发不出去 | **变量齐 ≠ 平台能连通**：假凭据 / 权限未开 / 租户策略 / 网络都会这样 | 以 `pnpm run doctor --platform=<平台>` 的 PASS/FAIL 为准；FAIL 会带错误码与修复建议。账号页只用来确认"填了/缺什么变量" |
-| 改了 `.env`，刷新页面没变化 | 后端只在启动时读 `.env` | **重启后端**（`start.bat stop` 后重开，或 `Ctrl+C` 后重新 `pnpm --filter @unimsg/server start`）；账号页会提示「.env 已修改，需要重启后端才生效」 |
+| 改了 `.env`，刷新页面没变化 | 后端只在启动时读 `.env` | **重启后端**（`start.bat restart` 最省事，它会只停 LinkHub 自己的旧进程再重开；或 `Ctrl+C` 后重新 `pnpm --filter @unimsg/server start`）；账号页会提示「.env 已修改，需要重启后端才生效」 |
 | 真实模式发送失败了，但不知道原因 | 之前失败原因只在回放日志里；现在已上浮 | 演示模式下回复成功 toast 为 **「已模拟发送（不会真的发到平台）…可在「全链路回放」查看状态回流」**；真实模式失败弹「发送失败：<原因>」+「查看详情」；消息详情失败区显示「原因：…」+「重试发送」/「查看闭环日志」（用同一条内容重试，不用改文案） |
 | `doctor` 里全是 SKIP | 当前是 Mock 状态，doctor 按约定不跑真实探针 | 不是失败；填好凭据会自动变 `real`，或显式设 `*_MODE=real` 强制自检 |
 | 接口 401 / 页面提示未授权 | 前端 `VITE_API_TOKEN` 与后端 `API_TOKEN` 不一致 | 两处改成同一个值（默认 `dev-token`），重启后端与 Vite |

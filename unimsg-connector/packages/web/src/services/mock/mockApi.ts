@@ -356,6 +356,11 @@ export class MockApi implements DemoApi {
     return this.patch(id, { done: true }, 'done');
   }
 
+  async markTodo(id: string): Promise<UnifiedMessage> {
+    await this.wait();
+    return this.patch(id, { type: 'todo', done: false }, 'todo_added', '用户手动加入待办');
+  }
+
   async markRead(id: string, read: boolean): Promise<UnifiedMessage> {
     await this.wait();
     const cur = this.messages.get(id);

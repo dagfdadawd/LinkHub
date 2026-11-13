@@ -5,6 +5,7 @@ import { Alert, App as AntApp, Avatar, Button, Dropdown, Tooltip } from 'antd';
 import type { MenuProps } from 'antd';
 import {
   ApiOutlined,
+  BgColorsOutlined,
   CheckSquareOutlined,
   DownOutlined,
   HistoryOutlined,
@@ -321,6 +322,17 @@ export function AppShell() {
           </div>
 
           <div className="cmdbar__actions">
+            <Tooltip title="返回浮光主界面">
+              <button
+                className="icon-btn"
+                type="button"
+                onClick={() => navigate('/')}
+                aria-label="返回浮光主界面"
+              >
+                <BgColorsOutlined />
+              </button>
+            </Tooltip>
+
             {state.demoMode && (
               <Dropdown menu={demoMenu} trigger={['click']}>
                 <button className="demo-btn" type="button">

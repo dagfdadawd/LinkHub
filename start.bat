@@ -17,14 +17,21 @@ rem    start.bat doctor           read-only account / credential self-check
 rem    start.bat docker           Docker mode: one container, host port from HOST_PORT (default 3001)
 rem    start.bat stop             end the processes owning backend port / 5173
 rem    start.bat stopdocker       docker compose down
+rem    start.bat restart          stop LinkHub's OWN old instance (never other
+rem                               programs), then start local mode again
+rem    start.bat ports            read-only: report who owns backend port / 5173
 rem    start-docker.bat           double-click shortcut for Docker mode
 rem    setup-accounts.bat         double-click shortcut for account setup
 rem
 rem  Backend port = SERVER_PORT in unimsg-connector\.env, default 3001.
-rem  Frontend port stays 5173 (Vite default). "stop" ends whoever OWNS those
-rem  ports, which may be an unrelated program - it is not project-scoped.
+rem  Frontend port stays 5173 (Vite default).
+rem  "restart" only stops processes proven to belong to this repository:
+rem  scripts\port-owner.mjs reads the command line / parent chain of whoever
+rem  listens on the port. "stop" still ends whoever OWNS the ports, which may
+rem  be an unrelated program - prefer "restart" when recycling LinkHub.
 rem
 rem  Double-click = local mode. No admin rights, no global pnpm required.
+rem  Set LINKHUB_NO_BROWSER=1 to skip opening the browser (automation / tests).
 rem  NOTE: .env is git-ignored on purpose. Cloning/syncing the repo never
 rem  brings platform credentials over - copy .env manually when switching
 rem  machines, or run "start.bat accounts" to create/fill it.
@@ -69,8 +76,11 @@ if /i "%MODE%"=="doctor"      goto :DOCTOR
 if /i "%MODE%"=="docker"      goto :DOCKER
 if /i "%MODE%"=="stop"        goto :STOP
 if /i "%MODE%"=="stopdocker"  goto :STOPDOCKER
+if /i "%MODE%"=="restart"     goto :RESTART
+if /i "%MODE%"=="ports"       goto :PORTS
 echo [ERROR] Unknown mode: %MODE%
 echo         Use: local / mock / accounts / doctor / docker / stop / stopdocker
+echo              restart / ports
 goto :fail
 
 
@@ -81,11 +91,8 @@ echo.
 echo  LinkHub - local mode  ^(backend :%BACKEND_PORT% + frontend :5173^)
 echo  ---------------------------------------------------------------
 
-where node >nul 2>nul
-if errorlevel 1 (
-  echo [ERROR] Node.js not found. Install Node.js 20+ from https://nodejs.org
-  goto :fail
-)
+call :CHECK_NODE
+if errorlevel 1 goto :fail
 
 rem pnpm may not be installed globally; Node 20+ ships corepack.
 set "PNPM=pnpm"
@@ -100,18 +107,19 @@ if errorlevel 1 (
 )
 echo [env ] package runner: !PNPM!
 
-rem Refuse to start twice. PowerShell exits with the number of busy ports,
-rem so cmd can read it straight from errorlevel (no findstr quoting issues).
-powershell -NoProfile -Command "exit @(Get-NetTCPConnection -LocalPort %BACKEND_PORT%,5173 -State Listen -ErrorAction SilentlyContinue).Count"
-if errorlevel 1 (
-  echo [ERROR] Port %BACKEND_PORT% or 5173 is already in use by another program.
-  echo         Edit SERVER_PORT in unimsg-connector\.env to use a different
-  echo         backend port, or close the program that owns it.
-  echo         For 5173, close the "LinkHub Web" console window instead.
-  echo         "start.bat stop" kills whoever owns those ports - possibly an
-  echo         unrelated program - so it is not the safe first choice.
-  goto :fail
-)
+rem Refuse to start twice, but first ask WHO owns the busy ports.
+rem scripts\port-owner.mjs reads the command line / parent chain of the
+rem listening processes, so a leftover LinkHub instance is reused instead of
+rem being reported as "another program":
+rem   0 = both ports free
+rem   2 = both ports held by LinkHub itself (previous run still alive)
+rem   4 = only one of them held by LinkHub (stale instance)
+rem   3 = another program / unknown owner (keep the conservative message)
+node "%APP%\scripts\port-owner.mjs" check %BACKEND_PORT% 5173
+if errorlevel 4 goto :PORT_PARTIAL
+if errorlevel 3 goto :PORT_FOREIGN
+if errorlevel 2 goto :ALREADY_RUNNING
+if errorlevel 1 goto :PORT_CHECK_FAILED
 echo [env ] ports %BACKEND_PORT% / 5173 are free.
 
 rem [1/4] dependencies -------------------------------------------------------
@@ -204,7 +212,7 @@ if not defined READY (
   echo [WARN] Frontend did not answer within ~40s. Check the "LinkHub Web" window.
 ) else (
   echo       Frontend ready - opening browser ...
-  start "" http://127.0.0.1:5173
+  if not "%LINKHUB_NO_BROWSER%"=="1" start "" http://127.0.0.1:5173
 )
 
 echo.
@@ -226,6 +234,63 @@ echo.
 echo Press any key to close THIS launcher window (services keep running).
 pause >nul
 exit /b 0
+
+
+rem ---------------------------------------------------------------------------
+:ALREADY_RUNNING
+rem ---------------------------------------------------------------------------
+rem Both ports are held by LinkHub itself: a previous run is still alive (most
+rem often the two "LinkHub Server" / "LinkHub Web" console windows were left
+rem open). Starting a second copy would only fail, so open the existing UI.
+echo.
+echo  LinkHub is already running  ^(backend :%BACKEND_PORT% / web :5173^).
+echo  Opening the web UI - no second instance was started.
+if not "%LINKHUB_NO_BROWSER%"=="1" start "" http://127.0.0.1:5173
+echo.
+echo  To reload code / .env:  start.bat restart  ^(stops only LinkHub's own processes^)
+echo  To stop normally:       close the "LinkHub Server" / "LinkHub Web" windows,
+echo                          or run "start.bat stop".
+echo.
+echo Press any key to close THIS launcher window.
+pause >nul
+exit /b 0
+
+
+rem ---------------------------------------------------------------------------
+:PORT_PARTIAL
+rem ---------------------------------------------------------------------------
+echo.
+echo [ERROR] LinkHub is only partly running: one of the ports is still held
+echo         by a leftover LinkHub process while the other one is free.
+echo.
+echo         Run "start.bat restart" to stop the stale instance and start fresh,
+echo         or close the leftover "LinkHub Server" / "LinkHub Web" window.
+goto :fail
+
+
+rem ---------------------------------------------------------------------------
+:PORT_FOREIGN
+rem ---------------------------------------------------------------------------
+echo.
+echo [ERROR] Port %BACKEND_PORT% or 5173 is already in use by another program.
+echo         Edit SERVER_PORT in unimsg-connector\.env to use a different
+echo         backend port, or close the program that owns it.
+echo         For 5173, close the "LinkHub Web" console window instead.
+echo         Read-only diagnosis:  start.bat ports
+echo         "start.bat stop" kills whoever owns those ports - possibly an
+echo         unrelated program - so it is not the safe first choice.
+echo         If the owner is actually LinkHub, use "start.bat restart" instead.
+goto :fail
+
+
+rem ---------------------------------------------------------------------------
+:PORT_CHECK_FAILED
+rem ---------------------------------------------------------------------------
+echo.
+echo [ERROR] Could not verify whether ports %BACKEND_PORT% / 5173 are free.
+echo         Run "start.bat ports" for a read-only diagnosis.
+echo         If a previous LinkHub is still open, run "start.bat restart".
+goto :fail
 
 
 rem ---------------------------------------------------------------------------
@@ -335,7 +400,60 @@ echo           the "LinkHub Server" / "LinkHub Web" console windows instead.
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-NetTCPConnection -LocalPort %BACKEND_PORT%,5173 -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }"
 echo  Done. The two console windows may now be closed.
 echo.
+echo  Tip: "start.bat restart" stops ONLY LinkHub's own processes (safer).
 echo  For the Docker stack run:  start.bat stopdocker
+exit /b 0
+
+
+rem ---------------------------------------------------------------------------
+:RESTART
+rem ---------------------------------------------------------------------------
+rem Safe recycle: stop only the listeners that scripts\port-owner.mjs proves
+rem belong to this repository, then fall through to the normal local launch.
+echo.
+echo  LinkHub - restart (stop LinkHub's own old processes, then start again)
+echo  ---------------------------------------------------------------
+call :CHECK_NODE
+if errorlevel 1 goto :fail
+node "%APP%\scripts\port-owner.mjs" stop %BACKEND_PORT% 5173
+if errorlevel 2 (
+  echo.
+  echo [ERROR] Some ports are held by programs that are NOT LinkHub; they were
+  echo         left untouched. Close them ^(or change SERVER_PORT in .env^) and
+  echo         run "start.bat" again.
+  goto :fail
+)
+if errorlevel 1 (
+  echo.
+  echo [ERROR] Could not stop the old LinkHub processes.
+  echo         Close the "LinkHub Server" / "LinkHub Web" windows manually, then retry.
+  goto :fail
+)
+echo  Old LinkHub instance stopped (if one was running).
+echo  If the old "LinkHub Server" / "LinkHub Web" windows are still open,
+echo  close them - fresh ones are opened below.
+echo.
+goto :LOCAL
+
+
+rem ---------------------------------------------------------------------------
+:PORTS
+rem ---------------------------------------------------------------------------
+echo.
+echo  LinkHub - port owner check (read-only, nothing is stopped)
+echo  ---------------------------------------------------------------
+call :CHECK_NODE
+if errorlevel 1 goto :fail
+node "%APP%\scripts\port-owner.mjs" check %BACKEND_PORT% 5173
+set "PORT_STATE=%ERRORLEVEL%"
+echo.
+if "%PORT_STATE%"=="0" echo  Both ports are free - "start.bat" will start LinkHub.
+if "%PORT_STATE%"=="2" echo  LinkHub is already running on both ports - just open the web UI.
+if "%PORT_STATE%"=="3" echo  At least one port is held by a program that is NOT LinkHub.
+if "%PORT_STATE%"=="4" echo  A leftover LinkHub process still holds one port - "start.bat restart" cleans it.
+echo.
+echo Press any key to close this window.
+pause >nul
 exit /b 0
 
 
@@ -347,6 +465,17 @@ echo  Stopping Docker stack ...
 pushd "%APP%"
 docker compose down
 popd
+exit /b 0
+
+
+rem ---------------------------------------------------------------------------
+:CHECK_NODE
+rem ---------------------------------------------------------------------------
+where node >nul 2>nul
+if errorlevel 1 (
+  echo [ERROR] Node.js not found. Install Node.js 20+ from https://nodejs.org
+  exit /b 1
+)
 exit /b 0
 
 

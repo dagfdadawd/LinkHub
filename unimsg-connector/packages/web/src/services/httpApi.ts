@@ -239,6 +239,17 @@ export class HttpApi implements MessageApi {
     return updated;
   }
 
+  async markTodo(id: string): Promise<UnifiedMessage> {
+    const body = await this.request<{ data?: UnifiedMessage }>(
+      `/api/messages/${encodeURIComponent(id)}/todo`,
+      { method: 'POST', body: '{}' },
+    );
+    if (body.data) return body.data;
+    const updated = await this.get(id);
+    if (!updated) throw new ApiError('资源不存在', 404);
+    return updated;
+  }
+
   async markRead(id: string, read: boolean): Promise<UnifiedMessage> {
     const action = read ? 'read' : 'unread';
     const body = await this.request<{ data?: UnifiedMessage }>(
