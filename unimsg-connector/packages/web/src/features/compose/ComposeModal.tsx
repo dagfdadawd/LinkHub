@@ -5,13 +5,16 @@
  * 输入文本 + 挂附件。后端把这次发送纳入同一条闭环状态机（含 traceId），
  * 因此发送后在收件箱与「全链路回放」里都能逐步看到状态回流。
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, App as AntApp, Button, Input, Modal, Radio, Select, Space, Tag } from 'antd';
 import { PaperClipOutlined, SendOutlined, UploadOutlined } from '@ant-design/icons';
 import { FILE_LIMITS, Platform } from '../../types';
 import type { ComposeRequest, IdentityRole, SendCapabilities } from '../../types';
-import type { AccountInfo, MailAccountInfo } from '../../services/api';
-import { PLATFORM_META } from '../../utils/format';
+import type { AccountInfo, ContactDirectory, MailAccountInfo } from '../../services/api';
+import { PLATFORM_META, formatRelative } from '../../utils/format';
+import { buildConversations } from '../../utils/conversations';
+import { UserOutlined } from '@ant-design/icons';
+import { useAppState } from '../../hooks/useAppState';
 import { IdentityTag } from '../../components/IdentityTag';
 import { filesToAttachments, formatBytes, validateFiles } from '../../utils/attachments';
 import { formatSendError } from '../../utils/sendError';
@@ -42,8 +45,11 @@ export function ComposeModal({
   onSent?: (taskId: string) => void;
 }) {
   const { message: toast } = AntApp.useApp();
+  const state = useAppState();
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [platform, setPlatform] = useState<Platform>(Platform.FEISHU);
+  /** 选中的会话（内部存会话键，对用户只展示名字）；邮箱平台用下面的地址输入框 */
+  const [targetKey, setTargetKey] = useState<string>();
   const [conversationId, setConversationId] = useState('');
   const [accounts, setAccounts] = useState<AccountInfo[]>([]);
   const [mailAccount, setMailAccount] = useState<string>();
@@ -53,6 +59,25 @@ export function ComposeModal({
   const [files, setFiles] = useState<File[]>([]);
   const [caps, setCaps] = useState<SendCapabilities[]>([]);
   const [sending, setSending] = useState(false);
+  /** 平台会话名录（飞书可用）：补齐「还没聊过的人 / 群」 */
+  const [directory, setDirectory] = useState<ContactDirectory>();
+
+  // 拉一次该平台的会话名录（只读、后端有缓存）；旧后端没有该接口时保持 undefined
+  useEffect(() => {
+    if (!open || platform === Platform.MAIL) return;
+    let alive = true;
+    services.api
+      .contacts(platform)
+      .then((result) => {
+        if (alive) setDirectory(result);
+      })
+      .catch(() => {
+        if (alive) setDirectory(undefined);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [open, platform]);
 
   useEffect(() => {
     if (!open) return;
@@ -93,9 +118,62 @@ export function ComposeModal({
     );
   }, [open, platform, mailAccounts]);
 
-  // 切换平台时自动预填该平台最近一条已知会话，减少演示现场手填
+  /**
+ * 可选目标 = 「已有会话」 ∪ 「平台会话名录」。
+ *
+ * 已有会话保证任何平台都能用；名录（飞书）能补上「还没聊过的人/群」，
+ * 解决「为什么只能选三个」——只要这个人/群在本人账号的会话列表里就能选到。
+ */
+  const targetOptions = useMemo(() => {
+    const fromMessages = buildConversations(state.messages)
+      .filter((c) => c.platform === platform)
+      .map((c) => {
+        const withConv = c.messages.find((m) => m.conversation?.id);
+        return {
+          value: c.key,
+          label: c.title || '（未命名会话）',
+          rawTitle: c.title,
+          conversationId: withConv?.conversation?.id ?? '',
+          conversationType: withConv?.conversation?.type ?? c.conversationType,
+          lastAt: c.lastAt as string | undefined,
+          group: c.conversationType === 'group',
+          fromDirectory: false,
+        };
+      })
+      .filter((o) => Boolean(o.conversationId));
+
+    const known = new Set(fromMessages.map((o) => o.conversationId));
+    const extra = (directory?.platform === platform ? directory.items : [])
+      .filter((it) => it.id && !known.has(it.id))
+      .map((it) => ({
+        value: `${platform}:${it.id}`,
+        label: it.name,
+        rawTitle: it.name,
+        conversationId: it.id,
+        conversationType: it.type,
+        lastAt: undefined as string | undefined,
+        group: it.type === 'group',
+        fromDirectory: true,
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label, 'zh-Hans-CN'));
+
+    return [...fromMessages, ...extra];
+  }, [state.messages, platform, directory]);
+
+  const selectedTarget = targetOptions.find((o) => o.value === targetKey);
+
+  // 选目标：默认该平台最近的会话；用户已选的不会被新消息打断
   useEffect(() => {
-    if (!open) return;
+    if (!open || platform === Platform.MAIL) return;
+    setTargetKey((prev) => {
+      if (prev && targetOptions.some((o) => o.value === prev)) return prev;
+      return targetOptions[0]?.value;
+    });
+  }, [open, platform, targetOptions]);
+
+  // 邮箱：目标是收件地址，仍用输入框；预填该平台最近一条会话（历史上用过的地址）
+  useEffect(() => {
+    if (!open || platform !== Platform.MAIL) return;
     const recent = store.getSnapshot().messages.find(
       (m) => m.platform === platform && m.conversation?.id,
     );
@@ -106,7 +184,14 @@ export function ComposeModal({
   const accountMode = accounts.find((a) => a.platform === platform)?.mode;
   /** 演示模式：Mock 通道发送按钮可直接发（后端会用演示会话 mock:demo 生成模拟消息） */
   const mockChannel = cap?.mode === 'mock' || accountMode === 'mock' || effectiveSend === 'mock';
+  /** 本次真正的目标：IM 取选中会话的 conversation.id + type，邮箱取输入的地址 */
+  const resolvedConversationId =
+    platform === Platform.MAIL ? conversationId.trim() : (selectedTarget?.conversationId ?? '');
+  const resolvedConversationType =
+    platform === Platform.MAIL ? ('p2p' as const) : selectedTarget?.conversationType;
+  const hasTarget = mockChannel || Boolean(resolvedConversationId);
   const canSend = !sending
+    && hasTarget
     && (text.trim().length > 0 || files.length > 0)
     && (files.length === 0 || cap?.file !== false);
 
@@ -127,10 +212,10 @@ export function ComposeModal({
       const attachments = await filesToAttachments(files);
       const req: ComposeRequest = {
         platform,
-        ...(conversationId.trim() ? { conversationId: conversationId.trim() } : {}),
-        ...(platform === Platform.MAIL
-          ? { conversationType: 'p2p' as const, ...(mailAccount ? { mailAccount } : {}) }
-          : {}),
+        ...(resolvedConversationId ? { conversationId: resolvedConversationId } : {}),
+        // 会话类型从选中的会话带过来：以前不传，群会被后端当成单聊
+        ...(resolvedConversationType ? { conversationType: resolvedConversationType } : {}),
+        ...(platform === Platform.MAIL && mailAccount ? { mailAccount } : {}),
         // 身份显式下发：两种身份都可用时尊重用户选择；只有一种时等同 effectiveSend。
         // Mock 通道不传（服务端整体模拟，不接受身份覆盖）。
         ...(sendIdentity ? { identity: sendIdentity } : {}),
@@ -263,18 +348,65 @@ export function ComposeModal({
         )}
 
         <div>
-          <div className="compose-field__label">目标会话 ID（留空则复用该平台最近会话）</div>
-          <Input
-            value={conversationId}
-            onChange={(e) => setConversationId(e.target.value)}
-            placeholder={CONVERSATION_HINT[platform]}
-            aria-label="目标会话"
-          />
-          <div className="compose-field__hint">
-            {mockChannel
-              ? '演示模式：留空即可，会生成一条本地模拟发送记录（不会真的发到平台）。'
-              : '真实发送需要目标会话：留空会复用该平台最近一条消息的会话；没有最近会话时，请从收件箱对应消息点「回复」。'}
-          </div>
+          {platform === Platform.MAIL ? (
+            <>
+              <div className="compose-field__label">收件邮箱地址</div>
+              <Input
+                value={conversationId}
+                onChange={(e) => setConversationId(e.target.value)}
+                placeholder={CONVERSATION_HINT[platform]}
+                aria-label="目标会话"
+              />
+              <div className="compose-field__hint">
+                留空会复用该平台最近一封邮件往来的地址；首次给新地址发信时直接填写即可。
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="compose-field__label">发送给</div>
+              <Select
+                className="compose-target"
+                showSearch
+                value={targetKey}
+                options={targetOptions}
+                onChange={setTargetKey}
+                optionFilterProp="label"
+                placeholder={
+                  targetOptions.length === 0 ? '该平台还没有会话' : '选择联系人或群'
+                }
+                disabled={targetOptions.length === 0}
+                style={{ width: '100%' }}
+                aria-label="发送给"
+                data-testid="compose-target"
+                optionRender={(option) => {
+                  const item = option.data as (typeof targetOptions)[number];
+                  return (
+                    <div className="compose-target__option" title={item.rawTitle}>
+                      <span className={`compose-target__avatar${item.group ? ' is-group' : ''}`}>
+                        {item.group ? '群' : <UserOutlined />}
+                      </span>
+                      <span className="compose-target__name">{item.label}</span>
+                      <span className="compose-target__meta">
+                        {item.group ? '群聊' : '单聊'}
+                        {item.lastAt ? ` · ${formatRelative(item.lastAt)}` : ''}
+                        {item.fromDirectory ? ' · 通讯录' : ''}
+                      </span>
+                    </div>
+                  );
+                }}
+              />
+              <div className="compose-field__hint">
+                {targetOptions.length === 0
+                  ? directory?.reason
+                    || '该平台还没有可发送的会话：先在收件箱收到一条消息，再回到这里发送。'
+                  : directory && !directory.available
+                    ? `可发送给已有会话；${directory.reason ?? '当前平台不提供通讯录。'}`
+                    : directory?.available
+                      ? `已包含飞书本人账号可见的全部会话（${directory.items.length} 个），可直接搜索人名或群名。`
+                      : '列表来自真实的收件箱会话；选中后按该会话的类型（单聊 / 群聊）发送。'}
+              </div>
+            </>
+          )}
         </div>
 
         <div>

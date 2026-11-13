@@ -1,9 +1,50 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { App as AntApp } from 'antd';
 import type { PlatformIdentityView, UserIdentityStatus } from '@unimsg/shared';
-import { ComposeModal } from './ComposeModal';
 import { Platform } from '../../types';
+
+/**
+ * 目标选择器的候选人来自「收件箱会话」，这里用固定消息代替真实 store，
+ * 保证测试不依赖本机后端，也能覆盖「单聊 / 群聊」两种目标。
+ */
+const hoisted = vi.hoisted(() => {
+  const iso = (minutesAgo: number) => new Date(Date.now() - minutesAgo * 60_000).toISOString();
+  const fixtures = [
+    {
+      traceId: 't-p2p',
+      platform: 'feishu',
+      externalId: 'e-p2p',
+      sender: { id: 'u1', name: '张三' },
+      conversation: { id: 'oc_demo_1', type: 'p2p' },
+      type: 'text',
+      body: '你好',
+      status: 'received',
+      createdAt: iso(5),
+      updatedAt: iso(5),
+    },
+    {
+      traceId: 't-group',
+      platform: 'feishu',
+      externalId: 'e-group',
+      sender: { id: 'u2', name: '王五' },
+      conversation: { id: 'oc_group_1', type: 'group', title: '项目群' },
+      type: 'text',
+      body: '收到',
+      status: 'received',
+      createdAt: iso(1),
+      updatedAt: iso(1),
+    },
+  ];
+  const messages: unknown[] = [...fixtures];
+  return { fixtures, messages };
+});
+
+vi.mock('../../hooks/useAppState', () => ({
+  useAppState: () => ({ messages: hoisted.messages }),
+}));
+
+import { ComposeModal } from './ComposeModal';
 import { services, store } from '../../store';
 
 function setup() {
@@ -58,11 +99,27 @@ function mockFeishuIdentity(identity: PlatformIdentityView) {
   ]);
 }
 
-async function fillAndSend(conversationId = 'oc_demo_1', text = '请查收周报') {
-  fireEvent.change(screen.getByLabelText('目标会话'), { target: { value: conversationId } });
+/** 从「发送给」下拉里选一个联系人或群（对用户只看到名字，看不到会话 ID） */
+async function pickTarget(name: string) {
+  fireEvent.mouseDown(screen.getByRole('combobox', { name: '发送给' }));
+  // 选项在虚拟列表里，按 title 定位；已选中的会话也会显示同名文字，不能用 getByText
+  const option = await waitFor(() => {
+    const el = document.querySelector<HTMLElement>(`.ant-select-item-option[title="${name}"]`);
+    if (!el) throw new Error(`没有找到选项：${name}`);
+    return el;
+  });
+  fireEvent.click(option);
+}
+
+async function fillAndSend(targetName = '张三', text = '请查收周报') {
+  await pickTarget(targetName);
   fireEvent.change(screen.getByLabelText('发送文本'), { target: { value: text } });
   fireEvent.click(screen.getByTestId('compose-send'));
 }
+
+beforeEach(() => {
+  hoisted.messages.splice(0, hoisted.messages.length, ...hoisted.fixtures);
+});
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -71,8 +128,9 @@ describe('ComposeModal（统一入口主动发送）', () => {
     const { compose } = setup();
     expect(screen.getByText('新建发送 · 向指定平台发送消息或文件')).toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText('目标会话'), { target: { value: 'oc_demo_1' } });
+    await pickTarget('张三');
     fireEvent.change(screen.getByLabelText('发送文本'), { target: { value: '请查收周报' } });
+    // 选中会话 + 有正文 = 可发送（点击后按钮进入 loading，所以断言要在点击前）
     expect(screen.getByTestId('compose-send')).toBeEnabled();
     fireEvent.click(screen.getByTestId('compose-send'));
 
@@ -80,8 +138,29 @@ describe('ComposeModal（统一入口主动发送）', () => {
     expect(compose.mock.calls[0][0]).toMatchObject({
       platform: Platform.FEISHU,
       conversationId: 'oc_demo_1',
+      conversationType: 'p2p',
       text: '请查收周报',
     });
+  });
+
+  it('群会话：提交时带上 conversationType=group（以前不传会被后端当单聊）', async () => {
+    const { compose } = setup();
+    await fillAndSend('项目群');
+
+    await waitFor(() => expect(compose).toHaveBeenCalledTimes(1));
+    expect(compose.mock.calls[0][0]).toMatchObject({
+      conversationId: 'oc_group_1',
+      conversationType: 'group',
+    });
+  });
+
+  it('该平台没有会话：选择器禁用并提示先收到消息，发送按钮不可用', () => {
+    hoisted.messages.splice(0, hoisted.messages.length);
+    setup();
+
+    expect(screen.getByText(/该平台还没有可发送的会话/)).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: '发送给' })).toBeDisabled();
+    expect(screen.getByTestId('compose-send')).toBeDisabled();
   });
 
   it('文本与附件都为空时禁止发送', () => {
