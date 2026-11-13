@@ -415,6 +415,8 @@ export interface MessageApi {
   /** 保存平台应用凭据 / 身份模式（部分更新；返回是否需要重启） */
   updateAppConfig(patch: AppConfigUpdate): Promise<AppConfigSaveResult>;
   markDone(id: string): Promise<UnifiedMessage>;
+  /** 把任意消息手动加入待办（不改闭环状态、不触发平台回写） */
+  markTodo(id: string): Promise<UnifiedMessage>;
   /** 标记已读 / 未读（阅读状态独立于业务状态） */
   markRead(id: string, read: boolean): Promise<UnifiedMessage>;
   /** 全部标为已读（可只标当前筛选范围），返回实际改动条数 */

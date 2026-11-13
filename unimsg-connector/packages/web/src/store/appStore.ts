@@ -195,6 +195,13 @@ export class AppStore {
     this.upsert(updated);
   }
 
+  /** 手动把任意消息加入待办；返回更新后的消息供页面即时反馈 */
+  async markTodo(id: string): Promise<UnifiedMessage> {
+    const updated = await this.api.markTodo(id);
+    this.upsert(updated);
+    return updated;
+  }
+
   /** 标记已读 / 未读：只更新阅读状态，不动业务状态 */
   async markRead(id: string, read: boolean): Promise<void> {
     const updated = await this.api.markRead(id, read);

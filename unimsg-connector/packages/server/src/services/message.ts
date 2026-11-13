@@ -474,6 +474,18 @@ export class MessageService {
   }
 
   /**
+   * 把任意消息手动加入待办：只改消息类型与完成态，不改闭环状态、不触发平台回写。
+   * 已完成的待办再次加入时重新打开（done=false），便于用户继续跟进。
+   */
+  async markTodo(id: string): Promise<UnifiedMessage> {
+    const m = this.repo.update(id, { type: 'todo', done: false });
+    if (!m) throw new Error('message not found');
+    writeTrace(this.repo, m, 'todo_added', '用户手动加入待办');
+    this.broadcast({ type: 'message.updated', data: m });
+    return m;
+  }
+
+  /**
    * 标记已读 / 未读。
    *
    * 阅读状态独立于业务状态（status）：收到不等于看过，回写成功也不等于看过。

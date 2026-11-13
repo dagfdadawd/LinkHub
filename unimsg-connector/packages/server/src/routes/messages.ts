@@ -122,6 +122,16 @@ export function messagesRouter(svc: MessageService) {
     }
   });
 
+  // 手动加入待办：普通消息也可转成待办（幂等），不改业务状态、不触发平台回写
+  r.post('/messages/:id/todo', async (req, res) => {
+    try {
+      const message = await svc.markTodo(req.params.id);
+      res.json({ ok: true, data: message });
+    } catch {
+      res.status(404).json({ ok: false, error: 'not found' });
+    }
+  });
+
   /**
    * 阅读状态：POST /api/messages/:id/read 与 /unread。
    * 返回完整消息，前端可直接 upsert（WS 也会广播同一条，幂等）。
