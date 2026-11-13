@@ -13,7 +13,7 @@
 import type {
   ComposeAck, ComposeRequest, OutboundAttachment, SendCapabilities,
 } from '@unimsg/shared';
-import type { TraceEntry, UnifiedMessage } from '../types';
+import type { Platform, TraceEntry, UnifiedMessage } from '../types';
 import type {
   AccountInfo,
   AppConfigField,
@@ -23,6 +23,7 @@ import type {
   AppConfigSource,
   AppConfigUpdate,
   AppConfigView,
+  ContactDirectory,
   DingtalkLoginOptions,
   DingtalkLoginStart,
   DingtalkPersonalStatus,
@@ -123,6 +124,19 @@ export class HttpApi implements MessageApi {
   async capabilities(): Promise<SendCapabilities[]> {
     const body = await this.request<{ data?: SendCapabilities[] }>('/api/capabilities');
     return body.data ?? [];
+  }
+
+  /** 发送目标名录：旧后端没有该接口时返回空名录（前端退回「只列已有会话」） */
+  async contacts(platform: Platform): Promise<ContactDirectory> {
+    try {
+      const body = await this.request<{ data?: ContactDirectory }>(
+        `/api/contacts?platform=${encodeURIComponent(platform)}`,
+      );
+      if (body.data) return body.data;
+    } catch {
+      // 旧后端 / 网络异常：不阻断发送，退回空名录
+    }
+    return { platform, available: false, items: [] };
   }
 
   async feishuOAuthStart(): Promise<FeishuOAuthStart> {

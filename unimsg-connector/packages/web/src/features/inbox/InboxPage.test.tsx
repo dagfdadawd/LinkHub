@@ -33,6 +33,12 @@ vi.mock('../../hooks/useAppState', () => ({
 
 // 只提供 InboxPage / DetailPanel 用到的 store 方法；避免 import 真实单例创建 WS 连接
 vi.mock('../../store', () => ({
+  // 会话名录接口：默认「不可用」，用例需要时再覆写
+  services: {
+    api: {
+      contacts: vi.fn(async (platform: string) => ({ platform, available: false, items: [] })),
+    },
+  },
   store: {
     setFilters: vi.fn(),
     resetFilters: vi.fn(),

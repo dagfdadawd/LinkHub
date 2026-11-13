@@ -27,6 +27,24 @@ export interface ReplyAck {
 }
 
 /**
+ * 发送目标名录（GET /api/contacts）：飞书走本人会话列表，单聊也带名字；
+ * 其它平台 unavailable + reason，前端如实说明而不是假装有通讯录。
+ */
+export interface ContactDirectoryEntry {
+  id: string;
+  name: string;
+  type: 'p2p' | 'group';
+}
+
+export interface ContactDirectory {
+  platform: Platform;
+  available: boolean;
+  reason?: string;
+  items: ContactDirectoryEntry[];
+  source?: string;
+}
+
+/**
  * 「重新生成」结果：完整消息 + 后端当前 LLM 通道结论。
  * 带上 reason 是为了在仍是规则兜底时如实告诉用户原因，而不是弹一句无信息量的提示。
  */
@@ -403,6 +421,11 @@ export interface MessageApi {
   reanalyze(id: string): Promise<ReanalyzeResult>;
   /** 各平台发送能力与体积上限，供新建发送表单渲染 */
   capabilities(): Promise<SendCapabilities[]>;
+  /**
+   * 发送目标名录（会话名 + 会话 ID）。只读；旧后端没有该接口时返回空名录，
+   * 前端据此退回「只列已有会话」，不影响发送。
+   */
+  contacts(platform: Platform): Promise<ContactDirectory>;
   /** 发起飞书用户身份授权，返回需要打开的飞书授权页 URL */
   feishuOAuthStart(): Promise<FeishuOAuthStart>;
   /**

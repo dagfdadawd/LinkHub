@@ -4,8 +4,9 @@ import { App as AntApp, Button, Input, Popover, Select, Skeleton } from 'antd';
 import { CloseOutlined, FilterOutlined, SearchOutlined } from '@ant-design/icons';
 import { useAppState } from '../../hooks/useAppState';
 import { useHotkeys } from '../../hooks/useHotkeys';
-import { store } from '../../store';
+import { store, services } from '../../store';
 import { filterMessages } from '../../store/appStore';
+import type { MessageApi } from '../../services/api';
 import { MsgStatus, Platform } from '../../types';
 import { PLATFORM_META, STATUS_META, TYPE_LABEL } from '../../utils/format';
 import { navigateWithMorph } from '../../utils/morph';
@@ -53,6 +54,26 @@ function focusReplyComposer() {
     return true;
   };
   if (!focus()) window.setTimeout(focus, 80);
+}
+
+/** 平台只给了 open_id / cid… 这类裸 ID 时，标题需要按名录换成可读名字 */
+const RAW_ID_TITLE_RE = /^(ou_|oc_|on_|open_|cid|user_)[A-Za-z0-9_+/=-]{6,}$/;
+
+/**
+ * 名录补名：老消息入库时平台没给会话名（飞书单聊常见），
+ * 用 /api/contacts 拿到的「会话 ID → 名字」把标题补成人话；拿不到就保持原样。
+ */
+function withContactNames(
+  list: import('../../utils/conversations').Conversation[],
+  names: Map<string, string>,
+) {
+  if (names.size === 0) return list;
+  return list.map((c) => {
+    if (!c.conversationId) return c;
+    const name = names.get(`${c.platform}:${c.conversationId}`);
+    if (!name || !RAW_ID_TITLE_RE.test(c.title)) return c;
+    return { ...c, title: name };
+  });
 }
 
 export function InboxPage() {
@@ -115,14 +136,49 @@ export function InboxPage() {
    */
   const conversations = useMemo(() => buildConversations(visible), [visible]);
   const allConversations = useMemo(() => buildConversations(state.messages), [state.messages]);
-  const selectedConv = useMemo(
-    () => findConversation(allConversations, traceId),
-    [allConversations, traceId],
+
+  /** 会话 ID → 可读名字（飞书本人会话名录）；旧后端没有该接口时为空表，不影响使用 */
+  const [contactNames, setContactNames] = useState<Map<string, string>>(new Map());
+  useEffect(() => {
+    // 单测会 mock 掉 store 模块（没有 services/api），这里做能力探测而不是硬依赖
+    const api = (services as { api?: MessageApi } | undefined)?.api;
+    if (typeof api?.contacts !== 'function') return;
+    let alive = true;
+    void Promise.all(
+      [Platform.FEISHU, Platform.DINGTALK].map((p) => api.contacts(p).catch(() => undefined)),
+    ).then((list) => {
+      if (!alive) return;
+      const map = new Map<string, string>();
+      for (const dir of list) {
+        if (!dir?.available) continue;
+        for (const item of dir.items) map.set(`${dir.platform}:${item.id}`, item.name);
+      }
+      if (map.size > 0) setContactNames(map);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const namedConversations = useMemo(
+    () => withContactNames(conversations, contactNames),
+    [conversations, contactNames],
   );
-  const imConversations = useMemo(() => conversations.filter((c) => c.kind === 'im'), [conversations]);
+  const namedAllConversations = useMemo(
+    () => withContactNames(allConversations, contactNames),
+    [allConversations, contactNames],
+  );
+  const selectedConv = useMemo(
+    () => findConversation(namedAllConversations, traceId),
+    [namedAllConversations, traceId],
+  );
+  const imConversations = useMemo(
+    () => namedConversations.filter((c) => c.kind === 'im'),
+    [namedConversations],
+  );
   const mailConversations = useMemo(
-    () => conversations.filter((c) => c.kind === 'mail'),
-    [conversations],
+    () => namedConversations.filter((c) => c.kind === 'mail'),
+    [namedConversations],
   );
 
   /**
