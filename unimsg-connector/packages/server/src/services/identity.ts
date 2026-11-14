@@ -437,13 +437,25 @@ export function canSendAsBot(platform: Platform): boolean {
   return runtimeOf(platform).canSend;
 }
 
-/** 钉钉状态未探测时先探一次（最多一次 3s，有缓存后无感；模拟模式不探测） */
+/**
+ * 钉钉身份状态探测（模拟模式不探测）。
+ *
+ * 缓存说「已登录」→ 直接放行，省掉 1–3s 的 dws 调用；
+ * 缓存说「未登录」或还没有缓存 → **必须再探一次**。
+ *
+ * 之前只要存在缓存就直接 return，导致一次瞬时失败（dws 读 token 存档被并发占用、
+ * 或 token 刚到刷新点）会被永久固化成「未登录」，之后所有发送都被拦下，
+ * 用户即便在终端重新登录也无效，只能重启后端。这是「明明登录了却发不出去」的根因。
+ */
 export async function ensureIdentityProbed(platform: Platform): Promise<void> {
   if (platform !== Platform.DINGTALK) return;
   if (!identityChannelsReal(platform)) return;
   const client = dingtalkPersonalClient();
-  if (client.lastKnownStatus()) return;
-  await client.warmStatus().catch(() => undefined);
+  if (client.lastKnownStatus()?.authenticated) return;
+  // 负结果强制重探（绕过 30s 缓存）：用户可能刚在终端/弹窗完成登录，
+  // 沿用旧缓存会继续误拦；真未登录时多花 1–3s，反正这次发送也要失败。
+  // authStatus 内部单飞，连点发送不会并发外呼。
+  await client.authStatus({ force: true }).catch(() => undefined);
 }
 
 /**

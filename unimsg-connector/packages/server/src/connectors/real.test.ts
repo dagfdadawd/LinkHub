@@ -7,7 +7,15 @@ import assert from 'node:assert/strict';
 import { Platform, MsgStatus, type OutboundAttachment } from '@unimsg/shared';
 import { config, forceAllModes } from '../config';
 import { feishuConnector } from './feishu';
-import { dingtalkConnector, describeInbound } from './dingtalk';
+import {
+  dingtalkConnector,
+  describeInbound,
+  sendIdempotencyKey,
+  isInlineImage,
+  inlineImageFileName,
+  buildInlineContent,
+  MAX_INLINE_IMAGES,
+} from './dingtalk';
 import { feishuEncrypt, dingtalkEncrypt, dingtalkSign } from './crypto';
 import { resetTokenCache } from './real';
 
@@ -382,4 +390,84 @@ test('钉钉媒体上传失败：把平台 errcode/errmsg 带进错误，进死�
     () => dingtalkConnector.send(attachMsg(), [ATTACHMENT]),
     (e: Error) => /40004/.test(e.message) && /不合法的媒体文件类型/.test(e.message),
   );
+});
+
+test('本人发送幂等键：同内容重试复用、不同内容/附件必须区分', () => {
+  const trace = 'trace-abc';
+
+  // 同一份内容重试 → 同一个键，保留钉钉侧 24h 去重语义
+  assert.equal(
+    sendIdempotencyKey(trace, '好的，稍后回复你', []),
+    sendIdempotencyKey(trace, '好的，稍后回复你', []),
+  );
+
+  // 同一条消息改了措辞再发 → 必须是新键，否则钉钉返回「Request is repeated with uuid」
+  assert.notEqual(
+    sendIdempotencyKey(trace, '好的，稍后回复你', []),
+    sendIdempotencyKey(trace, '收到，我马上处理', []),
+  );
+
+  // 文本相同但补了附件 → 也要区分（附件消息是另一次平台调用）
+  assert.notEqual(
+    sendIdempotencyKey(trace, '看下这个文件', []),
+    sendIdempotencyKey(trace, '看下这个文件', [ATTACHMENT]),
+  );
+
+  // 多个同名同大小的附件也要区分（靠序号，不靠扩展名）
+  const a: OutboundAttachment = { ...ATTACHMENT, name: 'x.png' };
+  const b: OutboundAttachment = { ...ATTACHMENT, name: 'y.png' };
+  assert.notEqual(
+    sendIdempotencyKey(trace, '', [a]),
+    sendIdempotencyKey(trace, '', [b]),
+  );
+
+  // 键前缀保留 traceId，便于在钉钉后台按消息排查
+  assert.match(sendIdempotencyKey(trace, 'hi', []), /^linkhub-trace-abc-[0-9a-f]{10}$/);
+});
+
+test('本人发送的图片必须走 Markdown 内联（文件消息在手机上只是附件卡片）', () => {
+  const img = (name: string, mimeType?: string) =>
+    ({ name, size: 1, mimeType } as unknown as OutboundAttachment);
+
+  // 图片判定：MIME 优先，缺 MIME 时退化看扩展名
+  assert.equal(isInlineImage(img('a.jpg', 'image/jpeg')), true);
+  assert.equal(isInlineImage(img('a.JPG')), true);
+  assert.equal(isInlineImage(img('x', 'image/png')), true);
+  assert.equal(isInlineImage(img('周报.pdf')), false);
+  assert.equal(isInlineImage(img('data.bin')), false);
+
+  // 正文拼接：文字在上、图片在内联语法里，Windows 反斜杠要转成正斜杠
+  assert.equal(
+    buildInlineContent('请看这张图', [{ name: '截图.png', path: 'C:\\tmp\\a.png' }]),
+    '请看这张图\n\n![截图.png](C:/tmp/a.png)',
+  );
+  assert.equal(
+    buildInlineContent('', [{ name: 'x.png', path: '/tmp/x.png' }]),
+    '![x.png](/tmp/x.png)',
+  );
+
+  // 多张按顺序拼
+  const two = buildInlineContent('两张', [
+    { name: '1.png', path: '/t/1.png' },
+    { name: '2.png', path: '/t/2.png' },
+  ]);
+  assert.match(two, /!\[1\.png\]\(\/t\/1\.png\)[\s\S]*!\[2\.png\]\(\/t\/2\.png\)/);
+
+  /**
+   * 回归：图片落盘名一旦带空格/括号/中文，Markdown 链接会在空格处截断，
+   * dws 就把 `![…](…)` 当纯文本发出去（用户看到「图片发不了 + 一串乱码」）。
+   */
+  assert.equal(inlineImageFileName('宫崎骏风格 (3).png'), 'image-1.png');
+  assert.equal(inlineImageFileName('宫崎骏风格 (3).PNG', 1), 'image-2.png');
+  assert.equal(inlineImageFileName('无扩展名', 0), 'image-1.png');
+  const safeName = inlineImageFileName('宫崎骏风格 (3).jpeg', 2);
+  assert.match(safeName, /^[a-z0-9.-]+$/, '落盘名必须是纯 ASCII');
+  assert.doesNotMatch(safeName, /[\s()（）\u4e00-\u9fa5]/);
+
+  // alt 里的 `]` 会提前闭合 `![...]`，必须换掉（换成全角括号，仍可读）
+  const altSafe = buildInlineContent('', [{ name: 'a]b.png', path: '/t/a.png' }]);
+  assert.equal(altSafe, '![a）b.png](/t/a.png)');
+
+  // dws 一次最多内联 3 张，超出的走文件消息（这里锁住上限，改大要同步改发送逻辑）
+  assert.equal(MAX_INLINE_IMAGES, 3);
 });

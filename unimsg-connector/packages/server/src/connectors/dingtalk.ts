@@ -10,10 +10,10 @@
  * verify ：Mock 模式宽松验签；否则校验 timestamp + HMAC 签名。
  * decrypt：AES 解密 encrypt 字段。
  */
-import { randomUUID } from 'node:crypto';
-import { unlinkSync, writeFileSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { extname, join } from 'node:path';
+import { basename, extname, join } from 'node:path';
 import {
   Platform, MsgStatus, UnifiedMessage, PlatformConnector,
   type SendResult, type OutboundAttachment,
@@ -210,15 +210,75 @@ function personalSendTarget(msg: UnifiedMessage): DwsSendTarget {
   );
 }
 
-/** 以本人身份发送（dws CLI）。文本先发、再逐个发文件；任一失败整笔抛错（由中枢置 failed + 死信） */
+/**
+ * 本人身份发送的幂等键。
+ *
+ * 只按 traceId 生成会出事：同一条消息先后发两次（先回文本、再补附件，或改了措辞重发）
+ * 拿到同一个 uuid，钉钉会以「Request is repeated with uuid」直接拒绝，第二次永远发不出去。
+ * 加入内容指纹后：同一份内容重试 → 同一个键（保留 24h 去重），不同内容 → 不同键。
+ */
+export function sendIdempotencyKey(
+  traceId: string,
+  text: string,
+  attachments: OutboundAttachment[],
+): string {
+  const contentTag = createHash('sha1')
+    .update(text)
+    .update('\u0000')
+    .update(attachments.map((a) => `${a.name}:${a.size}`).join('|'))
+    .digest('hex')
+    .slice(0, 10);
+  return `linkhub-${traceId}-${contentTag}`;
+}
+
+/** dws 图文混排一次最多上传 3 张本地图片；超出的按文件消息发 */
+export const MAX_INLINE_IMAGES = 3;
+
+/** 图片判定：MIME 优先，退化看扩展名（平台给的 mime 经常为空） */
+export function isInlineImage(a: OutboundAttachment): boolean {
+  return /^image\//i.test(a.mimeType ?? '') || /\.(png|jpe?g|gif|webp|bmp|heic)$/i.test(a.name);
+}
+
+/**
+ * 拼「文字 + 内联图片」正文。
+ *
+ * dws 只有把图片写进 Markdown 正文（`![标题](本地路径)`）才会**内联渲染成照片**；
+ * `--msg-type file` 发出去的是「可下载的附件卡片」，手机上看到的是文件名而不是图。
+ * 路径统一转成正斜杠，Windows 下 dws 也能识别。
+ */
+/**
+ * 内联图片的落盘文件名：只保留扩展名，其余全部换成序号。
+ *
+ * 为什么必须是纯 ASCII：dws 走的是 Markdown 内联图（`![alt](本地路径)`），
+ * 路径里出现空格或括号（`宫崎骏风格 (3).png`）会让 Markdown 链接在空格处截断，
+ * dws 认不出这是图片，就把整串 `![…](…)` 当纯文本发出去——
+ * 手机端表现为「图片没发出来，聊天里多了一串乱码」。原名放进 alt，仍然可读。
+ */
+export function inlineImageFileName(originalName: string, index = 0): string {
+  const ext = (extname(basename(originalName)) || '.png').toLowerCase().replace(/[^a-z0-9.]/g, '');
+  return `image-${index + 1}${ext || '.png'}`;
+}
+
+export function buildInlineContent(
+  text: string,
+  images: Array<{ name: string; path: string }>,
+): string {
+  const lines = images.map((img) => {
+    // alt 里的 `]` 会提前闭合 `![...]`，换行会截断整段 markdown：换成安全字符
+    const alt = img.name.replace(/[[\]\r\n]/g, (ch) => (ch === ']' ? '）' : ch === '[' ? '（' : ' '));
+    return `![${alt}](${img.path.replace(/\\/g, '/')})`;
+  });
+  return [text.trim(), ...lines].filter(Boolean).join('\n\n');
+}
+
+/** 以本人身份发送（dws CLI）：文字与内联图片一条发出，其余文件逐条发；任一失败整笔抛错 */
 async function sendViaPersonal(
   msg: UnifiedMessage,
   text: string,
   attachments: OutboundAttachment[],
 ): Promise<SendResult> {
   const client = dingtalkPersonalClient();
-  // 幂等键：同一 traceId 重试时 dws 侧 24h 内不会重复发送
-  const idempotencyKey = `linkhub-${msg.traceId}`;
+  const idempotencyKey = sendIdempotencyKey(msg.traceId, text, attachments);
   const receipts: string[] = [];
   const target = personalSendTarget(msg);
 
@@ -230,32 +290,81 @@ async function sendViaPersonal(
     && msg.sender.id !== 'unknown'
     && msg.sender.id !== 'linkhub';
 
-  if (text) {
-    const outcome = canReply && refMessageId && msg.conversation?.id
-      ? await client.reply({
-        conversationId: msg.conversation.id,
-        refMessageId,
-        refSenderOpenDingtalkId: msg.sender.id,
-        text,
-        idempotencyKey,
-      })
-      : await client.sendText({ target, text, idempotencyKey });
-    if (outcome.platformReply) receipts.push(outcome.platformReply);
-  }
+  // 图片走内联（≤3 张），其余附件仍按文件消息发
+  const inlineImages = attachments.filter(isInlineImage).slice(0, MAX_INLINE_IMAGES);
+  const plainFiles = attachments.filter((a) => !inlineImages.includes(a));
 
-  for (const a of attachments) {
-    const ext = extname(a.name) || '.bin';
-    const filePath = join(tmpdir(), `linkhub-dws-${randomUUID()}${ext}`);
-    try {
-      writeFileSync(filePath, decodeAttachment(a));
-      const outcome = await client.sendFile({ target, filePath, idempotencyKey: `${idempotencyKey}-${ext}` });
+  /**
+   * 临时目录按「一次发送」隔离，文件名保持用户原名。
+   *
+   * 原先是 `<tmp>/linkhub-dws-<uuid>.docx`：钉钉回推文件消息时会把本地文件名
+   * 原样写进正文（`[文件] linkhub-dws-…docx fileId: …`），用户看到的就是一串 uuid。
+   * 目录唯一已经足够，文件名不必再带随机串——回推里就是真实文件名。
+   */
+  const tempDir = join(tmpdir(), `linkhub-dws-${randomUUID()}`);
+  mkdirSync(tempDir, { recursive: true });
+  const usedNames = new Set<string>();
+  /**
+   * 落盘文件名分两种：
+   *  - **内联图片**必须纯 ASCII（`image-1.png`），否则 Markdown 链接会被路径里的
+   *    空格/括号截断，dws 会把 `![…](…)` 当纯文本发出去（见 inlineImageFileName）。
+   *  - **文件消息**保留原名：平台回推会把本地文件名写进正文，用原名才不至于显示 uuid。
+   */
+  const writeTemp = (a: OutboundAttachment, index: number, inline = false): string => {
+    let safe: string;
+    if (inline) {
+      safe = inlineImageFileName(a.name, index);
+    } else {
+      safe = basename(a.name).replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').trim() || 'file';
+      if (usedNames.has(safe)) safe = `${usedNames.size + 1}-${safe}`;
+      usedNames.add(safe);
+    }
+    const p = join(tempDir, safe);
+    writeFileSync(p, decodeAttachment(a));
+    return p;
+  };
+
+  try {
+    const content = buildInlineContent(
+      text,
+      inlineImages.map((a, i) => ({ name: a.name, path: writeTemp(a, i, true) })),
+    );
+
+    if (content) {
+      /**
+       * 带图时改走普通 send：`reply --content` 没有确认支持 Markdown 内联图，
+       * 若把 `![..](..)` 当纯文本原样回显，手机上会看到一串路径，比丢引用条更糟。
+       * 纯文字回复仍用 reply，保留引用关系。
+       */
+      const useReply = inlineImages.length === 0
+        && canReply
+        && Boolean(refMessageId)
+        && Boolean(msg.conversation?.id);
+      const outcome = useReply && refMessageId && msg.conversation?.id
+        ? await client.reply({
+          conversationId: msg.conversation.id,
+          refMessageId,
+          refSenderOpenDingtalkId: msg.sender.id,
+          text: content,
+          idempotencyKey,
+        })
+        : await client.sendText({ target, text: content, idempotencyKey });
       if (outcome.platformReply) receipts.push(outcome.platformReply);
-    } finally {
-      try {
-        unlinkSync(filePath);
-      } catch {
-        // 临时文件清理失败不影响已发送结果
-      }
+    }
+
+    for (const [index, a] of plainFiles.entries()) {
+      const outcome = await client.sendFile({
+        target,
+        filePath: writeTemp(a, index),
+        idempotencyKey: `${idempotencyKey}-f${index}`,
+      });
+      if (outcome.platformReply) receipts.push(outcome.platformReply);
+    }
+  } finally {
+    try {
+      rmSync(tempDir, { recursive: true, force: true });
+    } catch {
+      // 临时目录清理失败不影响已发送结果
     }
   }
 

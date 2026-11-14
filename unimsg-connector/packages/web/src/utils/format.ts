@@ -209,9 +209,16 @@ export function shortTrace(traceId: string): string {
 }
 
 export function initials(name: string): string {
-  const trimmed = name.trim();
-  if (!trimmed) return '?';
-  return /^[a-zA-Z]/.test(trimmed) ? trimmed.slice(0, 1).toUpperCase() : trimmed.slice(-1);
+  // 先剥掉包裹符号与首尾标点：「（我发出的会话）」直接取字会拿到「）」，
+  // 这类合成标题必须先去掉括号，再取有意义的字符
+  const cleaned = name
+    .trim()
+    .replace(/^[\s(（[【「『<《"'“”‘’·•…]+/, '')
+    .replace(/[\s)）\]】」』>》"'“”‘’·•…]+$/, '')
+    .trim();
+  const target = cleaned || name.trim();
+  if (!target) return '?';
+  return /^[a-zA-Z]/.test(target) ? target.slice(0, 1).toUpperCase() : target.slice(-1);
 }
 
 /** 意图标签配色：待办橙、咨询蓝、通知紫、未分类灰 */

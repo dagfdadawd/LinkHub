@@ -41,14 +41,17 @@ test('LLM 失败 → 回退「未分类」，不伪造意图', async () => {
   assert.equal(repo.get(message.traceId)!.intentSource, 'rules', '规则结果必须标注为 rules');
 });
 
-test('OCR 低置信 → 标记待人工确认', async () => {
+test('OCR 低置信 → 标记待人工确认（标记落到 needsReview，不污染正文）', async () => {
   const repo = new InMemoryRepository();
   const svc = new MessageService(repo, connectors, new LlmService(), new OcrService(), new RateLimiter(1, 5), () => {});
   const { message } = await svc.ingest(Platform.FEISHU, feishuRaw('[[LOW_CONF]]', 'image'));
   await waitFor(() => repo.get(message.traceId)!.needsReview === true);
   const m = repo.get(message.traceId)!;
   assert.equal(m.needsReview, true);
-  assert.ok(m.body.includes('待人工确认'));
+  // OCR 文本不再拼进正文：正文只留用户看到的内容，识别结果只进闭环日志
+  assert.equal(m.body.includes('待人工确认'), false);
+  assert.equal(m.body.includes('图片识别文字'), false);
+  assert.ok(repo.getLoopLog(message.traceId).some((e) => e.event === 'ocr_low_confidence'));
 });
 
 test('发送重试耗尽 → failed + DLQ', async () => {

@@ -35,12 +35,13 @@ class FakeWebSocket {
   }
 }
 
-function create(options: { maxRetries?: number } = {}) {
+function create(options: { maxRetries?: number; idleDelayMs?: number } = {}) {
   return new WsRealtime('ws://127.0.0.1:3001/ws?token=dev-token', {
     WebSocketImpl: FakeWebSocket as unknown as typeof WebSocket,
     maxRetries: options.maxRetries ?? 2,
     baseDelayMs: 100,
     maxDelayMs: 400,
+    idleDelayMs: options.idleDelayMs ?? 5000,
   });
 }
 
@@ -84,8 +85,8 @@ describe('WsRealtime', () => {
     rt.close();
   });
 
-  it('超过最大重试次数后进入 offline，不再重连', () => {
-    const rt = create({ maxRetries: 2 });
+  it('退避用完后进入 offline，但保留低频重试，恢复后自动回到 connected', () => {
+    const rt = create({ maxRetries: 2, idleDelayMs: 5000 });
     FakeWebSocket.instances[0].open();
 
     FakeWebSocket.instances[0].serverClose();
@@ -94,9 +95,28 @@ describe('WsRealtime', () => {
     vi.advanceTimersByTime(1000);
     FakeWebSocket.instances[2].serverClose();
 
+    // 如实进入 offline（UI 据此提示），但不再「永久放弃」
     expect(rt.getStatus()).toBe('offline');
-    vi.advanceTimersByTime(10_000);
+    vi.advanceTimersByTime(5000);
+    expect(FakeWebSocket.instances).toHaveLength(4);
+
+    // 后端恢复 → 自动回到 connected，用户无需刷新页面
+    FakeWebSocket.instances[3].open();
+    expect(rt.getStatus()).toBe('connected');
+    rt.close();
+  });
+
+  it('浏览器恢复联网时立即重连，不等低频重试', () => {
+    const rt = create({ maxRetries: 1, idleDelayMs: 60_000 });
+    FakeWebSocket.instances[0].serverClose();
+    vi.advanceTimersByTime(1000);
+    FakeWebSocket.instances[1].serverClose();
+    expect(rt.getStatus()).toBe('offline');
+
+    window.dispatchEvent(new Event('online'));
     expect(FakeWebSocket.instances).toHaveLength(3);
+    FakeWebSocket.instances[2].open();
+    expect(rt.getStatus()).toBe('connected');
     rt.close();
   });
 

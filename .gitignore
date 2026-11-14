@@ -161,3 +161,6 @@ vite.config.ts.timestamp-*
 
 # 本机 UI 验收截图（临时产物，不入库）
 .shots/
+
+# 本人身份落盘文件（echoRegistry 学习到的 openDingTalkId，属本机运行时产物）
+unimsg-connector/packages/server/.linkhub-self-identity.json

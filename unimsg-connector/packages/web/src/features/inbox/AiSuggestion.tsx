@@ -9,7 +9,6 @@ import {
   LoadingOutlined,
   MailOutlined,
   ReloadOutlined,
-  RobotOutlined,
   UpOutlined,
 } from '@ant-design/icons';
 import type { UnifiedMessage } from '../../types';
@@ -27,6 +26,41 @@ const TABS: Array<{ key: AiTab; label: string }> = [
 
 /** 超过这个字数才值得摘一遍：短消息在气泡里已经读完了 */
 const SUMMARY_MIN_CHARS = 60;
+
+/**
+ * 面板图标：一枚渐变的四角星芒。
+ * 用内联 SVG 而不是字体图标 —— 矢量在任何缩放/主题下都锐利，
+ * 渐变与光点也能直接跟着设计令牌换色，不需要额外资源。
+ */
+function AiMark({ size = 16 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      focusable="false"
+      className="ai-mark"
+    >
+      <defs>
+        <linearGradient id="ai-mark-grad" x1="3" y1="2" x2="21" y2="22" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="var(--ai-mark-a)" />
+          <stop offset="0.52" stopColor="var(--ai-mark-b)" />
+          <stop offset="1" stopColor="var(--ai-mark-c)" />
+        </linearGradient>
+      </defs>
+      {/* 主星芒：四段曲线内凹，边缘比菱形更利 */}
+      <path
+        d="M12 1.6c.7 4.6 1.8 7.1 3.6 8.9 1.8 1.8 4.3 2.9 8.9 3.6-4.6.7-7.1 1.8-8.9 3.6-1.8 1.8-2.9 4.3-3.6 8.9-.7-4.6-1.8-7.1-3.6-8.9C6.6 16 4.1 14.9-.5 14.2c4.6-.7 7.1-1.8 8.9-3.6C10.2 8.8 11.3 6.3 12 1.6Z"
+        fill="url(#ai-mark-grad)"
+      />
+      {/* 两颗伴星：让整体像「在思考」，不是一块死图标 */}
+      <circle cx="19.6" cy="4.6" r="1.5" fill="url(#ai-mark-grad)" opacity="0.75" />
+      <circle cx="4.6" cy="19.2" r="0.95" fill="url(#ai-mark-grad)" opacity="0.5" />
+    </svg>
+  );
+}
+
 
 /**
  * AI 智能助手面板：把「理解这条消息」和「准备怎么回」拆成两个标签页，
@@ -61,6 +95,8 @@ export function AiSuggestion({
   const { message: toast } = AntApp.useApp();
   const [open, setOpen] = useState(true);
   const [tab, setTab] = useState<AiTab>('analyze');
+  /** 高光块按序号平移：三栏等宽，位置不依赖测量 */
+  const tabIndex = Math.max(0, TABS.findIndex((item) => item.key === tab));
   const pending = !message.intent;
   const fallback = !message.intent || message.intent === '未分类';
 
@@ -113,7 +149,7 @@ export function AiSuggestion({
     <aside className="ai-panel" aria-label="AI 智能助手">
       <header className="ai-panel__head">
         <span className="ai-panel__icon" aria-hidden="true">
-          <RobotOutlined />
+          <AiMark size={15} />
         </span>
         <span className="ai-panel__titles">
           <span className="ai-panel__title">AI 智能助手</span>
@@ -145,6 +181,12 @@ export function AiSuggestion({
       {open && (
         <>
           <div className="ai-tabs" role="tablist" aria-label="AI 功能">
+            {/* 选中高光：一块随标签切换滑动的白片，动效与侧栏导航同一套弹簧曲线 */}
+            <span
+              className="ai-tabs__glow"
+              style={{ transform: `translateX(calc(${tabIndex} * (100% + var(--ai-tab-gap))))` }}
+              aria-hidden="true"
+            />
             {TABS.map((item) => (
               <button
                 key={item.key}

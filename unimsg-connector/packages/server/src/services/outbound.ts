@@ -99,6 +99,24 @@ export function describeAttachments(list: OutboundAttachment[]): AttachmentInfo[
   return list.map(({ name, mimeType, size }) => ({ name, mimeType, size }));
 }
 
+/** 预览串上限：base64 超过这个长度就不带预览，避免消息列表接口被一张图撑爆 */
+export const PREVIEW_MAX_BASE64 = 2_000_000;
+
+/**
+ * 在元数据基础上给**图片**附件带上 data URL 预览。
+ *
+ * 气泡里能直接看到缩略图、点开能放大；非图片或超阈值的附件只留元数据，
+ * 前端仍按文件卡片渲染（不假装能预览）。
+ */
+export function describeAttachmentsWithPreview(list: OutboundAttachment[]): AttachmentInfo[] {
+  return list.map(({ name, mimeType, size, contentBase64 }) => {
+    const base: AttachmentInfo = { name, mimeType, size };
+    if (!/^image\//i.test(mimeType ?? '')) return base;
+    if (!contentBase64 || contentBase64.length > PREVIEW_MAX_BASE64) return base;
+    return { ...base, preview: `data:${mimeType};base64,${contentBase64}` };
+  });
+}
+
 /**
  * 主动发送请求体归一化。
  * 允许「只有文本」「只有文件」「文本 + 文件」，但两者不能同时为空。

@@ -18,6 +18,9 @@
  * 事件 → 统一消息 → `svc.ingestUnified()`（与机器人链路共用幂等/trace/广播，receivedAs='user'）。
  */
 import { spawn, execFile } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Platform, type UnifiedMessage } from '@unimsg/shared';
 import { config } from '../config';
 import { MessageService } from '../services/message';
@@ -31,7 +34,7 @@ import {
   parseEventLine,
 } from '../connectors/dingtalkPersonal';
 import { identityChannelsReal, resolveIdentity } from '../services/identity';
-import { isSelfId, learnSelfId, matchEcho } from '../services/echoRegistry';
+import { isSelfId, learnSelfId, learnedSelfIds, matchEcho } from '../services/echoRegistry';
 
 /** 重启退避：1s → 2s → 4s … 上限 60s */
 export const RESTART_BASE_MS = 1_000;
@@ -155,11 +158,30 @@ export async function ingestPersonalEvent(
   evt: ReturnType<typeof parseEventLine>,
   counters: { ignored: number },
   selfOpenDingtalkId?: string,
+  opts: {
+    /** 这条事件来自哪个订阅范围（all-direct / at-me / all-group） */
+    sourceKind?: string;
+  } = {},
 ): Promise<UnifiedMessage | null> {
   if (!evt) return null;
   // 传 selfOpenDingtalkId 过滤自己发出的消息（取不到时 mapper 不过滤，宁可噪音也不误丢）
   const msg = mapPersonalEventToMessage(evt, selfOpenDingtalkId ? { selfOpenDingtalkId } : {});
   if (!msg) {
+    counters.ignored += 1;
+    return null;
+  }
+
+  const senderId = evt.senderOpenDingtalkId;
+  const selfKnown = Boolean(selfOpenDingtalkId) || learnedSelfIds(Platform.DINGTALK).length > 0;
+
+  /**
+   * `all-group` 订阅**只用来补「我自己在群里发的消息」**。
+   *
+   * 群里别人发的普通消息仍然靠 `at-me` 收（@我 才算进收件箱），
+   * 否则整个群的闲聊都会灌进收件箱、每条还跑一次大模型——既吵又费。
+   * 本人 ID 还没学到时不筛（宁可多收，也不能把自己的消息丢掉）。
+   */
+  if (opts.sourceKind === 'all-group' && selfKnown && !isSelfId(Platform.DINGTALK, senderId)) {
     counters.ignored += 1;
     return null;
   }
@@ -170,13 +192,20 @@ export async function ingestPersonalEvent(
    *  ② 命中「我们刚发出」的回声 → 跳过入库（内容已作为原消息的 reply 存在），
    *     并把本次事件的 sender 学成「本人」，供下一次手机消息识别。
    */
-  const senderId = evt.senderOpenDingtalkId;
   if (isSelfId(Platform.DINGTALK, senderId)) {
     msg.direction = 'out';
     await svc.ingestUnified(Platform.DINGTALK, msg);
     return msg;
   }
-  if (matchEcho({ platform: Platform.DINGTALK, conversationId: evt.conversationId, text: evt.content })) {
+  if (matchEcho({
+    platform: Platform.DINGTALK,
+    conversationId: evt.conversationId,
+    text: evt.content,
+    // 文件消息回推的正文是 `[文件] 名称 fileId: …`，文本对不上；按附件名兜底匹配
+    fileNames: msg.attachments?.map((a) => a.name),
+    // 图片消息回推只有 mediaId（归一化后文本为空），只能按「刚发过带图消息」判定
+    mediaOnly: msg.type === 'image',
+  })) {
     if (learnSelfId(Platform.DINGTALK, senderId)) {
       // 刚学到本人 ID：把历史里误当「来信」入库的本人消息立刻改标，
       // 不用等下次重启（否则列表会一直挂着几行自己发的"消息"）
@@ -187,7 +216,56 @@ export async function ingestPersonalEvent(
   }
 
   await svc.ingestUnified(Platform.DINGTALK, msg);
+  // 图片消息只回推 mediaId，没有可以直接显示的内容：后台换成预览，
+  // 界面就从「文件卡片」变成能点开的大图。失败不影响这条消息本身。
+  void hydrateMediaPreview(svc, msg, evt);
   return msg;
+}
+
+/** 预览串直接进消息体，超过这个大小就不带（避免消息列表接口被一张图撑爆） */
+const PREVIEW_MAX_BYTES = 1_500_000;
+
+/** 从文件头猜图片类型：下载下来的临时文件没有扩展名 */
+function sniffImageMime(buf: Buffer): string {
+  if (buf[0] === 0x89 && buf[1] === 0x50) return 'image/png';
+  if (buf[0] === 0xff && buf[1] === 0xd8) return 'image/jpeg';
+  if (buf.subarray(0, 4).toString('ascii') === 'GIF8') return 'image/gif';
+  if (buf.subarray(0, 4).toString('ascii') === 'RIFF') return 'image/webp';
+  return 'application/octet-stream';
+}
+
+/**
+ * 把钉钉图片消息的 mediaId 下载成本地文件，再转成 data URL 写回附件。
+ * 任何失败都静默跳过：消息仍是「图片 · 0 B」的文件卡片，但至少不会丢消息。
+ */
+async function hydrateMediaPreview(
+  svc: MessageService,
+  msg: UnifiedMessage,
+  evt: ReturnType<typeof parseEventLine>,
+): Promise<void> {
+  if (config.underTest) return;
+  const media = msg.attachments?.find((a) => a.mediaId);
+  if (!media?.mediaId || !evt?.messageId || !evt.conversationId) return;
+
+  const dir = mkdtempSync(join(tmpdir(), 'linkhub-media-'));
+  const out = join(dir, 'media');
+  try {
+    await dingtalkPersonalClient().downloadMedia({
+      mediaId: media.mediaId,
+      messageId: evt.messageId,
+      conversationId: evt.conversationId,
+      outputPath: out,
+    });
+    const buf = readFileSync(out);
+    if (buf.length === 0 || buf.length > PREVIEW_MAX_BYTES) return;
+    const mime = sniffImageMime(buf);
+    if (!mime.startsWith('image/')) return;
+    await svc.attachMediaPreview(msg.traceId, `data:${mime};base64,${buf.toString('base64')}`);
+  } catch {
+    // mediaId 过期 / 无权限 / dws 失败：保持文件卡片，不打扰用户
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 export class DingtalkPersonalStream {
@@ -352,7 +430,9 @@ export class DingtalkPersonalStream {
   ): Promise<void> {
     const counters = { ignored: 0 };
     try {
-      const msg = await ingestPersonalEvent(this.svc, evt, counters, this.selfOpenDingtalkId);
+      const msg = await ingestPersonalEvent(this.svc, evt, counters, this.selfOpenDingtalkId, {
+        sourceKind: channel.kind,
+      });
       if (msg) {
         this.log(
           `[dingtalk-user] 本人账号收到消息：${msg.conversation?.type === 'p2p' ? '单聊' : '群聊'}`

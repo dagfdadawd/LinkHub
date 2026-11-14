@@ -187,8 +187,11 @@ export const config = {
    */
   dataFile: explicitDataFile || (dataDir ? join(dataDir, 'linkhub-state.json') : ''),
 
-  /** 请求体上限（MB）：base64 附件约为原始大小的 4/3，默认 32MB 覆盖 20MB 总附件 */
-  maxUploadMb: Number(process.env.MAX_UPLOAD_MB ?? 32),
+  /**
+   * 请求体上限（MB）：base64 附件约为原始大小的 4/3。
+   * 默认 64MB 对应「单文件 20MB / 总计 40MB」的 FILE_LIMITS，留足 JSON 包装余量。
+   */
+  maxUploadMb: Number(process.env.MAX_UPLOAD_MB ?? 64),
 
   /** 前端构建产物目录：容器内同源部署时由 server 直接托管，单端口即可跑完整闭环 */
   webDist: (process.env.WEB_DIST ?? '').trim(),

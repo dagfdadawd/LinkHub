@@ -66,8 +66,13 @@ export interface SendResult {
  */
 export const FILE_LIMITS = {
   maxFiles: 5,
-  maxFileBytes: 10 * 1024 * 1024,
-  maxTotalBytes: 20 * 1024 * 1024,
+  /**
+   * 单文件 20MB / 总 40MB。
+   * 原来 10MB 对 PPT、带图的 Word 太紧，用户选了文件直接被拦下，
+   * 体感就是「添加文件没实现」。放宽后 base64 约 54MB，需配合 MAX_UPLOAD_MB=64。
+   */
+  maxFileBytes: 20 * 1024 * 1024,
+  maxTotalBytes: 40 * 1024 * 1024,
 } as const;
 
 /**
@@ -94,6 +99,19 @@ export interface AttachmentInfo {
   name: string;
   mimeType: string;
   size: number;
+  /**
+   * 平台侧媒体 ID（钉钉图片/文件消息）。
+   * 有它才能按需下载原图做预览；本地上传的文件没有这个字段。
+   */
+  mediaId?: string;
+  /**
+   * 图片的缩略预览（data URL）。仅对图片、且体积在阈值内生成。
+   *
+   * 为什么不走「按需下载接口」：演示环境没有对象存储，图片本身就要经请求体传上来，
+   * 直接带一个预览串最省事，气泡里能立刻看到图，点开还能放大。
+   * 非图片或超过阈值的附件不带这个字段，前端仍按文件卡片展示。
+   */
+  preview?: string;
 }
 
 /** 平台发送能力：前端据此放开/禁用文件按钮，并如实展示平台边界 */
@@ -300,6 +318,14 @@ export interface UnifiedMessage {
    * 让「发送文件」这一步在统一入口与全链路回放里同样可追踪。
    */
   attachments?: AttachmentInfo[];
+  /**
+   * 回复时带的附件。
+   *
+   * 和 `attachments` 分开：`attachments` 是「这条消息自己带的附件」（对方发来的图片、
+   * 或统一入口新建发送时附的文件）；回复附件属于那条回复，渲染时挂在回复气泡上，
+   * 否则会跑到原消息上，看起来像「我把图发进了对方那句话里」。
+   */
+  replyAttachments?: AttachmentInfo[];
 }
 
 /**

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Alert, App as AntApp, Button, Dropdown, Tag, Tooltip } from 'antd';
+import { Alert, App as AntApp, Button, Dropdown, Image, Tag, Tooltip } from 'antd';
 import type { MenuProps } from 'antd';
 import {
   ArrowLeftOutlined,
@@ -17,7 +17,7 @@ import {
   SendOutlined,
 } from '@ant-design/icons';
 import { MsgStatus } from '../../types';
-import type { OutboundAttachment, UnifiedMessage } from '../../types';
+import type { AttachmentInfo, OutboundAttachment, UnifiedMessage } from '../../types';
 import { formatBytes } from '../../utils/attachments';
 import { formatSendError } from '../../utils/sendError';
 import { store } from '../../store';
@@ -53,6 +53,46 @@ function focusComposer() {
 
 function isOut(m: UnifiedMessage): boolean {
   return m.direction === 'out';
+}
+
+/**
+ * 附件列表：图片直接给缩略图（点开可放大），其它文件保持文件卡片。
+ * 三处气泡共用同一个组件，避免「回复里的图」和「消息里的图」长得不一样。
+ */
+function AttachmentList({ items, label }: { items: AttachmentInfo[]; label: string }) {
+  return (
+    <ul className="file-list" aria-label={label}>
+      {items.map((a, i) => (
+        <li className={`file-list__item${a.preview ? ' has-preview' : ''}`} key={`${a.name}-${i}`}>
+          {a.preview ? (
+            <Image
+              className="file-list__thumb"
+              src={a.preview}
+              alt={a.name}
+              width={128}
+              height={128}
+              style={{ objectFit: 'cover', borderRadius: 10 }}
+            />
+          ) : (
+            <span className="file-list__icon" aria-hidden="true">
+              <PaperClipOutlined />
+            </span>
+          )}
+          <span className="file-list__main">
+            <span className="file-list__name">{a.name}</span>
+            <span className="file-list__meta">
+              {/* 平台没给大小时不写「0 B」：那是误导，不是文件真的空 */}
+              {a.size > 0
+                ? `${a.mimeType || '未知类型'} · ${formatBytes(a.size)}`
+                : a.mimeType === 'image/*'
+                  ? '图片'
+                  : a.mimeType || '未知类型'}
+            </span>
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 export function DetailPanel({
@@ -159,14 +199,10 @@ export function DetailPanel({
     setSending(true);
     try {
       await store.reply(replyTarget.traceId, content, attachments);
-      // P1-2：「已提交」不等于「已发出」；演示模式必须显式写「模拟发送」（P2-6）
-      toast.success(
-        replyIdentity === 'mock'
-          ? '已模拟发送（不会真的发到平台）…状态会在消息里实时更新'
-          : attachments.length > 0
-            ? `已提交，正在发送（含 ${attachments.length} 个附件）…状态会在消息里实时更新`
-            : '已提交，正在发送…状态会在消息里实时更新',
-      );
+      /**
+       * 提交成功不再弹 toast：气泡会立刻出现，状态（已同步/待重试）就在消息里实时变，
+       * 再盖一层「已提交，正在发送」既挡视线又重复。只有失败才提示。
+       */
       // P2-2：清空输入框 + 2 秒防重复，避免手滑再点一次重复打扰对方
       setText('');
       setCooldown(true);
@@ -305,6 +341,11 @@ export function DetailPanel({
   ];
 
   const headerName = conversationTitle ?? message.sender.name;
+  /**
+   * 整段都是自己发出的（没有对方）：标题是「（我发出的会话）」这类合成文案，
+   * 取首字会得到「）」这种废字符。这时头像改用自己的发送图标，与列表行保持一致。
+   */
+  const headerOutOnly = threadInboundCount === 0;
 
   /** 单条消息的气泡（入站左 / 出站右），含附件、告警、回写内容 */
   const renderMessage = (m: UnifiedMessage) => {
@@ -318,32 +359,18 @@ export function DetailPanel({
             <div className="bubble bubble--out">
               <div className="message-body">{m.body}</div>
               {m.attachments && m.attachments.length > 0 && (
-                <ul className="file-list" aria-label="附件">
-                  {m.attachments.map((a, i) => (
-                    <li className="file-list__item" key={`${a.name}-${i}`}>
-                      <span className="file-list__icon" aria-hidden="true">
-                        <PaperClipOutlined />
-                      </span>
-                      <span className="file-list__main">
-                        <span className="file-list__name">{a.name}</span>
-                        <span className="file-list__meta">
-                          {a.mimeType || '未知类型'} · {formatBytes(a.size)}
-                        </span>
-                      </span>
-                    </li>
-                  ))}
-                </ul>
+                <AttachmentList items={m.attachments} label="附件" />
               )}
             </div>
             <div className="bubble__meta bubble__meta--out">
-              <span className="bubble__label">
-                <SendOutlined aria-hidden="true" /> 我发出的
-              </span>
               {m.delivery?.mode === 'mock' ? (
                 <span className="chip chip--warn">模拟发送</span>
-              ) : m.delivery?.identity ? (
-                <IdentityTag role={m.delivery.identity} action="send" short />
-              ) : null}
+              ) : (
+                /* 没有投递记录的出站消息 = 你在手机/桌面客户端上直接发的（钉钉回声识别）。
+                   早先这里只认 delivery.identity，导致「手机发的前几条有本人、后几条没有」，
+                   统一按本人标注：出站且非机器人投递的，只可能是本人账号。 */
+                <IdentityTag role={m.delivery?.identity ?? 'user'} action="send" short />
+              )}
               <span>{formatDateTime(m.createdAt)}</span>
             </div>
           </div>
@@ -411,24 +438,7 @@ export function DetailPanel({
               <div className="message-body">{m.body}</div>
 
               {m.attachments && m.attachments.length > 0 && (
-                <ul className="file-list" aria-label="附件">
-                  {m.attachments.map((a, i) => (
-                    <li className="file-list__item" key={`${a.name}-${i}`}>
-                      <span className="file-list__icon" aria-hidden="true">
-                        <PaperClipOutlined />
-                      </span>
-                      <span className="file-list__main">
-                        <span className="file-list__name">{a.name}</span>
-                        <span className="file-list__meta">
-                          {a.mimeType || '未知类型'} · {formatBytes(a.size)}
-                        </span>
-                      </span>
-                      <Tooltip title="附件内容只用于投递，不落库，因此这里只展示元信息">
-                        <span className="file-list__hint">仅元信息</span>
-                      </Tooltip>
-                    </li>
-                  ))}
-                </ul>
+                <AttachmentList items={m.attachments} label="附件" />
               )}
             </div>
             <div className="bubble__meta">
@@ -448,17 +458,21 @@ export function DetailPanel({
             <div className="bubble-wrap bubble-wrap--out">
               <div className="bubble bubble--out">
                 <div className="message-body">{m.reply}</div>
-              </div>
-              <div className="bubble__meta bubble__meta--out">
-                <span className="bubble__label">
-                  <SendOutlined aria-hidden="true" />{' '}
-                  {m.status === MsgStatus.FAILED ? '待重试的回复' : '已回写'}
-                </span>
-                {m.status === MsgStatus.FAILED && delivery.kind !== 'none' && (
-                  <span className="chip chip--type">{delivery.text}</span>
+                {/* 回复自带的附件挂在回复气泡里；挂在原消息上会变成「对方那句话带着我的文件」 */}
+                {m.replyAttachments && m.replyAttachments.length > 0 && (
+                  <AttachmentList items={m.replyAttachments} label="回复附件" />
                 )}
-                <span>{formatDateTime(m.updatedAt)}</span>
               </div>
+              {/* 回复气泡只在失败时需要说明；成功时不挂时间，避免时间轴看起来倒序
+                  （回复紧贴原消息渲染，而回复时间可能晚于后面的消息） */}
+              {m.status === MsgStatus.FAILED && (
+                <div className="bubble__meta bubble__meta--out">
+                  <span className="bubble__label">待重试的回复</span>
+                  {delivery.kind !== 'none' && (
+                    <span className="chip chip--type">{delivery.text}</span>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -492,7 +506,12 @@ export function DetailPanel({
                 onClick={() => navigate('/inbox')}
                 aria-label="返回列表"
               />
-              <AvatarBadge name={headerName} platform={message.platform} size={34} />
+              <AvatarBadge
+                name={headerName}
+                platform={message.platform}
+                size={34}
+                {...(headerOutOnly ? { icon: <SendOutlined /> } : {})}
+              />
               <div className="chat-head__who">
                 <div className="chat-head__name">
                   <span className="chat-head__name-text" title={headerName}>
@@ -629,8 +648,13 @@ export function DetailPanel({
             {replyIdentity && (
               <div className="composer__identity" data-testid="reply-identity">
                 <span className="composer__identity-label">本次回复</span>
-                <IdentityTag role={replyIdentity} action="send" />
-                <span className="composer__identity-hint">{replyIdentityHint}</span>
+                {/* 长句提示收进 Tooltip：常驻一行会把输入区顶高，而且「以你本人账号发出」
+                    这类信息看一眼标签就够了；真正需要读（未登录原因）时悬停可见 */}
+                <Tooltip title={replyIdentityHint || undefined}>
+                  <span>
+                    <IdentityTag role={replyIdentity} action="send" />
+                  </span>
+                </Tooltip>
               </div>
             )}
             <ReplyComposer

@@ -49,6 +49,8 @@ export function CommandPalette({
   const { mode, toggle } = useTheme();
   const [query, setQuery] = useState('');
   const [index, setIndex] = useState(0);
+  /** 列表滚到底时关掉底部渐隐，否则最后一条会被压暗 */
+  const [atListEnd, setAtListEnd] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const restoreRef = useRef<Element | null>(null);
@@ -253,7 +255,16 @@ export function CommandPalette({
           <kbd className="kbd">Esc</kbd>
         </div>
 
-        <div className="cmdk__list" ref={listRef} role="listbox" aria-label="可执行项">
+        <div
+          className={`cmdk__list${atListEnd ? ' is-end' : ''}`}
+          ref={listRef}
+          role="listbox"
+          aria-label="可执行项"
+          onScroll={(e) => {
+            const el = e.currentTarget;
+            setAtListEnd(el.scrollHeight - el.scrollTop - el.clientHeight < 8);
+          }}
+        >
           {items.length === 0 && <div className="cmdk__empty">没有匹配项</div>}
           {items.map((item, i) => {
             const showGroup = item.group !== lastGroup;

@@ -6,7 +6,7 @@
  * 因此发送后在收件箱与「全链路回放」里都能逐步看到状态回流。
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, App as AntApp, Button, Input, Modal, Radio, Select, Space, Tag } from 'antd';
+import { App as AntApp, Button, Input, Modal, Radio, Select, Space, Tag } from 'antd';
 import { PaperClipOutlined, SendOutlined, UploadOutlined } from '@ant-design/icons';
 import { FILE_LIMITS, Platform } from '../../types';
 import type { ComposeRequest, IdentityRole, SendCapabilities } from '../../types';
@@ -223,12 +223,8 @@ export function ComposeModal({
         ...(attachments.length > 0 ? { attachments } : {}),
       };
       const taskId = await store.compose(req);
-      // 「已提交」不是「已发出」：异步发送结果会经 WS 回流；演示模式必须显式写「模拟」
-      toast.success(
-        mockChannel
-          ? '已模拟发送（不会真的发到平台）…可在「全链路回放」查看状态回流'
-          : '已提交，正在发送…（可在「全链路回放」查看状态回流）',
-      );
+      // 成功不再弹 toast：弹窗关闭 + 新消息出现在会话里，本身就是反馈；
+      // 失败才提示，避免每次发送都被一层浮层挡一下。
       setText('');
       setFiles([]);
       onSent?.(taskId);
@@ -456,15 +452,6 @@ export function ComposeModal({
             </div>
           )}
         </div>
-
-        {cap && (
-          <Alert
-            type={cap.mode === 'mock' ? 'info' : 'success'}
-            showIcon
-            message={`当前 ${PLATFORM_META[platform].name} 通道：${cap.mode === 'mock' ? '演示模式（模拟发送，不会真的调用平台）' : '真实平台接口'}`}
-            description={cap.note ?? '文本与文件都按统一消息格式转换后发送，状态会回流到全链路回放'}
-          />
-        )}
       </Space>
     </Modal>
   );
