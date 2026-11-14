@@ -57,6 +57,79 @@ describe('echoRegistry · 回声匹配', () => {
     rememberSent({ platform: 'dingtalk', conversationId: 'c', text: '', at: Date.now() });
     assert.equal(matchEcho({ platform: 'dingtalk', conversationId: 'c', text: '  ' }), undefined);
   });
+
+  it('纯附件消息按文件名认回声（平台回推里文本是 fileId 乱码）', () => {
+    const now = 4_000_000;
+    rememberSent({
+      platform: 'dingtalk',
+      conversationId: 'conv',
+      text: '', // 只发了文件，没有正文
+      fileNames: ['灰烬之城 Ashen City.docx'],
+      at: now,
+    });
+
+    // 钉钉回推的文件消息模板
+    const echoed = '[文件] 灰烬之城 Ashen City.docx fileId: 3NwLYZXWywdamn7wU0ovKQmZJkyEqBQm 注意：如需下载使用dws drive download命令下载';
+    assert.ok(
+      matchEcho({
+        platform: 'dingtalk',
+        conversationId: 'conv',
+        text: echoed,
+        fileNames: ['灰烬之城 Ashen City.docx'],
+        now: now + 3_000,
+      }),
+      '同一份文件在时间窗内应判为回声，不能入库成新消息',
+    );
+    // 文件名大小写不敏感（Windows / 平台回推可能改大小写）
+    assert.ok(
+      matchEcho({
+        platform: 'dingtalk',
+        conversationId: 'conv',
+        text: echoed,
+        fileNames: ['灰烬之城 ashen city.DOCX'],
+        now: now + 3_000,
+      }),
+    );
+    // 别的文件不能误吞
+    assert.equal(
+      matchEcho({
+        platform: 'dingtalk',
+        conversationId: 'conv',
+        text: '[文件] 别的东西.docx fileId: x',
+        fileNames: ['别的东西.docx'],
+        now: now + 3_000,
+      }),
+      undefined,
+    );
+  });
+
+  it('图片回声：只吞一条、超 60s 不再吞，避免误吞对方紧接着发的图', () => {
+    const now = 5_000_000;
+    rememberSent({
+      platform: 'dingtalk',
+      conversationId: 'conv',
+      text: '',
+      mediaCount: 1,
+      at: now,
+    });
+    const echo = { platform: 'dingtalk', conversationId: 'conv', text: '[图片消息] (mediaId=$abc)', mediaOnly: true };
+    assert.ok(matchEcho({ ...echo, now: now + 3_000 }), '自己发的图回推应判为回声');
+    assert.equal(matchEcho({ ...echo, now: now + 4_000 }), undefined, '同一条发送只吞一条回推');
+
+    rememberSent({ platform: 'dingtalk', conversationId: 'conv', text: '', mediaCount: 1, at: now });
+    assert.equal(
+      matchEcho({ ...echo, now: now + 90_000 }),
+      undefined,
+      '超过 60s 的图片回推不再当回声，避免把对方新发的图吞掉',
+    );
+  });
+
+  it('归一化会剥掉文件占位串（fileId + 下载提示），正文只剩可读内容', () => {
+    const normalized = normalizeEchoText(
+      '[文件] 周报.docx fileId: abc123 注意：如需下载使用dws drive download命令下载',
+    );
+    assert.equal(normalized, '');
+  });
 });
 
 describe('echoRegistry · 本人 ID 学习', () => {

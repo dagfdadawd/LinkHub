@@ -15,6 +15,7 @@ import { Platform } from '@unimsg/shared';
 import {
   DingtalkPersonalStream,
   buildListenArgs,
+  ingestPersonalEvent,
   killChildTree,
   classifyStreamExit,
   parseStreamLine,
@@ -33,6 +34,7 @@ import {
   resetDingtalkPersonalClientCache,
 } from '../connectors/dingtalkPersonal';
 import { resetIdentityCaches } from '../services/identity';
+import { learnSelfId } from '../services/echoRegistry';
 
 const FAKE_DWS = fileURLToPath(new URL('../../../../scripts/fake-dws.mjs', import.meta.url));
 const dirs: string[] = [];
@@ -284,4 +286,41 @@ test('端到端冒烟：真实 fake-dws 个人事件 → 入库 receivedAs=user�
   // 重复事件不会重复入库（fake-dws 每 100ms 一条，关停前可能已进多条，但 externalId 唯一）
   const ids = repo.list({ platform: Platform.DINGTALK }).map((m) => m.externalId);
   assert.equal(new Set(ids).size, ids.length, '幂等键唯一');
+});
+test('all-group 订阅只留「我自己发的」群消息，别人的群聊不灌进收件箱', async () => {
+  const { svc, repo } = makeSvc();
+  const self = `od_self_${Date.now()}`;
+  learnSelfId(Platform.DINGTALK, self);
+
+  const evt = (senderId: string, id: string) => ({
+    messageId: id,
+    conversationId: 'cid_group_1',
+    content: '[文件] 演示文稿.pptx fileId: abc',
+    eventType: 'user_im_message_receive_group_all',
+    senderOpenDingtalkId: senderId,
+    senderName: senderId === self ? '我' : '同事',
+    raw: {},
+  });
+
+  // 别人在群里发的：all-group 不入库（仍由 at-me 负责）
+  const counters = { ignored: 0 };
+  const other = await ingestPersonalEvent(svc, evt('od_other', 'om_other'), counters, undefined, {
+    sourceKind: 'all-group',
+  });
+  assert.equal(other, null);
+  assert.equal(counters.ignored, 1);
+  assert.equal(repo.list().length, 0);
+
+  // 我在群里发的（本人 ID 已学到）：必须保留
+  const mine = await ingestPersonalEvent(svc, evt(self, 'om_mine'), counters, undefined, {
+    sourceKind: 'all-group',
+  });
+  assert.ok(mine, '自己发的群消息必须入库');
+  assert.equal(mine.direction, 'out');
+
+  // at-me 订阅不受该过滤影响：别人 @我 的消息照常进入
+  const atMe = await ingestPersonalEvent(svc, evt('od_other', 'om_at'), counters, undefined, {
+    sourceKind: 'at-me',
+  });
+  assert.ok(atMe, '@我 的消息不受 all-group 过滤影响');
 });

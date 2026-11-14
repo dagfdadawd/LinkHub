@@ -75,6 +75,8 @@
   --r-20: 20px;
   --r-22: 22px;
   --r-pill: 999px;
+  /* 遮罩渐变的「不透明」端：mask-image 必须用实色 */
+  --mask-opaque: #000;
   --radius: var(--r-12);
   --radius-sm: var(--r-10);
   --radius-lg: var(--r-16);
@@ -2335,20 +2337,8 @@ button {
     background-color var(--dur-base) var(--ease-out);
 }
 
-/* 右上角一点高光：只作材质提示，不做发光 */
-.surface-card::after {
-  content: '';
-  position: absolute;
-  top: -40px;
-  right: -34px;
-  width: 96px;
-  height: 96px;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(255, 255, 255, 0.8), transparent 66%);
-  opacity: 0.45;
-  pointer-events: none;
-  transition: opacity var(--dur-base) var(--ease-out);
-}
+/* 卡片保持干净：不再叠「右上角高光」装饰块。
+   暗色下那点白色光斑在深底上像一块脏污，用户明确要求去掉。 */
 
 [data-theme='dark'] .drawer {
   box-shadow: var(--shadow-card), inset 0 0 0 1px rgba(255, 255, 255, 0.045);
@@ -2358,10 +2348,6 @@ button {
   background: color-mix(in srgb, var(--surface-3) 58%, transparent);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07),
     inset 0 0 0 1px rgba(255, 255, 255, 0.03), var(--shadow-sm);
-}
-
-[data-theme='dark'] .surface-card::after {
-  opacity: 0.1;
 }
 
 .surface-card--hover:hover {
@@ -4043,22 +4029,30 @@ html.vt-morph .detail {
 }
 
 .cmdk__panel {
-  width: min(560px, 100%);
-  max-height: 62vh;
+  width: min(580px, 100%);
+  max-height: 68vh;
   display: flex;
   flex-direction: column;
-  border-radius: var(--radius-lg);
-  background: color-mix(in srgb, var(--surface) 94%, transparent);
-  backdrop-filter: saturate(180%) blur(24px);
-  -webkit-backdrop-filter: saturate(180%) blur(24px);
-  box-shadow: var(--shadow-float),
-    inset 0 0 0 1px color-mix(in srgb, var(--border) 55%, transparent);
+  border-radius: var(--r-20);
+  background: color-mix(in srgb, var(--surface) 96%, transparent);
+  backdrop-filter: saturate(180%) blur(26px);
+  -webkit-backdrop-filter: saturate(180%) blur(26px);
+  /* 浮层要「悬浮」，靠远近两层阴影 + 一圈细边 + 顶沿高光 */
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--border) 60%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.75),
+    0 2px 6px rgba(17, 17, 19, 0.06),
+    0 26px 60px -28px rgba(17, 17, 19, 0.38);
   overflow: hidden;
   animation: cmdk-in 220ms var(--ease-spring);
 }
 
 [data-theme='dark'] .cmdk__panel {
-  background: color-mix(in srgb, var(--surface-2) 90%, transparent);
+  background: color-mix(in srgb, var(--surface-2) 92%, transparent);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.07),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 30px 70px -30px rgba(0, 0, 0, 0.85);
 }
 
 @keyframes cmdk-in {
@@ -4075,10 +4069,17 @@ html.vt-morph .detail {
 .cmdk__search {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 13px 14px;
+  gap: 12px;
+  padding: 15px 16px;
   color: var(--text-3);
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 45%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 42%, transparent);
+  transition: border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
+}
+
+.cmdk__search > .anticon {
+  font-size: 1rem;
+  color: var(--text-2);
 }
 
 .cmdk__input {
@@ -4089,7 +4090,8 @@ html.vt-morph .detail {
   background: transparent;
   color: var(--text);
   font: inherit;
-  font-size: 0.875rem;
+  font-size: 0.9375rem;
+  letter-spacing: -0.005em;
   outline: none;
 }
 
@@ -4097,49 +4099,78 @@ html.vt-morph .detail {
   color: var(--text-3);
 }
 
-/* 输入框本身去掉了 outline（免得在玻璃面板里出现方框），
-   但焦点必须可见（WCAG 2.4.7）——把焦点环画在整条搜索栏上 */
+/**
+ * 焦点态：不再给整条搜索栏套 2px 蓝色方框（在玻璃面板上像「选中了的输入框」）。
+ * 改成底部一条品牌色细线 + 极淡的内发光，焦点依然清晰（WCAG 2.4.7），但不抢眼。
+ */
 .cmdk__search:focus-within {
-  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--brand) 72%, transparent);
-  border-bottom-color: transparent;
+  border-bottom-color: color-mix(in srgb, var(--brand) 55%, transparent);
+  box-shadow:
+    inset 0 -1px 0 color-mix(in srgb, var(--brand) 55%, transparent),
+    0 8px 18px -18px color-mix(in srgb, var(--brand) 80%, transparent);
 }
 
 .cmdk__list {
   overflow-y: auto;
-  padding: 6px;
+  padding: 8px;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 2px;
+  /* 还有内容时底部淡出，提示「下面接着有」；滚到底由 .is-end 关掉，
+     避免最后一条被压暗 */
+  mask-image: linear-gradient(180deg, var(--mask-opaque) calc(100% - 22px), transparent);
+  -webkit-mask-image: linear-gradient(180deg, var(--mask-opaque) calc(100% - 22px), transparent);
+}
+
+.cmdk__list.is-end {
+  mask-image: none;
+  -webkit-mask-image: none;
 }
 
 .cmdk__group {
-  padding: 9px 10px 4px;
-  font-family: var(--mono);
-  font-size: 0.625rem;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--text-3);
+  padding: 12px 10px 5px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-2);
+  opacity: 0.75;
+}
+
+/* 第一组不需要额外上边距，避免面板顶部出现一块空白 */
+.cmdk__list > div:first-child .cmdk__group {
+  padding-top: 4px;
 }
 
 .cmdk__item {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 11px;
   width: 100%;
-  padding: 9px 10px;
+  min-height: 40px;
+  padding: 8px 10px;
   border: 0;
-  border-radius: var(--r-10);
+  border-radius: var(--r-12);
   background: transparent;
   color: var(--text);
   font: inherit;
-  font-size: 0.8125rem;
+  font-size: 0.8438rem;
   text-align: left;
   cursor: pointer;
-  transition: background-color var(--dur-fast) var(--ease-out);
+  transition: background-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
 }
 
+/* 选中项：品牌淡蓝底 + 图标同色。比纯灰底更能说明「回车会执行这一条」 */
 .cmdk__item.is-active {
-  background: var(--surface-3);
+  background: color-mix(in srgb, var(--brand) 11%, transparent);
+}
+
+.cmdk__item.is-active .cmdk__icon {
+  color: var(--brand);
+}
+
+.cmdk__item.is-active .cmdk__label {
+  color: color-mix(in srgb, var(--brand) 82%, var(--text));
 }
 
 .cmdk__icon {
@@ -4147,7 +4178,9 @@ html.vt-morph .detail {
   place-items: center;
   width: 18px;
   flex: 0 0 auto;
+  font-size: 0.9375rem;
   color: var(--text-3);
+  transition: color var(--dur-fast) var(--ease-out);
 }
 
 .cmdk__text {
@@ -4175,10 +4208,11 @@ html.vt-morph .detail {
 .cmdk__foot {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 16px;
   flex-wrap: wrap;
-  padding: 9px 14px;
-  border-top: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
+  padding: 10px 16px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 38%, transparent);
+  background: color-mix(in srgb, var(--surface-2) 45%, transparent);
   font-size: 0.6875rem;
   color: var(--text-3);
 }
@@ -4186,13 +4220,34 @@ html.vt-morph .detail {
 .cmdk__foot span {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
+}
+
+/* 面板内的键帽做小一号、带一点纸感厚度：底部细阴影 + 内描边 */
+.cmdk .kbd {
+  min-width: 19px;
+  height: 19px;
+  padding: 0 5px;
+  border-radius: var(--r-6);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--border) 62%, transparent),
+    0 1px 0 rgba(17, 17, 19, 0.05);
+  color: var(--text-2);
+  font-size: 0.625rem;
+}
+
+[data-theme='dark'] .cmdk .kbd {
+  background: color-mix(in srgb, var(--surface-3) 70%, transparent);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.09),
+    0 1px 0 rgba(0, 0, 0, 0.4);
 }
 
 .cmdk__empty {
-  padding: 26px;
+  padding: 30px 24px;
   text-align: center;
-  font-size: 0.7813rem;
+  font-size: 0.8125rem;
   color: var(--text-3);
 }
 
@@ -8081,4 +8136,747 @@ html.vt-morph .detail {
   flex: 0 0 auto;
   font-size: 0.6875rem;
   color: var(--text-3);
+}
+
+/* =====================================================================
+   图标轨道 + 卡片皮肤
+   追加在末尾：沿用同一套设计令牌，只覆盖「描边 / 底色 / 导航形态」，
+   不动组件结构与既有断点。想回退只需删掉这一段。
+   ===================================================================== */
+
+:root {
+  /* 侧栏只留一列图标，宽度按 44px 触点 + 两侧留白算 */
+  --nav-w: 76px;
+  --nav-item: 44px;
+  /* 卡片之间的呼吸缝：所有面板靠它分层，不再靠 1px 分割线 */
+  --card-gap: 12px;
+  /* 卡片底色：浅色用白；暗色下 --surface 与 --bg 同为纯黑，
+     直接复用会让卡片边界消失，所以单独抬一档 */
+  --panel-card: var(--surface);
+}
+
+:root[data-theme='dark'] {
+  --panel-card: #18181b;
+}
+
+/* ---------- 骨架：外圈留白，每个区域是独立卡片 ---------- */
+.app-shell {
+  grid-template-columns: var(--nav-w) minmax(0, 1fr);
+  gap: var(--card-gap);
+  padding: var(--card-gap);
+  background: var(--bg);
+}
+
+.app-body {
+  gap: var(--card-gap);
+}
+
+/* 顶栏从「白底 + 下边线」变成浮在卡片上的一条信息带 */
+.cmdbar {
+  padding: 0 4px;
+  border-bottom: 0;
+  background: transparent;
+}
+
+.app-main,
+.app-content {
+  background: transparent;
+}
+
+/* ---------- 侧栏：单图标轨道 ---------- */
+.side {
+  align-items: center;
+  padding: 14px 10px 12px;
+  border-right: 0;
+  border-radius: var(--r-18);
+  background: var(--panel-card);
+  box-shadow: var(--shadow-card);
+}
+
+.side__brand {
+  flex-direction: column;
+  justify-content: center;
+  gap: 0;
+  width: 100%;
+  padding: 2px 0 14px;
+}
+
+/* 品牌文字让位给图标：名称交给 Tooltip */
+.side__brand-text {
+  display: none;
+}
+
+.side__nav {
+  position: relative;
+  width: 100%;
+  align-items: center;
+  gap: 0;
+  overflow-x: hidden;
+  scrollbar-width: none;
+}
+
+.side__nav::-webkit-scrollbar {
+  display: none;
+}
+
+/* 高光在下、图标在上，z-index 分层 */
+.side__nav > .side__group {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  align-items: center;
+  gap: 4px;
+}
+
+/* 三组之间用一根细线分开：主导航 / 接入平台 / 账号入口 */
+.side__nav > .side__group + .side__group {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--text-3) 24%, transparent);
+}
+
+.side__group-label {
+  display: none;
+}
+
+.side-link {
+  position: relative;
+  justify-content: center;
+  width: var(--nav-item);
+  height: var(--nav-item);
+  padding: 0;
+  gap: 0;
+  flex: 0 0 auto;
+  border-radius: var(--r-14);
+}
+
+.side-link__label {
+  display: none;
+}
+
+.side-link__icon {
+  width: 20px;
+  height: 20px;
+  flex-basis: 20px;
+  font-size: 1.0625rem;
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+
+.side-link__icon--glyph {
+  width: 24px;
+  height: 24px;
+  flex-basis: 24px;
+  border-radius: var(--r-8);
+}
+
+/* 选中态只由 is-focus（高光所在项）决定；is-active 仍保留路由语义与 aria，
+   但不再单独变色 —— 否则「收件箱 + 某平台」会同时亮两个图标 */
+.side-link.is-active,
+.side-link.is-focus {
+  background: transparent;
+}
+
+.side-link.is-focus {
+  color: var(--brand);
+}
+
+.side-link.is-focus .side-link__icon {
+  transform: scale(1.06);
+}
+
+/* 平台组的选中：铜色语义，与导航组的蓝分开（平台图标本身保留平台色） */
+.side-link.is-focus-platform {
+  color: var(--copper);
+}
+
+.side-link.is-focus-platform .side-link__icon {
+  transform: scale(1.06);
+}
+
+/* 计数缩成右上角小徽标 —— 图标轨道没有第二列放数字 */
+.side-link__count {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: var(--r-pill);
+  background: var(--brand);
+  color: var(--on-accent);
+  font-size: 0.625rem;
+  line-height: 16px;
+  box-shadow: 0 0 0 2px var(--panel-card);
+}
+
+.side-link.is-active .side-link__count {
+  background: var(--brand);
+  color: var(--on-accent);
+}
+
+/* ---------- 果冻高光 ----------
+   导航里同时可以有两块：导航组（第 1、3 组）品牌蓝、平台组铜色。
+   位置由 JS 量出后写进 transform：
+   外层走带过冲的弹簧曲线（位移会「越过去一点再回弹」），
+   内层在每次换选中项时重放一次轻微挤压，两层叠起来就是果冻感。 */
+.side__glow {
+  --glow-tint: var(--brand);
+  position: absolute;
+  top: 0;
+  left: 50%;
+  z-index: 0;
+  width: calc(var(--nav-item) + 2px);
+  height: 0;
+  margin-left: calc((var(--nav-item) + 2px) / -2);
+  border-radius: var(--r-14);
+  pointer-events: none;
+  opacity: 0;
+  will-change: transform;
+}
+
+/* 平台组：四个平台各一种色（蓝 / 青 / 绿 / 橙），
+   图标底色与高光同源，选中时读作「整块同色加深一圈」，不撞色。 */
+.side__glow--platform {
+  --glow-tint: var(--brand);
+}
+
+.side__glow--platform[data-platform='feishu'] {
+  --glow-tint: var(--plat-feishu);
+}
+
+.side__glow--platform[data-platform='dingtalk'] {
+  --glow-tint: var(--plat-dingtalk);
+}
+
+.side__glow--platform[data-platform='wecom'] {
+  --glow-tint: var(--plat-wecom);
+}
+
+.side__glow--platform[data-platform='mail'] {
+  --glow-tint: var(--plat-mail);
+}
+
+/* 实心果冻块：中心一层同色高光 + 整体 30% 混色，颜色不虚 */
+.side__glow--platform .side__glow-fill {
+  background:
+    radial-gradient(
+      130% 120% at 50% 22%,
+      color-mix(in srgb, var(--glow-tint) 30%, transparent),
+      transparent 72%
+    ),
+    color-mix(in srgb, var(--glow-tint) 30%, var(--panel-card));
+  box-shadow: 0 12px 22px -16px color-mix(in srgb, var(--glow-tint) 65%, transparent);
+}
+
+/* 图标底色与高光取同一支色：颜色越一致，选中越像「它自己亮起来」 */
+.side-link__icon--glyph.is-feishu {
+  background: color-mix(in srgb, var(--plat-feishu) 16%, var(--panel-card));
+  color: var(--plat-feishu);
+}
+
+.side-link__icon--glyph.is-dingtalk {
+  background: color-mix(in srgb, var(--plat-dingtalk) 16%, var(--panel-card));
+  color: var(--plat-dingtalk);
+}
+
+.side-link__icon--glyph.is-wecom {
+  background: color-mix(in srgb, var(--plat-wecom) 16%, var(--panel-card));
+  color: var(--plat-wecom);
+}
+
+.side-link__icon--glyph.is-mail {
+  background: color-mix(in srgb, var(--plat-mail) 16%, var(--panel-card));
+  color: var(--plat-mail);
+}
+
+.side__glow.is-ready {
+  opacity: 1;
+  transition: transform 0.52s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.2s ease;
+}
+
+.side__glow-fill {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background:
+    radial-gradient(
+      130% 130% at 50% 24%,
+      color-mix(in srgb, var(--glow-tint) 26%, transparent),
+      transparent 74%
+    ),
+    color-mix(in srgb, var(--glow-tint) 9%, var(--panel-card));
+  box-shadow: 0 12px 24px -16px color-mix(in srgb, var(--glow-tint) 70%, transparent);
+  animation: nav-glow-jelly 0.52s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes nav-glow-jelly {
+  0% {
+    transform: scale(1, 1);
+  }
+  32% {
+    transform: scale(1.05, 1.18);
+  }
+  68% {
+    transform: scale(0.96, 0.92);
+  }
+  100% {
+    transform: scale(1, 1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .side__glow.is-ready {
+    transition: opacity 0.2s ease;
+  }
+
+  .side__glow-fill {
+    animation: none;
+  }
+}
+
+/* 底部工具区：去掉上边线，图标与状态点居中对齐 */
+.side__foot {
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 0;
+}
+
+.side__foot .side-link--plain {
+  justify-content: center;
+  width: var(--nav-item);
+  height: var(--nav-item);
+  padding: 0;
+}
+
+.side-status {
+  width: var(--nav-item);
+  height: 28px;
+  padding: 0;
+  justify-content: center;
+  background: transparent;
+}
+
+.side-status__text {
+  display: none;
+}
+
+.side-status__dot {
+  width: 8px;
+  height: 8px;
+  flex-basis: 8px;
+}
+
+/* ---------- 卡片模式：去掉页面级分割线，用留白分层 ---------- */
+.inbox-page,
+.trace-page,
+.page {
+  background: transparent;
+}
+
+.inbox {
+  gap: var(--card-gap);
+  background: transparent;
+}
+
+.list-pane {
+  border-right: 0;
+  border-radius: var(--r-18);
+  background: var(--panel-card);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+
+.list-header {
+  border-bottom: 0;
+}
+
+.detail-pane,
+.detail--workbench {
+  background: transparent;
+}
+
+/* 未选中会话时右栏是一张空卡，而不是一块裸露的背景 */
+.detail-pane > .empty-state {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-18);
+  background: var(--panel-card);
+  box-shadow: var(--shadow-card);
+}
+
+.wb {
+  gap: var(--card-gap);
+}
+
+.wb__chat {
+  border-radius: var(--r-18);
+  background: var(--panel-card);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+
+.chat-head {
+  border-bottom: 0;
+}
+
+/* AI 助手独立成卡，与聊天区之间留缝（原来靠 1px 竖线分隔） */
+.ai-panel {
+  border-left: 0;
+  border-radius: var(--r-18);
+  box-shadow: var(--shadow-card);
+}
+
+/* 待办 / 回放 / 账号 / 连接这类整页视图：整页就是一张卡片 */
+.page {
+  border-radius: var(--r-18);
+  background: var(--panel-card);
+  box-shadow: var(--shadow-card);
+  padding: 22px 24px 32px;
+}
+
+/* ---------- 窄屏适配：保持「单列 + 底部导航」的既有行为 ---------- */
+@media (max-width: 1080px) {
+  :root {
+    --nav-w: 72px;
+  }
+}
+
+@media (max-width: 640px) {
+  .app-shell {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+    /* 给底部导航让位；带 Home 指示条的机型要额外加上安全区 */
+    padding: 8px 8px calc(58px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .page {
+    padding: 18px 16px 26px;
+  }
+}
+
+/* =====================================================================
+   背景与卡片分层
+   浅色：整页纯白（不再铺天光渐变），卡片靠「柔和投影 + 顶沿细高光」浮起来；
+        白底白卡必须有投影，否则卡片边界会消失成一整片白。
+   深色：保留极淡的品牌光，纯黑底上卡片已有色差，不需要额外处理。
+   ===================================================================== */
+
+:root {
+  --card-edge: rgba(255, 255, 255, 0.72);
+  /* 纯白底上，卡片顶沿改用极淡的灰，白对白才看得见边界 */
+  --card-edge-light: rgba(17, 17, 19, 0.05);
+  /* 四个平台的自有颜色：图标底色与选中高光共用，避免「高光与图标撞色」 */
+  --plat-feishu: #3370ff;
+  --plat-dingtalk: #00b8d9;
+  --plat-wecom: #07c160;
+  --plat-mail: #ff9500;
+}
+
+:root[data-theme='dark'] {
+  --card-edge: rgba(255, 255, 255, 0.05);
+}
+
+/* 浅色整页纯白：只在默认（非 dark）主题生效 */
+:root:not([data-theme='dark']) .app-shell {
+  background: #fff;
+}
+
+
+:root[data-theme='dark'] .app-shell {
+  background:
+    radial-gradient(
+      120% 90% at 6% -18%,
+      color-mix(in srgb, var(--brand) 14%, transparent),
+      transparent 58%
+    ),
+    radial-gradient(
+      90% 70% at 102% -6%,
+      color-mix(in srgb, var(--copper) 7%, transparent),
+      transparent 62%
+    ),
+    var(--bg);
+}
+
+/* 卡片顶沿的细高光：不是描边，是纸被光压住的那一点厚度 */
+.side,
+.list-pane,
+.wb__chat,
+.page,
+.ai-panel,
+.detail-pane > .empty-state {
+  box-shadow: var(--shadow-card), inset 0 1px 0 var(--card-edge);
+}
+
+/**
+ * 浅色纯白底：白卡片叠白底，只靠单一阴影会显得又平又糊。
+ * 这里用「微渐变 + 五层阴影」做出立体卡片：
+ *  · 顶亮底暗的极淡渐变给出受光面，像一块浮起的纸板；
+ *  · 1px 外沿定轮廓（4%，不是可见描边）；
+ *  · 贴地阴影 + 扩散阴影分两层，模拟「近处实、远处虚」的落影；
+ *  · 内顶高光 + 内底暗边，补足厚度。
+ */
+:root:not([data-theme='dark']) .side,
+:root:not([data-theme='dark']) .list-pane,
+:root:not([data-theme='dark']) .wb__chat,
+:root:not([data-theme='dark']) .page,
+:root:not([data-theme='dark']) .ai-panel,
+:root:not([data-theme='dark']) .detail-pane > .empty-state {
+  background: linear-gradient(180deg, #ffffff 0%, #fdfdfe 55%, #f9f9fb 100%);
+  box-shadow:
+    0 0 0 1px rgba(17, 17, 19, 0.055),
+    0 1px 1px rgba(17, 17, 19, 0.045),
+    0 3px 6px -4px rgba(17, 17, 19, 0.1),
+    0 18px 34px -22px rgba(17, 17, 19, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95),
+    inset 0 -2px 5px -3px rgba(17, 17, 19, 0.06);
+}
+
+/* 弹窗沿用同一套卡片语言 */
+.ant-modal .ant-modal-content {
+  border-radius: var(--r-20);
+  box-shadow: var(--shadow-float);
+}
+
+/* ---------- 弹窗内表单：让字段「立」起来，而不是一排灰字 ---------- */
+.ant-modal .ant-modal-title {
+  font-size: 1.0625rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.ant-modal .ant-modal-header {
+  margin-bottom: 16px;
+}
+
+/* 标签读起来要像字段名，而不是辅助说明 */
+.compose-field__label {
+  margin-bottom: 8px;
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* 控件统一成「浅底无框，聚焦时浮起来」 */
+.ant-modal .ant-input,
+.ant-modal .ant-select .ant-select-selector,
+.ant-modal .ant-input-affix-wrapper {
+  background: var(--surface-2);
+  border-color: transparent;
+  border-radius: var(--r-10);
+  box-shadow: none;
+}
+
+.ant-modal .ant-input:hover,
+.ant-modal .ant-select:not(.ant-select-disabled):hover .ant-select-selector,
+.ant-modal .ant-input-affix-wrapper:hover {
+  background: var(--surface-3);
+  border-color: transparent;
+}
+
+.ant-modal .ant-input:focus,
+.ant-modal .ant-input-focused,
+.ant-modal .ant-select-focused .ant-select-selector,
+.ant-modal .ant-input-affix-wrapper-focused {
+  background: var(--surface);
+  border-color: color-mix(in srgb, var(--brand) 55%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 12%, transparent);
+}
+
+/* 底部操作区用一道极淡的顶沿阴影分层，不画实线 */
+.ant-modal .ant-modal-footer {
+  margin-top: 18px;
+  padding-top: 14px;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-3) 16%, transparent);
+}
+
+/* =====================================================================
+   AI 面板：渐变星芒图标 + 标签滑动高光；筛选胶囊的选中态
+   ===================================================================== */
+
+:root {
+  --ai-mark-a: #9b8cff;
+  --ai-mark-b: #5b8cff;
+  --ai-mark-c: #3ac8ff;
+}
+
+/* 图标底：同一套渐变语言，配一点内高光，像一枚小徽章 */
+.ai-panel__icon {
+  border-radius: var(--r-10);
+  background: linear-gradient(
+    145deg,
+    color-mix(in srgb, var(--ai-mark-a) 22%, var(--panel-card)),
+    color-mix(in srgb, var(--ai-mark-c) 18%, var(--panel-card))
+  );
+  box-shadow:
+    0 6px 14px -10px color-mix(in srgb, var(--ai-mark-b) 70%, transparent),
+    inset 0 1px 0 var(--card-edge);
+}
+
+.ai-mark {
+  display: block;
+}
+
+/* 标签栏：三栏等宽，高光按序号整块平移；不做宽度动画，避免动布局 */
+.ai-tabs {
+  position: relative;
+  --ai-tab-gap: 2px;
+  --ai-tab-pad: 12px;
+}
+
+.ai-tabs__glow {
+  position: absolute;
+  top: 0;
+  left: var(--ai-tab-pad);
+  z-index: 0;
+  width: calc((100% - var(--ai-tab-pad) * 2 - var(--ai-tab-gap) * 2) / 3);
+  height: 28px;
+  border-radius: var(--r-8);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  pointer-events: none;
+  transition: transform 0.42s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.ai-tab {
+  position: relative;
+  z-index: 1;
+  transition: color var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
+}
+
+/* 选中态交给滑动高光，文字只负责变色 */
+.ai-tab:hover {
+  background: transparent;
+}
+
+.ai-tab.is-active {
+  background: transparent;
+  box-shadow: none;
+}
+
+.ai-tab:active {
+  transform: scale(0.96);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-tabs__glow {
+    transition: none;
+  }
+}
+
+/* 筛选胶囊：原来的「白底 + 阴影」落在白卡上几乎看不出来，
+   改成品牌软底，选中与未选中一眼能分 */
+.quick-pill {
+  transition: background-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
+}
+
+.quick-pill.is-active {
+  background: color-mix(in srgb, var(--brand) 12%, var(--panel-card));
+  color: var(--brand);
+  font-weight: 600;
+  box-shadow: none;
+}
+
+.quick-pill:active {
+  transform: scale(0.96);
+}
+
+/* ---------- 图片附件：缩略图 + 元信息 ---------- */
+.file-list__item.has-preview {
+  align-items: flex-start;
+  padding: 8px;
+}
+
+.file-list__thumb {
+  flex: 0 0 auto;
+  display: block;
+  border-radius: var(--r-10);
+  overflow: hidden;
+  cursor: zoom-in;
+}
+
+/* 有预览时不再提示「仅元信息」——图就在眼前，说明已经多余 */
+.file-list__item.has-preview .file-list__hint {
+  display: none;
+}
+
+/* =====================================================================
+   滚动条：不滚动时完全消失，滚动或悬停时才出现
+   （.is-scrolling 由 utils/scrollIndicator.ts 全局监听打上，停止 900ms 后移除）
+   ===================================================================== */
+
+.app-shell {
+  /* Firefox：默认透明，悬停时由下面的规则接管（Chromium 走伪元素） */
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.app-shell ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.app-shell ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* 滑块默认透明：滚动条不占视觉，内容区看起来是「无缝」的 */
+.app-shell ::-webkit-scrollbar-thumb {
+  background-color: transparent;
+  border-radius: var(--r-pill);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  transition: background-color 0.16s ease;
+}
+
+/* 滚动中 / 鼠标悬停才显形 */
+.app-shell .is-scrolling::-webkit-scrollbar-thumb,
+.app-shell :hover::-webkit-scrollbar-thumb {
+  background-color: color-mix(in srgb, var(--text-2) 42%, transparent);
+}
+
+.app-shell ::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in srgb, var(--text-2) 66%, transparent);
+}
+
+/* 滚动时给列表一点「正在滚动」的提示：滑块出现的过渡不要太突然 */
+@media (prefers-reduced-motion: reduce) {
+  .app-shell ::-webkit-scrollbar-thumb {
+    transition: none;
+  }
+}
+
+/* =====================================================================
+   头像：从「描边圆圈 + 一个字」升级成有厚度的圆牌
+   ===================================================================== */
+
+.avatar-badge {
+  background:
+    radial-gradient(120% 115% at 32% 20%, rgba(255, 255, 255, 0.92), transparent 62%),
+    var(--tag-soft);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, currentColor 16%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 1px 2px rgba(17, 17, 19, 0.07);
+}
+
+[data-theme='dark'] .avatar-badge {
+  background:
+    radial-gradient(120% 115% at 32% 20%, rgba(255, 255, 255, 0.1), transparent 62%),
+    var(--tag-soft);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, currentColor 22%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+/* 图标头像（无真实联系人时的「我发出的」会话）：图标居中，不参与字体基线 */
+.avatar-badge--icon .anticon {
+  font-size: 0.95em;
+  display: grid;
+  place-items: center;
 }

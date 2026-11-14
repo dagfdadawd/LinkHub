@@ -100,7 +100,6 @@ describe('AppShell 顶栏布局', () => {
     const actions = container.querySelector('.cmdbar__actions') as HTMLElement;
     const buttons = within(actions).getAllByRole('button');
     expect(buttons.map((el) => el.getAttribute('aria-label'))).toEqual([
-      '打开设计实验室',
       '切换明暗主题',
       '新建发送',
     ]);

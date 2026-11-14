@@ -22,7 +22,7 @@ import { decidePlatformEvent } from './sync';
 import { writeTrace } from '../core/loop-log';
 import { counters } from '../core/metrics';
 import { config, modeOf } from '../config';
-import { describeAttachments } from './outbound';
+import { describeAttachmentsWithPreview } from './outbound';
 import { assertIdentityUsable, ensureIdentityProbed } from './identity';
 
 export interface Broadcast {
@@ -227,10 +227,13 @@ export class MessageService {
     if (m.type === 'image' || m.type === 'file') {
       const r = await this.ocr.recognize(m);
       if (r.ok) {
-        if (r.text) body = `${body ? `${body} ` : ''}${r.text}`;
+        /**
+         * OCR 结果只写闭环日志，**不再拼进消息正文**：
+         * 正文是给人读的原始内容，混入「（图片识别文字：…）」会打断阅读，
+         * 也容易被误当成对方说的话。低置信仍然标 needsReview，由界面提示人工确认。
+         */
         if (r.confidence < config.ocrThreshold) {
           needsReview = true;
-          body = `${body} [待人工确认]`;
           writeTrace(this.repo, m, 'ocr_low_confidence', `confidence=${r.confidence}`);
         } else {
           writeTrace(this.repo, m, 'ocr', `confidence=${r.confidence}`);
@@ -371,14 +374,16 @@ export class MessageService {
       assertIdentityUsable(cur.platform, identity);
     }
 
-    const info = describeAttachments(attachments);
+    const info = describeAttachmentsWithPreview(attachments);
 
     let m = this.repo.update(id, {
       status: MsgStatus.PROCESSING,
       reply: text,
       failureReason: undefined, // 重试时清掉上一次失败原因，避免旧原因误导
       ...(identity ? { sendIdentity: identity } : {}),
-      ...(info.length > 0 ? { attachments: info } : {}),
+      // 写 replyAttachments 而不是 attachments：回复的图/文件属于这次回复，
+      // 写进 attachments 会挂到原消息上（别人的话旁边突然出现我的附件）
+      ...(info.length > 0 ? { replyAttachments: info } : {}),
     })!;
     // 用数组 join 拼 detail，避免「指定发送身份=本人，」这类尾逗号（评审看得到 trace 文案）
     const processingParts: string[] = [];
@@ -420,7 +425,7 @@ export class MessageService {
     }
 
     const attachments = req.attachments ?? [];
-    const info = describeAttachments(attachments);
+    const info = describeAttachmentsWithPreview(attachments);
 
     // 目标会话：用户显式指定优先；否则复用该平台最近一条已知会话（可用但不是伪造）
     let conversationId = req.conversationId;
@@ -520,6 +525,8 @@ export class MessageService {
     if (!cur) return;
     const connector = this.connectors[cur.platform];
     const outgoing: UnifiedMessage = { ...cur, body: cur.reply ?? cur.body };
+    // 内联图片数量：钉钉会用 Markdown 图文发出去，回推时只剩 mediaId，需要单独识别
+    const inlineImageCount = attachments.filter((a) => /^image\//i.test(a.mimeType ?? '')).length;
 
     try {
       const result = await this.limiter.send(cur.platform, () => connector.send(outgoing, attachments));
@@ -532,6 +539,10 @@ export class MessageService {
           platform: cur.platform,
           conversationId: cur.conversation?.id,
           text: normalizeEchoText(cur.reply ?? cur.body),
+          // 纯附件消息没有文本，必须登记文件名，否则平台回推时认不出是自己发的
+          ...(attachments.length > 0 ? { fileNames: attachments.map((a) => a.name) } : {}),
+          // 图片消息回推只有 mediaId，既无文本也无文件名，靠这个计数认回声
+          ...(inlineImageCount > 0 ? { mediaCount: inlineImageCount } : {}),
           at: Date.now(),
           traceId: id,
         });
@@ -623,6 +634,21 @@ export class MessageService {
     // 阅读是高频轻操作，不写闭环日志；只在状态真正变化时广播
     if (cur.readAt !== readAt) this.broadcast({ type: 'message.updated', data: m });
     return m;
+  }
+
+  /**
+   * 给附件补上图片预览（data URL）。
+   *
+   * 钉钉的图片消息只回推 mediaId，没有可以直接展示的内容；下载完成后把预览写回
+   * 附件并广播，界面就从「文件卡片」变成能点开的大图。下载失败时静默保持原样。
+   */
+  async attachMediaPreview(id: string, preview: string): Promise<void> {
+    const cur = this.repo.get(id);
+    if (!cur?.attachments?.length) return;
+    if (cur.attachments.every((a) => a.preview)) return;
+    const attachments = cur.attachments.map((a) => (a.preview ? a : { ...a, preview }));
+    const updated = this.repo.update(id, { attachments });
+    if (updated) this.broadcast({ type: 'message.updated', data: updated });
   }
 
   /**

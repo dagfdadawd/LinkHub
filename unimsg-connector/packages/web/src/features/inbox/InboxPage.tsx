@@ -472,7 +472,14 @@ export function InboxPage() {
                   type="button"
                   className={`quick-pill${state.filters.onlyUnread ? ' is-active' : ''}`}
                   aria-pressed={Boolean(state.filters.onlyUnread)}
-                  onClick={() => store.setFilters({ onlyUnread: !state.filters.onlyUnread })}
+                  onClick={() =>
+                    store.setFilters({
+                      onlyUnread: !state.filters.onlyUnread,
+                      // 「未读」与「待处理」是同一组单选：点一个必须清掉另一个，
+                      // 否则两个胶囊会同时高亮，筛选条件也会互相叠加成空结果。
+                      onlyReview: false,
+                    })
+                  }
                 >
                   未读
                 </button>
@@ -480,7 +487,12 @@ export function InboxPage() {
                   type="button"
                   className={`quick-pill${state.filters.onlyReview ? ' is-active' : ''}`}
                   aria-pressed={Boolean(state.filters.onlyReview)}
-                  onClick={() => store.setFilters({ onlyReview: !state.filters.onlyReview })}
+                  onClick={() =>
+                    store.setFilters({
+                      onlyReview: !state.filters.onlyReview,
+                      onlyUnread: false,
+                    })
+                  }
                 >
                   待处理
                 </button>

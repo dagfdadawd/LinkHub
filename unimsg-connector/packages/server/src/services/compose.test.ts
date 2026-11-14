@@ -181,12 +181,14 @@ test('reply：带附件回写沿用同一状态机，附件元数据可见', asy
   const a = attachment();
   const ack = await svc.reply(message.traceId, '收到，附文件', [a]);
   assert.equal(ack.message.status, MsgStatus.REPLIED);
-  assert.equal(ack.message.attachments?.length, 1);
+  // 回复的附件写在 replyAttachments：写进 attachments 会挂到原消息上
+  assert.equal(ack.message.replyAttachments?.length, 1);
+  assert.equal(ack.message.attachments, undefined);
 
   await wait();
   const m = repo.get(message.traceId)!;
   assert.equal(m.status, MsgStatus.SYNCED);
-  assert.deepEqual(m.attachments, [{ name: 'report.pdf', mimeType: 'application/pdf', size: a.size }]);
+  assert.deepEqual(m.replyAttachments, [{ name: 'report.pdf', mimeType: 'application/pdf', size: a.size }]);
   assert.equal(JSON.stringify(m).includes(a.contentBase64), false);
   assert.ok(repo.getLoopLog(message.traceId).some((e) => /带 1 个附件/.test(e.detail ?? '')));
 });

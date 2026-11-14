@@ -5,15 +5,10 @@ import { TodosPage } from '../features/todos/TodosPage';
 import { TracePage } from '../features/trace/TracePage';
 import { AccountsPage } from '../features/accounts/AccountsPage';
 import { ConnectPage } from '../features/connect/ConnectPage';
-import { DesignLab } from '../features/design-lab/DesignLab';
-import { FlowHome } from '../features/design-lab/FlowHome';
 
 export function App() {
   return (
     <Routes>
-      <Route path="/designs" element={<DesignLab />} />
-      <Route path="/designs/:variant" element={<DesignLab />} />
-      <Route path="/flow" element={<FlowHome />} />
       <Route element={<AppShell />}>
         <Route path="/" element={<Navigate to="/inbox" replace />} />
         <Route path="/inbox" element={<InboxPage />} />

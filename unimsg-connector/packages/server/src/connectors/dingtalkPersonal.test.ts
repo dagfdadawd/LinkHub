@@ -31,6 +31,7 @@ import {
   pickLoginUrl,
   parseSelfProfileJson,
   parseProfileListJson,
+  parseMediaContent,
   parseVersion,
   splitCommandLine,
   type DwsRunResult,
@@ -362,6 +363,62 @@ test('mapSendResultJson：成功回执 / dry-run 拒绝 / 两种失败结构都�
     () => mapSendResultJson({ code: 5, stdout: JSON.stringify({ error: { category: 'internal', code: 5, message: 'cannot resolve' } }), stderr: '' }),
     /未登录|重新登录|授权/,
   );
+});
+
+test('mapSendResultJson：uuid 重复是幂等命中，按成功处理不抛错', () => {
+  const repeated = mapSendResultJson({
+    code: 1,
+    stdout: JSON.stringify({
+      ok: false,
+      outcome: 'failure',
+      error: {
+        message:
+          "sendPersonalMessageByServerPush error: Request is repeated with uuid 'linkhub-68606d8c-947e-466b-86b7-83b1e035e82a'.",
+      },
+    }),
+    stderr: '',
+  }, 'chat message reply');
+
+  assert.equal(repeated.ok, true);
+  // 幂等命中没有新的平台回执，不能伪造一个 ID 冒充新发送
+  assert.equal(repeated.platformReply, undefined);
+});
+
+test('parseMediaContent：文件回推的 `[文件] 名称 fileId: …` 不再原样当正文', () => {
+  const raw = '[文件] 灰烬之城 Ashen City.docx fileId: 3NwLYZXWywdamn7wU0ovKQmZJkyEqBQm 注意：如需下载使用dws drive download命令下载';
+  const parsed = parseMediaContent(raw);
+  assert.ok(parsed);
+  assert.equal(parsed.type, 'file');
+  // 正文只留可读部分：类型 + 文件名，fileId 与下载提示全部剥掉
+  assert.equal(parsed.body, '[文件] 灰烬之城 Ashen City.docx');
+  assert.equal(parsed.attachment?.name, '灰烬之城 Ashen City.docx');
+  assert.doesNotMatch(parsed.body, /fileId|dws drive download/);
+
+  // 图片同样一套模板
+  const image = parseMediaContent('[图片] 截图.png fileId: abc 注意：如需下载使用dws drive download命令下载');
+  assert.equal(image?.type, 'image');
+  assert.equal(image?.body, '[图片] 截图.png');
+
+  // 普通文本消息不受影响
+  assert.equal(parseMediaContent('这个文件我下午发你'), undefined);
+});
+
+test('classifyDwsFailure：上传接口 401 / 业务错误不再误判成「本人身份未登录」', () => {
+  // 真实踩过：发文件时上传接口返回 401，旧正则把 401 当登录过期，
+  // 于是界面说「请重新登录」——用户重新登录也没用，因为根本不是登录问题。
+  const upload = classifyDwsFailure({
+    code: 1,
+    stdout: JSON.stringify({
+      ok: false,
+      error: { type: 'api', upstream_code: 'OPEN_UPLOAD_FAILED', message: '上传失败：401 Unauthorized' },
+    }),
+    stderr: '',
+  });
+  assert.equal(upload.kind, 'unknown');
+  assert.doesNotMatch(upload.message, /未登录/);
+  assert.match(upload.message, /上传失败/);
+  // 上游错误码要带出来，否则只剩一句无法排查的「未知错误」
+  assert.match(upload.message, /OPEN_UPLOAD_FAILED/);
 });
 
 test('classifyDwsFailure：未登录 exit=5 / 没装 ENOENT / 超时 / 权限 / 脚本不存在', () => {

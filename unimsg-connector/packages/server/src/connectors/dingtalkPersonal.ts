@@ -308,8 +308,14 @@ export function parseDwsBin(bin: string | undefined): { file: string; prefixArgs
 // 失败分类（把英文原始报文翻译成中文可操作提示）
 // ---------------------------------------------------------------------------
 
-/** dws 未登录的典型报文（实测）：load access token / secure data file / 未登录 */
-const NOT_LOGGED_IN_RE = /load access token|secure data file|not logged in|未登录|unauthori[sz]ed|invalid[_\s-]?token|token (?:has )?expired|401\b/i;
+/**
+ * dws 未登录的典型报文（实测）：load access token / secure data file / 未登录。
+ *
+ * 这里**只认登录专属措辞**：曾经把 `401` / `unauthorized` 也算进来，结果
+ * 「文件上传时接口返回 401」被翻译成「本人身份未登录」，用户跑去重新登录也没用。
+ * 鉴权失败的其他形态会落到下面的「接口业务错误」分支，如实带出上游 code/message。
+ */
+const NOT_LOGGED_IN_RE = /load access token|secure data file|not logged in|未登录|invalid[_\s-]?token|token (?:has )?expired|please (?:re)?login|重新登录/i;
 /** 权限不足（企业未开 CLI 访问 / 应用权限没批 / 用户不在范围） */
 const PERMISSION_RE = /permission|forbidden|403\b|not authorized|无权限|权限不足|clawType|CLI 访问|not in scope|没有权限/i;
 
@@ -387,12 +393,27 @@ export function classifyDwsFailure(result: DwsRunResult, commandLabel = 'dws'): 
       ...(raw ? { raw } : {}),
     };
   }
+  // 平台接口的业务错误（如 OPEN_CID_INVALID / 上传失败）：如实带出上游 code + message，
+  // 不要归到「未登录」或只剩一句「未知错误」——否则用户永远查不到真正原因。
+  const upstream = readUpstreamError(rawText);
+  const detail = firstErrorMessage(rawText) ?? '未返回可读错误信息';
   return {
     kind: 'unknown',
-    message: `dws 命令执行失败（${commandLabel}，exit=${result.code}）：${firstErrorMessage(rawText) ?? '未返回可读错误信息'}`
+    message: `dws 命令执行失败（${commandLabel}，exit=${result.code}）：${detail}`
+      + (upstream.code ? `（上游错误码 ${upstream.code}）` : '')
       + '。可运行 `pnpm run doctor --platform=dingtalk` 自检。',
     ...(raw ? { raw } : {}),
   };
+}
+
+/** 读取 dws JSON 错误体里的上游错误码（仅用于诊断文案，不参与逻辑判断） */
+function readUpstreamError(text: string): { code?: string } {
+  const json = tryParseJson(text.trim()) as Record<string, any> | undefined;
+  const err = json?.error;
+  if (err && typeof err === 'object' && typeof err.upstream_code === 'string') {
+    return { code: err.upstream_code };
+  }
+  return {};
 }
 
 /** 从 dws 的 JSON 错误体 / 纯文本里提取一句人类可读原因 */
@@ -749,6 +770,49 @@ export function inferConversationType(eventType: string | undefined): 'group' | 
  */
 export function parseMediaContent(content: string): { type: 'file' | 'image'; body: string; attachment?: AttachmentInfo } | undefined {
   const text = content.trim();
+
+  /**
+   * 钉钉会把图文消息里的图片回推成「[图片消息] (mediaId=xxx)」这样的占位串。
+   * 直接当正文显示就是一串乱码，这里剥掉占位符、把 mediaId 收进附件，
+   * 正文只留用户真正写的那句话。
+   */
+  const placeholder = /\[(图片|文件)消息\]\s*\(\s*mediaId=([^)]+)\)/i.exec(text);
+  if (placeholder) {
+    const isImage = placeholder[1] === '图片';
+    const rest = text.replace(placeholder[0], '').trim();
+    return {
+      type: isImage ? 'image' : 'file',
+      body: rest || (isImage ? '[图片]' : '[文件]'),
+      attachment: {
+        name: isImage ? '图片' : '文件',
+        mimeType: isImage ? 'image/*' : 'application/octet-stream',
+        size: 0,
+        mediaId: placeholder[2].trim(),
+      },
+    };
+  }
+
+  /**
+   * 文件/图片回推的**另一种**模板（实测）：
+   *   `[文件] 灰烬之城.docx fileId: 3NwLYZX… 注意：如需下载使用dws drive download命令下载`
+   *
+   * 与 `[文件消息](mediaId=…)` 是两套文案。不剥掉的话，正文就是这一整串
+   * 「fileId + 注意：如需下载…」，正是用户看到的乱码。这里只保留「[文件] 文件名」。
+   */
+  const taggedFile = /^\[(文件|图片|视频|语音)\]\s*(.+?)\s*fileId\s*[:：]\s*(\S+)/i.exec(text);
+  if (taggedFile) {
+    const kind = taggedFile[1];
+    const name = taggedFile[2].trim();
+    const isImage = kind === '图片';
+    return {
+      type: isImage ? 'image' : 'file',
+      body: `[${kind}]${name ? ` ${name}` : ''}`,
+      ...(name
+        ? { attachment: { name, mimeType: isImage ? 'image/*' : 'application/octet-stream', size: 0 } }
+        : {}),
+    };
+  }
+
   if (!text.startsWith('{')) return undefined;
   const json = tryParseJson(text);
   if (!json || typeof json !== 'object') return undefined;
@@ -812,6 +876,21 @@ export function mapPersonalEventToMessage(
     updatedAt: createdAt,
   };
   // 会话标题：event schema 未提供（group_updated 事件才有），不臆造
+  /**
+   * 图片消息只有 mediaId、没有文件名，界面上显示成一个「图片」孤零零的卡片。
+   * 用接收时间补一个有信息量的名字（图片-20261114-130803.jpg），
+   * 至少能按时间对上手机里那张图。
+   */
+  if (msg.attachments?.length) {
+    const t = new Date(createdAt);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const stamp = `${t.getFullYear()}${pad(t.getMonth() + 1)}${pad(t.getDate())}-${pad(t.getHours())}${pad(t.getMinutes())}${pad(t.getSeconds())}`;
+    msg.attachments = msg.attachments.map((a) =>
+      a.mediaId && (a.name === '图片' || a.name === '文件')
+        ? { ...a, name: `${a.name}-${stamp}` }
+        : a,
+    );
+  }
   return msg;
 }
 
@@ -883,6 +962,17 @@ export function mapSendResultJson(result: DwsRunResult, commandLabel = 'chat mes
   const json = tryParseJson(text) as Record<string, any> | undefined;
   const jsonOk = json?.ok === true || json?.success === true || json?.outcome === 'success';
   const dryRun = json?.dry_run === true || json?.data?.dry_run === true;
+
+  /**
+   * 钉钉对 uuid 做 24h 去重：同一份内容再次提交时返回
+   * `sendPersonalMessageByServerPush error: Request is repeated with uuid '...'`。
+   * 这代表上一次请求已被平台接受，按幂等命中处理（返回成功、无新回执），
+   * 否则用户会看到「假失败」，然后不断重试、每次都失败。
+   */
+  if (/Request is repeated with uuid/i.test(`${result.stdout}\n${result.stderr}`)) {
+    return { ok: true };
+  }
+
   if (result.code !== 0 || !jsonOk) {
     const info = classifyDwsFailure(
       { ...result, code: result.code === 0 ? 1 : result.code },
@@ -1049,6 +1139,15 @@ export class DingtalkPersonalClient {
   private versionCache?: { version?: string; error?: string; at: number };
   private statusCache?: DwsAuthStatus;
   private statusInflight?: Promise<DwsAuthStatus>;
+  /**
+   * dws 串行闸门。
+   *
+   * dws 的登录态与配置存档只允许一个进程同时读写：身份探测（每 30–60s 一次）
+   * 与发送并发时，会读到 `load access token: reading secure data file`，
+   * 进而被翻译成「本人身份未登录」——用户重新登录也没用。
+   * 这里把同进程内所有 dws 调用排成队列；登录会话走独立 spawn，不受队列阻塞。
+   */
+  private queueTail: Promise<unknown> = Promise.resolve();
   /** 当前登录会话（同一时刻最多一个 login child） */
   private loginSession?: LoginSession;
   /** 本人 openDingTalkId 缓存（用于过滤自己发出的消息；取不到就不过滤） */
@@ -1094,9 +1193,19 @@ export class DingtalkPersonalClient {
     return this.profile ? [...args, '--profile', this.profile] : args;
   }
 
-  /** 执行一次 dws（自动补 --profile；超时由调用方给） */
+  /** 执行一次 dws（自动补 --profile；超时由调用方给；串行执行避免抢 token 存档） */
   async run(args: string[], opts: DwsRunOptions = {}): Promise<DwsRunResult> {
-    return this.runner(this.withGlobal(args), opts);
+    return this.enqueue(() => this.runner(this.withGlobal(args), opts));
+  }
+
+  /** 串行执行：前一个失败不能阻塞后续任务 */
+  private enqueue<T>(task: () => Promise<T>): Promise<T> {
+    const next = this.queueTail.then(task, task);
+    this.queueTail = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    return next;
   }
 
   /** `dws version`：进程内缓存（二进制不会中途变版本）；失败返回 undefined */
@@ -1116,7 +1225,8 @@ export class DingtalkPersonalClient {
   }
 
   private async runStatic(args: string[], timeoutMs: number): Promise<DwsRunResult> {
-    return this.runner(this.withGlobal(args), { timeoutMs });
+    // 同样走队列：auth status / version 也是真实子进程，会和发送抢同一份 token 存档
+    return this.enqueue(() => this.runner(this.withGlobal(args), { timeoutMs }));
   }
 
   /**
@@ -1580,6 +1690,30 @@ export class DingtalkPersonalClient {
     });
     const r = await this.run(args, { timeoutMs: this.sendTimeoutMs, ...(input.signal ? { signal: input.signal } : {}) });
     return mapSendResultJson(r, `${this.commandLabel()} chat message send --msg-type file`);
+  }
+
+  /**
+   * 下载消息里的媒体（图片/文件）到本地。
+   * 钉钉个人事件只回推 mediaId，要真正显示成图片必须先换成本地文件。
+   */
+  async downloadMedia(input: {
+    mediaId: string;
+    messageId: string;
+    conversationId: string;
+    outputPath: string;
+  }): Promise<void> {
+    const r = await this.run([
+      'chat', 'message', 'download-media',
+      '--type', 'mediaId',
+      '--resource-id', input.mediaId,
+      '--message-id', input.messageId,
+      '--open-conversation-id', input.conversationId,
+      '--output', input.outputPath,
+    ], { timeoutMs: 45_000 });
+    if (r.code !== 0) {
+      const info = classifyDwsFailure(r, `${this.commandLabel()} chat message download-media`);
+      throw new DingtalkPersonalError(info.message, info.kind, r.code);
+    }
   }
 
   /** 引用回复（事件里同时有 openMessageId + senderOpenDingTalkId 时用，语义更明确） */

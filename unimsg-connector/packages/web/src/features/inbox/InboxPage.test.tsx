@@ -223,15 +223,16 @@ describe('收件箱筛选与搜索接线（三栏工作台）', () => {
     expect(store.setFilters).toHaveBeenCalledWith({ keyword: '周报' });
   });
 
-  it('「未读 / 待处理」快捷胶囊分别切换 onlyUnread / onlyReview', async () => {
+  it('「未读 / 待处理」互斥：点一个会清掉另一个，不叠加条件', async () => {
     const { store } = await import('../../store');
     mockState({ messages: [MESSAGE], accounts: ACCOUNTS });
     renderInboxPage();
 
     fireEvent.click(screen.getByRole('button', { name: '未读' }));
-    expect(store.setFilters).toHaveBeenCalledWith({ onlyUnread: true });
+    // 互斥：开「未读」必须同时关掉「待处理」，否则两个胶囊会一起高亮、条件也会叠成空结果
+    expect(store.setFilters).toHaveBeenCalledWith({ onlyUnread: true, onlyReview: false });
 
     fireEvent.click(screen.getByRole('button', { name: '待处理' }));
-    expect(store.setFilters).toHaveBeenCalledWith({ onlyReview: true });
+    expect(store.setFilters).toHaveBeenCalledWith({ onlyReview: true, onlyUnread: false });
   });
 });

@@ -1,11 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Alert, App as AntApp, Avatar, Button, Dropdown, Tooltip } from 'antd';
 import type { MenuProps } from 'antd';
 import {
   ApiOutlined,
-  BgColorsOutlined,
   CheckSquareOutlined,
   DownOutlined,
   HistoryOutlined,
@@ -25,6 +24,7 @@ import { PlatformGlyph } from '../components/PlatformGlyph';
 import { footerShortLabel, footerState } from '../utils/footerState';
 import { clamp } from '../utils/format';
 import { formatSendError } from '../utils/sendError';
+import { installScrollIndicator } from '../utils/scrollIndicator';
 import { initialOf, useProfile } from '../features/settings/profile';
 import { usePreferences } from '../features/settings/preferences';
 import { SettingsModal } from '../features/settings/SettingsModal';
@@ -67,8 +67,8 @@ function useIsCompact(): boolean {
 }
 
 /**
- * 导航项：图标 + 常驻文字（不用 hover 才知道是什么）+ 可选计数。
- * 选中态只换底色与字色，不做发光/描边——参考图里导航是安静的。
+ * 导航项：图标轨道里只留图标，名称交给右侧 Tooltip 与 aria-label。
+ * 选中态不画底色——由导航容器里那块滑动高光统一承担，切页时高光会滑过去。
  */
 function SideLink({
   to,
@@ -76,30 +76,56 @@ function SideLink({
   label,
   count,
   onNavigate,
+  itemRef,
+  focused,
 }: {
   to: string;
   icon: ReactNode;
   label: string;
   count?: number;
   onNavigate?: () => void;
+  itemRef?: (el: HTMLElement | null) => void;
+  /** 是否由高光选中：路由激活与「高光在哪」不是一回事（收件箱筛选了平台时高光在平台项上） */
+  focused?: boolean;
 }) {
   return (
-    <NavLink
-      to={to}
-      aria-label={label}
-      onClick={onNavigate}
-      className={({ isActive }) => `side-link${isActive ? ' is-active' : ''}`}
-    >
-      <span className="side-link__icon" aria-hidden="true">
-        {icon}
-      </span>
-      <span className="side-link__label">{label}</span>
-      {typeof count === 'number' && count > 0 && (
-        <span className="side-link__count">{count > 99 ? '99+' : count}</span>
-      )}
-    </NavLink>
+    <Tooltip title={label} placement="right" mouseEnterDelay={0.18}>
+      <NavLink
+        to={to}
+        ref={itemRef}
+        aria-label={label}
+        onClick={onNavigate}
+        className={({ isActive }) =>
+          `side-link${isActive ? ' is-active' : ''}${focused ? ' is-focus' : ''}`
+        }
+      >
+        <span className="side-link__icon" aria-hidden="true">
+          {icon}
+        </span>
+        <span className="side-link__label">{label}</span>
+        {typeof count === 'number' && count > 0 && (
+          <span className="side-link__count">{count > 99 ? '99+' : count}</span>
+        )}
+      </NavLink>
+    </Tooltip>
   );
 }
+
+/** 路由 → 高光目标键：与导航项注册的 key 一一对应 */
+function navKeyOf(pathname: string): string {
+  if (pathname.startsWith('/todos')) return 'to:/todos';
+  if (pathname.startsWith('/trace')) return 'to:/trace';
+  if (pathname.startsWith('/connect')) return 'to:/connect';
+  if (pathname.startsWith('/accounts')) return 'to:/accounts';
+  return 'to:/inbox';
+}
+
+/* ---------------- 图标轨道的两块滑动高光 ----------------
+   导航组（第 1、3 组）共用一块品牌色高光，跟着路由走；
+   平台组单独一块铜色高光，跟着收件箱的渠道筛选走。
+   两块可以同时亮着：筛了飞书时「收件箱」也还是选中态，点它随时能回去。
+   位置从真实 DOM 量：offsetTop 会受分组容器的定位影响，只能拿到组内偏移。 */
+type GlowBox = { top: number; height: number } | null;
 
 export function AppShell() {
   const state = useAppState();
@@ -164,15 +190,20 @@ export function AppShell() {
     root.dataset.motion = prefs.motion;
   }, [prefs.density, prefs.motion]);
 
+  // 滚动条「滚动时才出现」：全局捕获监听，给正在滚动的容器打 .is-scrolling
+  useEffect(() => installScrollIndicator(), []);
+
   const counts = useMemo(() => {
     // 收件箱角标 = 未读数（阅读状态），不再用「未终结条数」——
     // 那个口径会让人误以为「角标 4 但其实都看过了」。
     // 自己发出的消息（含钉钉回声）不算未读：会话列表里它们不产生角标。
     const inbox = state.messages.filter((m) => m.direction !== 'out' && !m.readAt).length;
     const todos = state.messages.filter((m) => m.type === 'todo' && !m.done).length;
-    // 接入平台分组：按平台统计当前收件箱里的条数（真实数据，不写死）
+    // 接入平台分组：角标是**未读**，不是「该平台总条数」。
+    // 统计总条数会导致角标永远不消失（点开也还在），和「未读」语义冲突。
     const perPlatform = new Map<Platform, number>();
     for (const m of state.messages) {
+      if (m.direction === 'out' || m.readAt) continue;
       perPlatform.set(m.platform, (perPlatform.get(m.platform) ?? 0) + 1);
     }
     return { inbox, todos, perPlatform };
@@ -265,6 +296,66 @@ export function AppShell() {
   const activePlatform =
     location.pathname.startsWith('/inbox') ? state.filters.platform : undefined;
 
+  /* 高光不按「每个 item 各自画背景」，而是导航里独一块，位置从真实 DOM 量出来；
+     切换时外层用带过冲的弹簧曲线平移、内层重放一次轻微挤压，合起来就是果冻感。 */
+  const navRef = useRef<HTMLElement | null>(null);
+  const navItems = useRef(new Map<string, HTMLElement>());
+  const [navGlow, setNavGlow] = useState<GlowBox>(null);
+  const [platformGlow, setPlatformGlow] = useState<GlowBox>(null);
+  const [glowReady, setGlowReady] = useState(false);
+
+  const registerNavItem = (key: string) => (el: HTMLElement | null) => {
+    if (el) navItems.current.set(key, el);
+    else navItems.current.delete(key);
+  };
+
+  const measureGlow = useCallback((key: string | null): GlowBox => {
+    const nav = navRef.current;
+    if (!nav || !key) return null;
+    const el = navItems.current.get(key);
+    if (!el) return null;
+    const navRect = nav.getBoundingClientRect();
+    const rect = el.getBoundingClientRect();
+    return { top: rect.top - navRect.top + nav.scrollTop, height: rect.height };
+  }, []);
+
+  /** 导航高光：只由路由决定（收件箱 / 待办 / 回放 / 连接账号 / 平台账号） */
+  const activeNavKey = navKeyOf(location.pathname);
+  /** 平台高光：只由收件箱的渠道筛选决定；「全部」时为 null → 这块高光消失 */
+  const activePlatformKey = activePlatform ? `platform:${activePlatform}` : null;
+
+  useLayoutEffect(() => {
+    setNavGlow(measureGlow(activeNavKey));
+    setPlatformGlow(measureGlow(activePlatformKey));
+  }, [
+    activeNavKey,
+    activePlatformKey,
+    counts.inbox,
+    counts.todos,
+    counts.perPlatform,
+    compact,
+    measureGlow,
+  ]);
+
+  /* 首帧不做位移动画：让高光直接出现在目标上，之后才启用弹簧过渡 */
+  useEffect(() => {
+    if ((!navGlow && !platformGlow) || glowReady) return;
+    const id = requestAnimationFrame(() => setGlowReady(true));
+    return () => cancelAnimationFrame(id);
+  }, [navGlow, platformGlow, glowReady]);
+
+  /* 窗口缩放 / 字体变化会让导航项高度变，两块高光都要跟着重新量 */
+  useEffect(() => {
+    const nav = navRef.current;
+    if (!nav || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => {
+      setNavGlow(measureGlow(activeNavKey));
+      setPlatformGlow(measureGlow(activePlatformKey));
+    });
+    observer.observe(nav);
+    return () => observer.disconnect();
+  }, [activeNavKey, activePlatformKey, measureGlow]);
+
   const platformNav = useMemo(
     () =>
       [Platform.FEISHU, Platform.DINGTALK, Platform.WECOM, Platform.MAIL].map((platform) => ({
@@ -304,38 +395,118 @@ export function AppShell() {
           </span>
         </div>
 
-        <nav className="side__nav" aria-label="主导航">
+        <nav className="side__nav" aria-label="主导航" ref={navRef}>
+          {/* 导航组高光（第 1、3 组共用）：品牌色 */}
+          <span
+            className={`side__glow side__glow--nav${glowReady ? ' is-ready' : ''}`}
+            style={
+              navGlow
+                ? {
+                    transform: `translate3d(0, ${navGlow.top}px, 0)`,
+                    height: `${navGlow.height}px`,
+                  }
+                : undefined
+            }
+            aria-hidden="true"
+          >
+            {/* key 随选中项变化 → 挤压动画每次切换都重放一次 */}
+            <i className="side__glow-fill" key={`nav:${activeNavKey}`} />
+          </span>
+
+          {/* 平台组高光：每个平台一种颜色，选「全部」时不渲染 */}
+          {activePlatformKey && (
+            <span
+              className={`side__glow side__glow--platform${glowReady ? ' is-ready' : ''}`}
+              data-platform={activePlatform}
+              style={
+                platformGlow
+                  ? {
+                      transform: `translate3d(0, ${platformGlow.top}px, 0)`,
+                      height: `${platformGlow.height}px`,
+                    }
+                  : undefined
+              }
+              aria-hidden="true"
+            >
+              <i className="side__glow-fill" key={activePlatformKey} />
+            </span>
+          )}
+
           <div className="side__group">
-            <SideLink to="/inbox" icon={<InboxOutlined />} label="收件箱" count={counts.inbox} />
-            <SideLink to="/todos" icon={<CheckSquareOutlined />} label="待办" count={counts.todos} />
-            <SideLink to="/trace" icon={<HistoryOutlined />} label="全链路回放" />
+            <SideLink
+              to="/inbox"
+              icon={<InboxOutlined />}
+              label="收件箱"
+              count={counts.inbox}
+              itemRef={registerNavItem('to:/inbox')}
+              focused={activeNavKey === 'to:/inbox'}
+            />
+            <SideLink
+              to="/todos"
+              icon={<CheckSquareOutlined />}
+              label="待办"
+              count={counts.todos}
+              itemRef={registerNavItem('to:/todos')}
+              focused={activeNavKey === 'to:/todos'}
+            />
+            <SideLink
+              to="/trace"
+              icon={<HistoryOutlined />}
+              label="全链路回放"
+              itemRef={registerNavItem('to:/trace')}
+              focused={activeNavKey === 'to:/trace'}
+            />
           </div>
 
           <div className="side__group">
             <span className="side__group-label">接入平台</span>
             {platformNav.map((item) => {
               const active = activePlatform === item.platform;
+              const focused = activePlatformKey === `platform:${item.platform}`;
               return (
-                <button
+                <Tooltip
                   key={item.platform}
-                  type="button"
-                  className={`side-link side-link--platform${active ? ' is-active' : ''}`}
-                  aria-pressed={active}
-                  onClick={() => openPlatform(item.platform)}
+                  title={item.name}
+                  placement="right"
+                  mouseEnterDelay={0.18}
                 >
-                  <span className={`side-link__icon side-link__icon--glyph is-${item.platform}`} aria-hidden="true">
-                    <PlatformGlyph platform={item.platform} size={14} />
-                  </span>
-                  <span className="side-link__label">{item.name}</span>
-                  <span className="side-link__count">{item.count}</span>
-                </button>
+                  <button
+                    ref={registerNavItem(`platform:${item.platform}`)}
+                    type="button"
+                    className={`side-link side-link--platform${active ? ' is-active' : ''}${focused ? ' is-focus-platform' : ''}`}
+                    aria-label={item.name}
+                    aria-pressed={active}
+                    onClick={() => openPlatform(item.platform)}
+                  >
+                    <span
+                      className={`side-link__icon side-link__icon--glyph is-${item.platform}`}
+                      aria-hidden="true"
+                    >
+                      <PlatformGlyph platform={item.platform} size={15} />
+                    </span>
+                    <span className="side-link__label">{item.name}</span>
+                    {item.count > 0 && <span className="side-link__count">{item.count}</span>}
+                  </button>
+                </Tooltip>
               );
             })}
           </div>
 
           <div className="side__group">
-            <SideLink to="/connect" icon={<LinkOutlined />} label="连接账号" />
-            <SideLink to="/accounts" icon={<ApiOutlined />} label="平台账号" />
+            <SideLink
+              to="/connect"
+              icon={<LinkOutlined />}
+              label="连接账号"
+              itemRef={registerNavItem('to:/connect')}
+              focused={activeNavKey === 'to:/connect'}
+            />
+            <SideLink
+              to="/accounts"
+              icon={<ApiOutlined />}
+              label="平台账号"
+              itemRef={registerNavItem('to:/accounts')}
+              focused={activeNavKey === 'to:/accounts'}
+            />
           </div>
         </nav>
 
@@ -387,17 +558,6 @@ export function AppShell() {
           </div>
 
           <div className="cmdbar__actions">
-            <Tooltip title="设计实验室">
-              <button
-                className="icon-btn"
-                type="button"
-                onClick={() => navigate('/designs')}
-                aria-label="打开设计实验室"
-              >
-                <BgColorsOutlined />
-              </button>
-            </Tooltip>
-
             {state.demoMode && (
               <Dropdown menu={demoMenu} trigger={['click']}>
                 <button className="demo-btn" type="button">

@@ -18,6 +18,7 @@ import {
   IdentityUnavailableError,
   assertIdentityUsable,
   canSendAsUser,
+  ensureIdentityProbed,
   identityChannelsReal,
   identityStartupLines,
   identitySummary,
@@ -243,6 +244,32 @@ test('钉钉未登录 + DINGTALK_IDENTITY=user：发送校验中文报错，不�
       && /连接本人账号/.test(e.message),
   );
   assert.throws(() => assertIdentityUsable(Platform.WECOM, 'user'), IdentityUnavailableError);
+});
+
+test('ensureIdentityProbed：缓存说未登录时会强制重探，登录完成后无需重启后端即可发送', async () => {
+  const dir = tempDir();
+  process.env.FAKE_DWS_STATE_FILE = join(dir, 'state.json');
+  process.env.FAKE_DWS_AUTHENTICATED = 'false';
+  config.identity.dingtalk.bin = `node ${FAKE_DWS}`;
+  config.identity.dingtalk.policy = 'user';
+  setRuntime(Platform.DINGTALK, { mode: 'real', policy: 'real', canSend: true, canReceive: true });
+  resetDingtalkPersonalClientCache();
+  resetIdentityCaches();
+
+  await dingtalkPersonalClient().authStatus({ force: true });
+  assert.equal(canSendAsUser(Platform.DINGTALK), false);
+
+  // 用户在终端 `dws auth login` 完成授权：此时缓存仍是 false
+  process.env.FAKE_DWS_AUTHENTICATED = 'true';
+  assert.equal(dingtalkPersonalClient().lastKnownStatus()?.authenticated, false);
+
+  await ensureIdentityProbed(Platform.DINGTALK);
+  assert.equal(dingtalkPersonalClient().lastKnownStatus()?.authenticated, true);
+  assert.equal(canSendAsUser(Platform.DINGTALK), true);
+
+  // 已登录时走缓存快路径：不发子进程，也就不该把状态改回 false
+  await ensureIdentityProbed(Platform.DINGTALK);
+  assert.equal(canSendAsUser(Platform.DINGTALK), true);
 });
 
 test('warmIdentityProbes：钉钉档案名进 displayName，detail 不重复版本', async () => {
