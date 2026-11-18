@@ -24,7 +24,7 @@
 4. **Mock 是合法状态，但一定标注**：没配凭据或配得不全时，`auto` 会自动回退本地模拟；回写消息里会写 `delivery.mode=mock`，闭环日志与前端都显示「模拟发送」，**不会假装真实平台已收到**。
 5. **命令写法**：在 `unimsg-connector/` 目录下用 `pnpm run doctor`；**不要写 `pnpm doctor`**——pnpm 9 会命中同名内置命令（实测无输出、退出码 0），看起来像成功但本项目自检根本没运行。在脚本 / CI 里推荐全路径：`pnpm --filter @unimsg/server run doctor`。
 
-> 更多架构、API、测试说明见根目录 [README.md](../README.md)。
+> 更多架构、API、测试说明见 [reference.md](reference.md)；项目总览见根目录 [README.md](../README.md)。
 
 ---
 

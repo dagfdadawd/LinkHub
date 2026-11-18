@@ -93,7 +93,7 @@ docker compose up -d --build
 
 > ⚠️ 该令牌在**前端构建期**被注入 bundle，同时是**后端运行期**的 Bearer 令牌，
 > 两者必须一致。修改后一定要 `--build`，否则前端会持续 401。
-> 这是演示级方案；正式系统应改为登录后签发的短期凭证（见 README「已知限制」）。
+> 这是演示级方案；正式系统应改为登录后签发的短期凭证（见 [reference.md](reference.md)「已知限制」）。
 
 `.env` 中的 `API_TOKEN=dev-token` 会被 compose 的 `environment` 覆盖，不会导致启动失败。
 其余 `FEISHU_*` / `DINGTALK_*` / `WECOM_*` / `MAIL_*` / `LLM_*` 变量通过 `env_file` 注入容器，
@@ -220,4 +220,4 @@ docker compose up -d          # 不要加 --build
 - **高可用未实现**：没有负载均衡 / 容灾，附加分项不申领。
 - **真实平台文件通道未端到端验证**：飞书 / 企微 / 邮箱的媒体上传与 MIME 附件已按官方接口实现并有单测，但受租户策略、可信 IP 限制，现场演示默认走 Mock 通道（界面会明确标注「模拟发送」）。
 - **本人身份不是容器开箱能力**：飞书需管理员开用户身份权限 + 重定向 URL 与容器访问地址一致；钉钉 dws 需自建 glibc 镜像安装并在容器内 device-flow 登录，**默认镜像不包含 dws**——不配置时自动回退机器人，不会假成功（详见第 5 节）。
-- 前端令牌进 bundle 是演示级取舍，见 README「已知限制」。
+- 前端令牌进 bundle 是演示级取舍，见 [reference.md](reference.md)「已知限制」。

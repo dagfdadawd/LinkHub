@@ -4,7 +4,7 @@
 >
 > 本文是**平台配置 + LinkHub 操作**的完整说明。想先看离线效果，直接跳 [§7 离线演示](#7-离线演示用-fake-dws-模拟已登录不碰真实钉钉)。
 >
-> 相关文档：[README 身份模式](../README.md) · [quickstart.md](quickstart.md) · [swap-accounts.md](swap-accounts.md) · [demo-script.md](demo-script.md) · [deploy.md](deploy.md)
+> 相关文档：[reference.md 身份模式](reference.md) · [quickstart.md](quickstart.md) · [swap-accounts.md](swap-accounts.md) · [demo-script.md](demo-script.md) · [deploy.md](deploy.md)
 
 ---
 
@@ -60,7 +60,7 @@
 - **只能读本人可见的会话**：列会话 / 读消息都用授权用户的身份，**读不到你本人不所在的群、也读不到别人视角的消息**。这是"本人身份"的语义边界，不是缺陷。
 - **首轮默认不灌历史**：`FEISHU_USER_BACKFILL_HOURS=0` 时首轮只记录每个会话的水位基线，只入库之后的新消息；需要回看最近 N 小时可设 `24` 等。
 - **需要用户身份权限**：除发送所需的用户身份权限外，接收还需要「以用户身份获取单聊消息 / 群聊消息」与「查看群信息」（`im:chat:read`，列会话的硬前提；缺它列会话直接报 `99991679`）等权限（见 §4.1），由应用管理员开通并发布版本。
-- **企业认证 / 租户策略 `21001`（本机租户 2026-11-12 已解除，实测通过）**：部分租户（常见于未完成企业认证）换应用 `tenant_access_token` 会被平台策略直接拒绝，报 `21001 Access denied due to platform policy`。**本机租户已解除**：2026-11-12 14:16 用仓库 `.env` 真实凭据实测，`POST /open-apis/auth/v3/app_access_token/internal` 与 `/tenant_access_token/internal` 均返回 `code:0`（推断为完成企业认证 / 平台策略调整，未获官方确认）。**这不代表 `21001` 消失了**：它仍是飞书平台策略，换租户、换环境、平台策略变化都可能再现，本文保留历史排错记录（见 [README 实测记录](../README.md)），其他租户遇到时仍按「企业认证或换合规租户」处理，换 Secret / 改代码 / 加 IP 白名单都无效。本机租户的本人身份真实端到端已完成：收单聊 + 群聊、以本人身份发送，见 [验收记录](verification/feishu-personal-e2e-2026-11-12.md)。
+- **企业认证 / 租户策略 `21001`（本机租户 2026-11-12 已解除，实测通过）**：部分租户（常见于未完成企业认证）换应用 `tenant_access_token` 会被平台策略直接拒绝，报 `21001 Access denied due to platform policy`。**本机租户已解除**：2026-11-12 14:16 用仓库 `.env` 真实凭据实测，`POST /open-apis/auth/v3/app_access_token/internal` 与 `/tenant_access_token/internal` 均返回 `code:0`（推断为完成企业认证 / 平台策略调整，未获官方确认）。**这不代表 `21001` 消失了**：它仍是飞书平台策略，换租户、换环境、平台策略变化都可能再现，本文保留历史排错记录（见 [reference.md 实测记录](reference.md)），其他租户遇到时仍按「企业认证或换合规租户」处理，换 Secret / 改代码 / 加 IP 白名单都无效。本机租户的本人身份真实端到端已完成：收单聊 + 群聊、以本人身份发送，见 [验收记录](verification/feishu-personal-e2e-2026-11-12.md)。
 - **列会话必须带 `types=p2p,group` 才能看到单聊**：飞书公开文档对 `GET /open-apis/im/v1/chats` 的说明是「不包含单聊」，2026-11-12 真实令牌实测：不带 `types` 只返回 2 个群聊，加 `types=p2p,group` 返回 5 个会话（2 群 + 3 单聊）。该参数**未收录于公开 API 文档**（飞书官方 CLI 在用），存在被平台调整的风险；LinkHub 已做**进程内降级兜底**：平台一旦报参数错误（`232001` / invalid request parameter），自动永久退回不带 `types` 的纯群列表并告警——单聊收不到，但群聊接收不中断（见 §4.4、§4.6）。
 - **单实例单账号**：一次授权绑定一个飞书账号；换账号需重新授权（令牌文件按 App ID 校验，换 App 会要求重新授权）。
 

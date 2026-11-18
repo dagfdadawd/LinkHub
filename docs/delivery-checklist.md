@@ -99,7 +99,7 @@ pnpm e2e                                   # Windows；macOS / Linux / Git Bash�
 | 真实可用 | 钉钉 Stream 收 + 机器人回写；邮箱 IMAP 收 + SMTP 发（多账号 / STARTTLS）；**飞书本人身份收发已实测通过（2026-11-12）**：真实 OAuth → 单聊 + 群聊轮询入库 → 以本人身份发送（飞书侧核对 `sender_type=user`）；钉钉**本人身份收发**代码就绪（单测 + fake-dws 桩），真实端到端待平台条件（见下行） |
 | 受限能力 | 飞书 `21001`（**历史：本机租户 2026-11-12 已解除**；换租户 / 换环境仍可能遇到，需企业认证 / 合规租户）；企微 `60020`（需企业可信 IP + 回调 Token/AESKey + 公网）；**飞书本人身份**已实测通过（2026-11-12），仍受平台边界限制：管理员需开用户身份权限（含 `im:chat:read` / `offline_access`）、轮询 5–30s、只读本人可见会话、单聊枚举依赖未公开参数 `types`；**钉钉本人身份**需企业管理员开启 CLI 访问 + 首次真人授权、凭据绑定设备（Windows 不能跨机复制） |
 | AI 能力 | 大模型意图 / 摘要 / 回复草稿**已接真实调用**（OpenAI 兼容协议，默认 MiMo `mimo-v2.6-flash`；失败/超时/低置信回退内置规则并标注来源），见 [ai-integration.md](ai-integration.md)；OCR 仍为占位实现 |
-| 未实现 | PostgreSQL/Redis 持久化（当前为单实例内存 + 文件快照）、OCR 真实调用、高可用/水平扩展、多租户 / 多员工共享单实例身份（详见 README「承诺 vs 实现」） |
+| 未实现 | PostgreSQL/Redis 持久化（当前为单实例内存 + 文件快照）、OCR 真实调用、高可用/水平扩展、多租户 / 多员工共享单实例身份（详见 [reference.md](reference.md)「设计文档承诺 vs 当前实现」） |
 | 独立部署包 | `unimsg-connector/Dockerfile` + `docker-compose.yml` + `.dockerignore`；步骤见 [deploy.md](deploy.md)，可 `docker save/load` 离线搬运；**镜像默认不含 dws**，容器内钉钉本人身份需自建 glibc 镜像 |
-| 文档索引 | README / quickstart / personal-identity / demo-script / swap-accounts / deploy / ai-integration / risk-register / delivery-checklist |
+| 文档索引 | README / reference / quickstart / personal-identity / demo-script / swap-accounts / deploy / ai-integration / risk-register / delivery-checklist |
 | 已知风险 | 全部见 [risk-register.md](risk-register.md) |

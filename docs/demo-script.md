@@ -80,7 +80,7 @@ pnpm run doctor --platform=wecom         # gettoken 可能 PASS；若 60020，�
 pnpm run doctor --platform=dingtalk,mail # 机器人 / 邮箱真实可用：全 PASS；身份探针看 dws 登录态
 ```
 
-- 话术：能力边界已如实写进 README「设计文档承诺 vs 当前实现」与 [risk-register.md](risk-register.md)，今天不演示未打通的通道，也不拿 Mock / 本地桩冒充真实。
+- 话术：能力边界已如实写进 [reference.md](reference.md)「设计文档承诺 vs 当前实现」与 [risk-register.md](risk-register.md)，今天不演示未打通的通道，也不拿 Mock / 本地桩冒充真实。
 
 ## 纯 Mock 兜底路线（断网 / 凭据失效 / Stream 连不上，约 2 分钟）
 
