@@ -4,8 +4,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Platform } from '@unimsg/shared';
-import { resetEchoState, rememberSent } from '../services/echoRegistry';
-import { resetFeishuEchoRegistry } from './feishu';
 import {
   FeishuUserReceiveError,
   describeFeishuError,
@@ -189,9 +187,6 @@ test('mapFeishuUserMessage：post 富文本 / file / image 映射', () => {
   assert.equal(file!.type, 'file');
   assert.match(file!.body, /\[文件\] 复盘\.pdf/);
   assert.equal(file!.attachments?.[0]?.name, '复盘.pdf');
-  // 下载凭据：file_key 不能丢，否则界面只能显示文件名
-  assert.equal(file!.attachments?.[0]?.fileKey, 'fk');
-  assert.equal(file!.attachments?.[0]?.resourceType, 'file');
 
   const image = mapFeishuUserMessage(raw({
     message_id: 'om_img',
@@ -200,61 +195,9 @@ test('mapFeishuUserMessage：post 富文本 / file / image 映射', () => {
   }), chatP2p, 'ou_self');
   assert.equal(image!.type, 'image');
   assert.equal(image!.body, '[图片]');
-  assert.equal(image!.attachments?.[0]?.fileKey, 'ik');
-  assert.equal(image!.attachments?.[0]?.resourceType, 'image');
 });
 
-test('mapFeishuUserMessage：自己发的文件/图片入库为 out，文本仍跳过，LinkHub 回声跳过', () => {
-  resetFeishuEchoRegistry();
-  resetEchoState();
-
-  const file = mapFeishuUserMessage(raw({
-    message_id: 'om_self_file',
-    msg_type: 'file',
-    sender: { id: 'ou_self', id_type: 'open_id', sender_type: 'user' },
-    body: { content: JSON.stringify({ file_key: 'fk_self', file_name: '周报.pdf' }) },
-  }), chatP2p, 'ou_self');
-  assert.ok(file, '本人发出的文件要入库，才能下载');
-  assert.equal(file!.direction, 'out');
-  assert.equal(file!.attachments?.[0]?.fileKey, 'fk_self');
-
-  const image = mapFeishuUserMessage(raw({
-    message_id: 'om_self_img',
-    msg_type: 'image',
-    sender: { id: 'ou_self', id_type: 'open_id', sender_type: 'user' },
-    body: { content: JSON.stringify({ image_key: 'ik_self' }) },
-  }), chatP2p, 'ou_self');
-  assert.equal(image?.direction, 'out');
-  assert.equal(image?.attachments?.[0]?.fileKey, 'ik_self');
-
-  // 文本仍按原策略跳过，避免收件箱被自己的聊天刷满
-  const text = mapFeishuUserMessage(raw({
-    message_id: 'om_self_text',
-    sender: { id: 'ou_self', id_type: 'open_id', sender_type: 'user' },
-  }), chatP2p, 'ou_self');
-  assert.equal(text, null);
-
-  // LinkHub 自己刚发出的文件被轮询回推：按同会话 + 附件名识别为回声，不重复入库
-  rememberSent({
-    platform: Platform.FEISHU,
-    conversationId: 'oc_p2p_1',
-    text: '',
-    fileNames: ['周报.pdf'],
-    at: Date.now(),
-  });
-  const echo = mapFeishuUserMessage(raw({
-    message_id: 'om_self_file_echo',
-    msg_type: 'file',
-    sender: { id: 'ou_self', id_type: 'open_id', sender_type: 'user' },
-    body: { content: JSON.stringify({ file_key: 'fk_echo', file_name: '周报.pdf' }) },
-  }), chatP2p, 'ou_self');
-  assert.equal(echo, null);
-
-  resetEchoState();
-  resetFeishuEchoRegistry();
-});
-
-test('mapFeishuUserMessage：跳过自己发的文本 / 已撤回 / 系统 / 未知类型', () => {
+test('mapFeishuUserMessage：跳过自己发的 / 已撤回 / 系统 / 未知类型', () => {
   assert.equal(mapFeishuUserMessage(raw({ sender: { id: 'ou_self', id_type: 'open_id', sender_type: 'user' } }), chatP2p, 'ou_self'), null);
   assert.equal(mapFeishuUserMessage(raw({ deleted: true }), chatP2p, 'ou_self'), null);
   assert.equal(mapFeishuUserMessage(raw({ sender: { id: 'sys', sender_type: 'system' } }), chatP2p, 'ou_self'), null);

@@ -58,7 +58,8 @@ export class WsRealtime implements RealtimeClient {
   private detachWindowHooks?: () => void;
 
   constructor(
-    private readonly url: string,
+    /** 连接地址：可以是字符串，也可以是每次连接时求值的函数（登录态变化后自动带新令牌） */
+    private readonly url: string | (() => string),
     options: WsOptions = {},
   ) {
     this.maxRetries = options.maxRetries ?? 8;
@@ -119,6 +120,22 @@ export class WsRealtime implements RealtimeClient {
     return this.status;
   }
 
+  /**
+   * 登录态变化（登录/退出）后强制重连：用当前令牌重新握手。
+   * 已连接但令牌变了的旧连接会被后端按 1008 拒绝，必须主动换一条。
+   */
+  reconnectNow(): void {
+    this.closed = false;
+    this.attempts = 0;
+    this.clearTimer();
+    try {
+      this.ws?.close();
+    } catch {
+      // 关闭旧连接失败不影响新建
+    }
+    this.connect();
+  }
+
   /** 主动关闭：不再重连，清空订阅（组件卸载/应用销毁时调用） */
   close(): void {
     this.closed = true;
@@ -132,7 +149,8 @@ export class WsRealtime implements RealtimeClient {
 
   private connect(): void {
     if (this.closed) return;
-    const ws = new this.WS(this.url);
+    const url = typeof this.url === 'function' ? this.url() : this.url;
+    const ws = new this.WS(url);
     this.ws = ws;
 
     ws.onopen = () => {

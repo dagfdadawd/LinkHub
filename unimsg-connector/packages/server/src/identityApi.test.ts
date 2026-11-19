@@ -9,8 +9,7 @@ import { test, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MsgStatus, Platform, type UnifiedMessage } from '@unimsg/shared';
@@ -28,6 +27,7 @@ import {
   resetDingtalkPersonalClientCache,
 } from './connectors/dingtalkPersonal';
 import { resetIdentityCaches } from './services/identity';
+import { makeTempDir } from './utils/tempDir';
 
 const FAKE_DWS = fileURLToPath(new URL('../../../scripts/fake-dws.mjs', import.meta.url));
 const dirs: string[] = [];
@@ -44,7 +44,7 @@ const original = {
 const token = resolveApiToken(config.apiToken);
 
 function tempDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'linkhub-identity-api-'));
+  const dir = makeTempDir('linkhub-identity-api-');
   dirs.push(dir);
   return dir;
 }
@@ -285,7 +285,8 @@ test('reply 指定 identity=user：走 fake-dws 发送，delivery.identity=user�
     assert.equal(reply.status, 202);
     await waitFor(() => repo.get(cover.message.traceId)!.status === MsgStatus.SYNCED);
     const saved = repo.get(cover.message.traceId)!;
-    assert.equal(saved.sendIdentity, 'user');
+    // 身份只对本次发送有效：消息上不再留存（历史 bug：写回后会永久粘住）
+    assert.equal(saved.sendIdentity, undefined);
     assert.equal(saved.delivery?.mode, 'real');
     assert.equal(saved.delivery?.identity, 'user');
     assert.match(saved.delivery?.platformReply ?? '', /fake-open-task-/);

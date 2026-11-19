@@ -109,9 +109,6 @@ export interface DwsRunOptions {
   signal?: AbortSignal;
 }
 
-/** 文件下载可能比发消息慢（分片/大文件），给足时间但仍有上限 */
-const DOWNLOAD_TIMEOUT_MS = 120_000;
-
 /** 可注入的执行器：生产默认走 child_process.spawn，单测直接给假实现 */
 export type DwsRunner = (args: string[], opts?: DwsRunOptions) => Promise<DwsRunResult>;
 
@@ -148,6 +145,16 @@ export interface DwsAuthStatus {
   checkedAt: number;
   /** 探测失败原因（超时/JSON 解析失败等），authenticated=false 时一并给出 */
   error?: string;
+  /** 访问令牌到期时间（ISO）；前端据此显示倒计时 */
+  expiresAt?: string;
+  /** 刷新令牌到期时间（ISO） */
+  refreshExpiresAt?: string;
+  /** 当前登录的钉钉用户名 / 企业名 */
+  userName?: string;
+  corpName?: string;
+  /** 令牌是否仍然有效（dws 自报） */
+  tokenValid?: boolean;
+  refreshTokenValid?: boolean;
 }
 
 export interface DwsProfile {
@@ -471,6 +478,14 @@ export function parseAuthStatusJson(stdout: string, stderr = ''): {
   authenticated: boolean;
   message?: string;
   version?: string;
+  /** 访问令牌到期时间（dws 的 expires_at） */
+  expiresAt?: string;
+  /** 刷新令牌到期时间（refresh_expires_at） */
+  refreshExpiresAt?: string;
+  userName?: string;
+  corpName?: string;
+  tokenValid?: boolean;
+  refreshTokenValid?: boolean;
 } {
   const text = stdout.trim();
   const json = tryParseJson(text);
@@ -482,7 +497,25 @@ export function parseAuthStatusJson(stdout: string, stderr = ''): {
       ? versionCheck.current.trim()
       : undefined;
     const message = typeof r.message === 'string' && r.message.trim() ? r.message.trim() : undefined;
-    return { authenticated, ...(message ? { message } : {}), ...(version ? { version } : {}) };
+    const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
+    const bool = (v: unknown) => (typeof v === 'boolean' ? v : undefined);
+    const expiresAt = str(r.expires_at ?? r.expiresAt);
+    const refreshExpiresAt = str(r.refresh_expires_at ?? r.refreshExpiresAt);
+    const userName = str(r.user_name ?? r.userName);
+    const corpName = str(r.corp_name ?? r.corpName);
+    const tokenValid = bool(r.token_valid ?? r.tokenValid);
+    const refreshTokenValid = bool(r.refresh_token_valid ?? r.refreshTokenValid);
+    return {
+      authenticated,
+      ...(message ? { message } : {}),
+      ...(version ? { version } : {}),
+      ...(expiresAt ? { expiresAt } : {}),
+      ...(refreshExpiresAt ? { refreshExpiresAt } : {}),
+      ...(userName ? { userName } : {}),
+      ...(corpName ? { corpName } : {}),
+      ...(tokenValid !== undefined ? { tokenValid } : {}),
+      ...(refreshTokenValid !== undefined ? { refreshTokenValid } : {}),
+    };
   }
   // 非 JSON 兜底：dws 某些子命令/版本会输出纯文本
   const authenticated = /已登录|logged in|authenticated:\s*true/i.test(text)
@@ -791,7 +824,6 @@ export function parseMediaContent(content: string): { type: 'file' | 'image'; bo
         mimeType: isImage ? 'image/*' : 'application/octet-stream',
         size: 0,
         mediaId: placeholder[2].trim(),
-        resourceType: isImage ? 'image' : 'file',
       },
     };
   }
@@ -807,20 +839,13 @@ export function parseMediaContent(content: string): { type: 'file' | 'image'; bo
   if (taggedFile) {
     const kind = taggedFile[1];
     const name = taggedFile[2].trim();
-    const fileId = taggedFile[3].trim();
     const isImage = kind === '图片';
     return {
       type: isImage ? 'image' : 'file',
       body: `[${kind}]${name ? ` ${name}` : ''}`,
-      // 关键：fileId 是真正的下载凭据（dws drive download --node）；
-      // 之前只保留文件名，导致「本人发来的文件」在界面里只能看、不能下载。
-      attachment: {
-        name: name || kind,
-        mimeType: isImage ? 'image/*' : 'application/octet-stream',
-        size: 0,
-        fileId,
-        resourceType: isImage ? 'image' : 'file',
-      },
+      ...(name
+        ? { attachment: { name, mimeType: isImage ? 'image/*' : 'application/octet-stream', size: 0 } }
+        : {}),
     };
   }
 
@@ -830,22 +855,16 @@ export function parseMediaContent(content: string): { type: 'file' | 'image'; bo
   const r = json as Record<string, any>;
   const name = typeof r.fileName === 'string' ? r.fileName : typeof r.name === 'string' ? r.name : '';
   const mediaId = typeof r.mediaId === 'string' ? r.mediaId : typeof r.media_id === 'string' ? r.media_id : '';
-  const fileId = typeof r.fileId === 'string' ? r.fileId : typeof r.file_id === 'string' ? r.file_id : '';
   const size = Number(r.fileSize ?? r.size ?? 0);
   const looksImage = /\.(png|jpe?g|gif|webp|bmp)$/i.test(name) || /image/i.test(String(r.msgType ?? r.type ?? ''));
-  if (name || mediaId || fileId) {
+  if (name || mediaId) {
     const label = looksImage ? '图片' : '文件';
     return {
       type: looksImage ? 'image' : 'file',
       body: `[${label}]${name ? ` ${name}` : ''}`,
-      attachment: {
-        name: name || label,
-        mimeType: looksImage ? 'image/*' : 'application/octet-stream',
-        size: Number.isFinite(size) && size > 0 ? size : 0,
-        ...(mediaId ? { mediaId } : {}),
-        ...(fileId ? { fileId } : {}),
-        resourceType: looksImage ? 'image' : 'file',
-      },
+      ...(name
+        ? { attachment: { name, mimeType: 'application/octet-stream', size: Number.isFinite(size) && size > 0 ? size : 0 } }
+        : {}),
     };
   }
   return undefined;
@@ -1575,12 +1594,18 @@ export class DingtalkPersonalClient {
       { code: session.exitCode ?? 1, stdout: session.output.out, stderr: session.output.err },
       `${this.commandLabel()} auth login`,
     );
+    // dws 配置目录不可写（~/.dws/.data.lock 被拒）时给可执行的修复方向
+    const lockHint = /data\.lock|Access is denied|permission denied/i.test(info.message)
+      ? '（原因看起来是 dws 配置目录不可写：先删掉 %USERPROFILE%\.dws\.data.lock，'
+        + '或在启动前设置 DWS_CONFIG_DIR 指向一个可写目录，再重试登录）'
+      : '';
+
     return {
       started: false,
       mode: session.mode,
       command: session.command,
       instructions: `登录未能自动启动（${info.kind === 'not-logged-in' ? '需要你本人授权' : info.kind === 'permission' ? '企业侧未开启 CLI 访问' : 'dws 返回错误'}）：`
-        + `${info.message} 也可在本机终端手动执行 ${this.loginCommand()}。`,
+        + `${info.message}${lockHint} 也可在本机终端手动执行 ${this.loginCommand()}。`,
       ...hints,
     };
   }
@@ -1645,6 +1670,12 @@ export class DingtalkPersonalClient {
       checkedAt,
       ...(parsed.message ? { message: parsed.message } : {}),
       ...(version ? { version } : {}),
+      ...(parsed.expiresAt ? { expiresAt: parsed.expiresAt } : {}),
+      ...(parsed.refreshExpiresAt ? { refreshExpiresAt: parsed.refreshExpiresAt } : {}),
+      ...(parsed.userName ? { userName: parsed.userName } : {}),
+      ...(parsed.corpName ? { corpName: parsed.corpName } : {}),
+      ...(parsed.tokenValid !== undefined ? { tokenValid: parsed.tokenValid } : {}),
+      ...(parsed.refreshTokenValid !== undefined ? { refreshTokenValid: parsed.refreshTokenValid } : {}),
     };
     this.statusCache = status;
     return status;
@@ -1726,21 +1757,14 @@ export class DingtalkPersonalClient {
       '--message-id', input.messageId,
       '--open-conversation-id', input.conversationId,
       '--output', input.outputPath,
-    ], { timeoutMs: DOWNLOAD_TIMEOUT_MS });
+    ], { timeoutMs: 45_000 });
     if (r.code !== 0) {
       const info = classifyDwsFailure(r, `${this.commandLabel()} chat message download-media`);
       throw new DingtalkPersonalError(info.message, info.kind, r.code);
     }
   }
 
-  /**
-   * 下载钉钉本人消息里的文件（`fileId`）。
-   *
-   * 与图片的 `mediaId` 是两套资源体系：个人事件回推文件时只给
-   * `[文件] 名称 fileId: … 注意：如需下载使用 dws drive download 命令下载`，
-   * 必须用 `drive download --node <fileId>`。下载到调用方给的临时路径，
-   * 再由上层读成 Buffer 返回浏览器；临时文件由调用方清理。
-   */
+  /** 下载个人文件（正文里的 `[文件] 名称 fileId: …` 用 dws drive download 取回） */
   async downloadDriveFile(input: {
     fileId: string;
     outputPath: string;
@@ -1752,7 +1776,7 @@ export class DingtalkPersonalClient {
       '--output', input.outputPath,
       '--format', 'json',
     ], {
-      timeoutMs: DOWNLOAD_TIMEOUT_MS,
+      timeoutMs: 45_000,
       ...(input.signal ? { signal: input.signal } : {}),
     });
     if (r.code !== 0) {

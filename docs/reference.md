@@ -435,25 +435,14 @@ pnpm install
 | `DINGTALK_AES_TOKEN` / `DINGTALK_AES_KEY` | HTTP 回调模式才需要（事件订阅的 Token / 加密密钥） |
 | `DINGTALK_BASE_URL` | 开放平台基址，默认 `https://api.dingtalk.com` |
 
-### 微信（RPA 通道）
-
-微信个人版**没有官方收发 API**，本项目按赛题 Supplemental 允许的 RPA 路径接入：本机跑一个独立的 RPA 桥（`scripts/wechat-rpa/rpa_bridge.py`），用键鼠模拟操作微信桌面端，「发」由后端调用桥的 `/send`（键鼠粘贴 + 回车），「收」由桥用 **UI Automation** 轮询窗口消息后 POST 到本后端 webhook。因此微信**不需要任何平台凭据**，只有桥地址一个配置。
-
-> **自动轮询要求微信 3.9.x**：4.x（`Weixin.exe`）是 Qt 5 自绘界面，实测 4.2.0.53 的可访问性树只有 2 个空 `Pane`、渲染子窗口 `childCount=0`，UIA 与 MSAA 都拿不到控件（`Weixin.dll` 里连 `QWindowsAccessib` / `QT_ACCESSIBILITY` 都没有，编译期裁掉，设环境变量无效）。
->
-> 4.x 的接收走**按需拉取**：桥把微信置前 → 在消息区拖选 → `Ctrl+C` → 按「昵称/时间/正文」解析 → 去重转发。拿到的是**原文**（零 OCR 误差），代价是只覆盖当前打开的会话与可视区、执行时短暂抢前台。入口：收件箱选微信渠道 →「从微信拉取当前会话」，或 `POST /api/wechat/pull`。
+### 企业微信
 
 | 变量 | 说明 |
 |---|---|
-| `WECHAT_MODE` | `mock`（默认）/ `real`。微信的 `auto` 不算真实，**必须显式 `real`** 才会操作微信桌面端 |
-| `WECHAT_BRIDGE_URL` | 本地 RPA 桥地址，默认 `http://127.0.0.1:8787`；一般无需修改，只有改了桥端口才需要同步 |
-
-> real 模式还依赖：Windows 上已登录并打开**微信桌面端 3.9.x**（4.x 自绘界面不暴露控件树，只能发不能收）、`pip install pyautogui pyperclip pywin32 uiautomation`、桥以 `--mode rpa` 启动。缺任一项会**如实报错**（不会假装成功）：
-> - **发送**：桥自报 `mode=mock` 时后端直接报错「本次没有真实操作微信」，绝不把桥的 mock 回执写成 `real`；
-> - **接收**：桥在 `/health` 上报 `receive.implemented/supported`，后端（`services/wechatBridge.ts`）据此判定能否说"接收已就绪"；读不到窗口时连接页给 `needs_install`，doctor 给 FAIL。
->
-> RPA 的固有边界（不是 bug）：微信只把「当前打开的会话」暴露给可访问性树，自动收多个会话必须切换会话（`--no-switch` 可关闭但只收当前会话）；**微信 4.x 根本不暴露控件树**（实测 4.2.0.53：主窗口只有 2 个空 `Pane`、渲染子窗口 `childCount=0`），此时 `receive.supported=false` 且 `client.kind=weixin4`，需换装 3.9.x；3.9 内部小版本若改了控件结构，失效时同样 `receive.supported` 变 false。
-> 微信个人版无「可信 IP / XML 回调 / corpId」等企业级 IM 概念，本 RPA 通道一律不涉及。
+| `WECOM_CORP_ID` | 企业 ID（管理后台 → 我的企业 → 企业信息） |
+| `WECOM_AGENT_ID` / `WECOM_SECRET` | 自建应用 AgentId / Secret（应用详情页，Secret 点「眼睛」查看，**不要点重置**） |
+| `WECOM_TOKEN` / `WECOM_AES_KEY` | 应用「接收消息 → 设置 API 接收」的 Token / EncodingAESKey（43 位）；收消息必需 |
+| `WECOM_BASE_URL` | 企微 API 基址，默认 `https://qyapi.weixin.qq.com`；发信出口 IP 必须加入「企业可信 IP」，否则报 60020（`doctor` 会显示当前出口 IP） |
 
 ### 邮箱（任意数量 / 任意服务商）
 
@@ -475,7 +464,7 @@ pnpm install
 
 ## 真实接入配置
 
-逐平台的「后台点什么 → 填哪些 env → 验证命令 → 常见报错」完整 checklist、errcode 排错表、邮箱 provider 预设表与端口/加密表、多账号示例、飞书企业认证的现实说明，统一见 **[swap-accounts.md](swap-accounts.md)**。下面是速查入口：
+逐平台的「后台点什么 → 填哪些 env → 验证命令 → 常见报错」完整 checklist、errcode 排错表、邮箱 provider 预设表与端口/加密表、多账号示例、可信 IP 与飞书企业认证的现实说明，统一见 **[swap-accounts.md](swap-accounts.md)**。下面是速查入口：
 
 | 平台 | 收消息方式 | 需要公网吗 | 关键点 | 验证命令（在 `unimsg-connector/` 下） |
 |---|---|---|---|---|
@@ -531,8 +520,8 @@ pnpm install
 | 命令 | 实测结果 |
 |---|---|
 | `pnpm typecheck` | **2026-11-12 实测通过**：`shared` / `server` / `web` 三包检查 exit 0 |
-| `pnpm --filter @unimsg/server test` | **2026-11-19 本轮实测**：附件下载相关 **43 项全过**；全量条数以当前工作区实际输出为准（覆盖连接器、真实适配器、身份解析 / 飞书用户轮询 / 钉钉 dws、MIME、IMAP 水位/目录、webhook HTTP 级、app/CORS、附件下载、doctor 探针/渲染/拼写检查等），约 5s |
-| `pnpm --filter @unimsg/web test` | **2026-11-19 已覆盖**（覆盖 httpApi / wsRealtime / appStore / mockApi / AccountsPage（含身份 / OAuth / .env 重启）/ PersonalIdentityModal / FirstRunGuide / InboxPage / MessageCard / DetailPanel（含附件下载按钮）/ ReplyComposer / ComposeModal 身份选择 / download / format / ink / due / footerState 等；条数以当前工作区实际输出为准） |
+| `pnpm --filter @unimsg/server test` | **2026-11-12 本轮实测 466 tests 全过**（exit 0；条数以最终代码实际输出为准；覆盖连接器、真实适配器、身份解析 / 飞书用户轮询 / 钉钉 dws、MIME、IMAP 水位/目录、webhook HTTP 级、app/CORS、doctor 探针/渲染/拼写检查等），约 4s |
+| `pnpm --filter @unimsg/web test` | **2026-11-12 实测 34 文件 / 304 tests 全过**（exit 0；覆盖 httpApi / wsRealtime / appStore / mockApi / AccountsPage（含身份 / OAuth / .env 重启）/ PersonalIdentityModal / FirstRunGuide / InboxPage / MessageCard / DetailPanel / ReplyComposer / ComposeModal 身份选择 / format / ink / due / footerState 等） |
 | `pnpm e2e -Port 3199`（Windows PowerShell） | **2026-11-12 本轮实测 20 项断言 PASS + `SMOKE OK`**，exit 0（e2e.ps1，本机 3199 端口；约 10s）；强制四平台 `mock` + **独立临时数据目录**（脚本隔离 `DATA_DIR`/`DATA_FILE` 并在结束时清理，不影响本机 `.env`/历史数据），完全离线 |
 | `pnpm e2e:sh`（Git Bash，3123 端口） | 同上，**20 项 PASS + `SMOKE OK`**（CI 使用此命令） |
 | 契约自检（后端起 mock 后） | `node packages/web/scripts/verify-contract.mjs http://127.0.0.1:3001 dev-token` → 本机 2026-11-12 实测 **81 PASS / 0 FAIL**（含 `modes` / `sentMock` / `mode`+`policy` / 邮箱账号明细 / `delivery` / WS 握手 / 身份 `identity` / 钉钉 personal status；N 视是否配置邮箱账号：有邮箱 81、无邮箱 75，以实际输出为准） |

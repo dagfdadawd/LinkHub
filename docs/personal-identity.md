@@ -186,7 +186,7 @@ FEISHU_USER_BACKFILL_HOURS=0
 - 2026-11-12 真实租户实测的入库日志形如：`[feishu-user] 本人账号收到消息：单聊「LinkHub」 · 发送者=<脱敏名> · 类型=text`；群聊消息走同一通道，日志标「群聊」；
 - 首轮默认只立基线，**不会把历史消息灌进收件箱**；设 `FEISHU_USER_BACKFILL_HOURS=24` 才会回溯；
 - **水位同秒重复已收敛**：水位按「秒」下取整，飞书每轮会把水位同一秒的最后一条重新返回；LinkHub 在轮询里把 `create_time <= 水位` 的消息直接计为「已见过」跳过，不再重复 ingest——避免每轮重复写 `redelivered` trace 并触发全量落盘（返回字段 `alreadySeen`，日志形如「…重复 0 条，已见过 2 条」）；
-- 自己发出的**文本**消息会被过滤（自环保护），不会在自己的收件箱里再出现一条；**自己发出的文件 / 图片 / 语音 / 视频会入库并标 `direction=out`**，这样本人从飞书手机/桌面发出的文件也能在 LinkHub 里看到并下载；LinkHub 自己刚发出的文件先用 `message_id` 精确识别，再用 `echoRegistry` 按附件名兜底去重，避免重复入库；**飞书拿不到本人 open_id 时会跳过过滤并告警**；
+- 自己发出的消息会被**尽可能**过滤（自环保护），不会在自己的收件箱里再出现一条；**飞书拿不到本人 open_id 时会跳过过滤并告警**；
 - **双通道并存会重复入库（已知限制）**：机器人长连接（`FEISHU_STREAM=true`）与本人轮询同时开启时，在「机器人与本人同处的单聊」里同一条消息可能被两条通道各入库一次；2026-11-12 实测该单聊里本人发出的消息先被机器人长连接入库为 `receivedAs=bot`（同一 `externalId` 幂等，只留一条）。**建议演示时二选一**；
 - 权限不足时不会静默：账号页身份块 / 日志会给出所需权限与"重新授权"提示；
 - 水位文件损坏 / 丢失时会安全回退并**重建基线**，重启后从水位续传；但**断档期间的消息不会自动补回**——需要回填就把 `FEISHU_USER_BACKFILL_HOURS` 设为 `24` 等值后重启（会把该时段消息重新入库）。
@@ -517,7 +517,7 @@ DINGTALK_IDENTITY=user
 
 | 项目 | 状态 |
 |---|---|
-| LinkHub 身份解析、飞书用户轮询、钉钉 dws 子进程、发送身份分流、本人附件下载、飞书自发送文件入库 | 已由单元测试 + 注入 fetch / 注入 runner 覆盖（本轮附件下载相关 server **43 项全过**、`pnpm -r typecheck` 全过；web 与全量 server 条数以当前工作区实际输出为准） |
+| LinkHub 身份解析、飞书用户轮询、钉钉 dws 子进程、发送身份分流 | 已由单元测试 + 注入 fetch / 注入 runner 覆盖（本轮 server **466 tests 全过**、web 34 文件 / 304 tests 全过、`pnpm -r typecheck` 全过，见验收记录） |
 | 飞书租户策略 `21001` | ✅ **2026-11-12 本机租户实测解除**：`POST /open-apis/auth/v3/app_access_token/internal` 与 `/tenant_access_token/internal` 均返回 `code:0`（此前 README 记录为 `21001 Access denied due to platform policy`，历史记录保留；`21001` 仍是平台策略，其他租户 / 环境仍可能遇到，见 §3.1） |
 | 飞书本人身份真实端到端（授权 → 轮询 → 入库 → 本人发送） | ✅ **2026-11-12 真实租户实测通过**（测试企业「LinkHub 测试」、应用 `LinkHub`（`cli_aa63738b78f81d0d`）、授权账号「八水合甲烷」）：真实 OAuth 授权 → 用户轮询收**单聊 + 群聊**（入库 `receivedAs=user`）→ `POST /api/messages/compose` 以本人身份返回 202 / `status=replied` → 飞书侧核对 `sender.sender_type=user`、`is_agent=false`（确认是真人本人，不是机器人）；独立测试实例 3101 与用户主应用 3001 各验证一次。详见 [验收记录](verification/feishu-personal-e2e-2026-11-12.md) |
 | 飞书单聊（p2p）会话发现 | ✅ **2026-11-12 真实令牌实测**：`GET /im/v1/chats` 不带 `types` 只返回 2 个群聊；带 `types=p2p,group` 返回 5 个会话（2 群 + 3 单聊），`types=p2p` 只返回 3 个单聊。该参数**未公开**（官方 CLI 在用），已做「被拒自动降级为纯群列表」兜底（`232001` / invalid request parameter） |

@@ -31,6 +31,36 @@ const PLATFORM_OPTIONS = Object.values(Platform).map((p) => ({
   label: PLATFORM_META[p].name,
 }));
 
+/** 统一入口自己发的消息用的假发信人，不能当成联系人名 */
+const LINKHUB_SENDER = 'LinkHub 统一入口';
+
+/**
+ * 平台原始 ID 长这样：`ou_c8bb…` / `oc_abc…` / `cidvtwl…==` / `cli_…`。
+ * 判断依据是「够长 + 纯 ASCII + 没有中文和空格」，人起的名字（Jarvis / 测试群）不会命中。
+ */
+export function looksLikePlatformId(name: string | undefined): boolean {
+  const v = (name ?? '').trim();
+  if (v.length < 12) return false;
+  if (/[一-龥\s]/.test(v)) return false;
+  return /^[A-Za-z0-9_+/=-]+$/.test(v);
+}
+
+/**
+ * 「发给谁」的展示名：优先人话，实在没有名字就用「单聊 · …尾部6位」，
+ * 完整 ID 放到 tooltip 里——列表里铺一长串 ID 用户根本认不出是谁。
+ */
+export function pickTargetLabel(
+  name: string | undefined,
+  conversationId: string,
+  type?: 'p2p' | 'group',
+): string {
+  const v = (name ?? '').trim();
+  if (v && !looksLikePlatformId(v) && v !== '（未命名会话）') return v;
+  const kind = type === 'group' ? '群聊' : '单聊';
+  const tail = conversationId ? conversationId.slice(-6) : '';
+  return tail ? `${kind} · …${tail}` : `未命名${kind}`;
+}
+
 /** 目标会话输入框的提示：不同平台的目标 ID 语义不同，直接告诉用户填什么 */
 const CONVERSATION_HINT: Record<Platform, string> = {
   [Platform.FEISHU]: '飞书 chat_id（oc_…）或单聊 open_id',
@@ -133,18 +163,32 @@ export function ComposeModal({
  * 解决「为什么只能选三个」——只要这个人/群在本人账号的会话列表里就能选到。
  */
   const targetOptions = useMemo(() => {
+    // 平台会话名录（飞书）里的名字最可读：同一个会话 id 优先用它
+    const dirById = new Map(
+      (directory?.platform === platform ? directory.items : []).map((it) => [it.id, it]),
+    );
+
     const fromMessages = buildConversations(state.messages)
       .filter((c) => c.platform === platform)
       .map((c) => {
         const withConv = c.messages.find((m) => m.conversation?.id);
+        const conversationId = withConv?.conversation?.id ?? '';
+        const conversationType = withConv?.conversation?.type ?? c.conversationType;
+        // 名字候选：名录名 → 会话名 → 消息里的真实发信人名（跳过统一入口自己的假名字）
+        const readableSender = c.messages
+          .map((m) => m.sender?.name)
+          .find((n): n is string => Boolean(n && !looksLikePlatformId(n) && n !== LINKHUB_SENDER));
+        const name = [dirById.get(conversationId)?.name, c.title, readableSender]
+          .find((n): n is string => Boolean(n && !looksLikePlatformId(n)));
         return {
           value: c.key,
-          label: c.title || '（未命名会话）',
-          rawTitle: c.title,
-          conversationId: withConv?.conversation?.id ?? '',
-          conversationType: withConv?.conversation?.type ?? c.conversationType,
+          label: pickTargetLabel(name, conversationId, conversationType),
+          // 悬停能看到原始值（排查时仍然有用），但列表/输入框只显示人话
+          rawTitle: [c.title, conversationId].filter(Boolean).join(' · '),
+          conversationId,
+          conversationType,
           lastAt: c.lastAt as string | undefined,
-          group: c.conversationType === 'group',
+          group: conversationType === 'group',
           fromDirectory: false,
         };
       })
@@ -155,8 +199,8 @@ export function ComposeModal({
       .filter((it) => it.id && !known.has(it.id))
       .map((it) => ({
         value: `${platform}:${it.id}`,
-        label: it.name,
-        rawTitle: it.name,
+        label: pickTargetLabel(it.name, it.id, it.type),
+        rawTitle: [it.name, it.id].filter(Boolean).join(' · '),
         conversationId: it.id,
         conversationType: it.type,
         lastAt: undefined as string | undefined,
@@ -223,6 +267,8 @@ export function ComposeModal({
         ...(resolvedConversationId ? { conversationId: resolvedConversationId } : {}),
         // 会话类型从选中的会话带过来：以前不传，群会被后端当成单聊
         ...(resolvedConversationType ? { conversationType: resolvedConversationType } : {}),
+        // 会话名一起带上：不带的话这条发送会在收件箱里形成一个没有名字的会话
+        ...(selectedTarget?.label ? { conversationTitle: selectedTarget.label } : {}),
         ...(platform === Platform.MAIL && mailAccount ? { mailAccount } : {}),
         // 身份显式下发：两种身份都可用时尊重用户选择；只有一种时等同 effectiveSend。
         // Mock 通道不传（服务端整体模拟，不接受身份覆盖）。
@@ -269,6 +315,11 @@ export function ComposeModal({
       onCancel={onClose}
       title="新建发送 · 向指定平台发送消息或文件"
       destroyOnHidden
+      width={560}
+      /* 整体上移：默认 top=100 在小屏上会把「发送给 / 发送」挤到折叠线以下 */
+      style={{ top: 24 }}
+      /* 内容区自己滚，footer 的「发送」永远可见，不用一路翻到底 */
+      styles={{ body: { maxHeight: 'min(62vh, 640px)', overflowY: 'auto', paddingRight: 6 } }}
       footer={
         <Space>
           <Button onClick={onClose}>取消</Button>
@@ -285,7 +336,7 @@ export function ComposeModal({
         </Space>
       }
     >
-      <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+      <Space direction="vertical" size={14} style={{ width: '100%' }}>
         <div>
           <div className="compose-field__label">目标平台</div>
           <Select
@@ -296,48 +347,6 @@ export function ComposeModal({
             aria-label="目标平台"
           />
         </div>
-
-        {/* 发送身份：只在后端下发了身份视图（飞书 / 钉钉）时出现；两种身份都可用才可切换 */}
-        {identity && (
-          <div className="compose-identity" data-testid="compose-identity">
-            <div className="compose-field__label">发送身份</div>
-            {bothIdentitiesAvailable ? (
-              <>
-                <Radio.Group
-                  value={sendIdentity}
-                  onChange={(e) => setSendIdentity(e.target.value as IdentityRole)}
-                  aria-label="发送身份"
-                >
-                  <Radio value="user">
-                    本人
-                    {identity.user.displayName ? `（${identity.user.displayName}）` : ''}
-                  </Radio>
-                  <Radio value="bot">机器人</Radio>
-                </Radio.Group>
-                <div className="compose-field__hint">
-                  默认跟随后端策略（当前是{effectiveSend === 'user' ? '本人' : '机器人'}）。
-                  以本人发送时，收件人看到的是你；以机器人发送时，收件人看到的是机器人。
-                </div>
-              </>
-            ) : effectiveSend === 'mock' ? (
-              <>
-                <IdentityTag role="mock" action="send" />
-                <div className="compose-field__hint">
-                  当前平台是演示模式：只会生成本地模拟发送记录，不会真的发到平台，因此不能选择本人 / 机器人身份。
-                </div>
-              </>
-            ) : (
-              <>
-                <IdentityTag role={effectiveSend === 'user' ? 'user' : 'bot'} action="send" />
-                <div className="compose-field__hint">
-                  {effectiveSend === 'user'
-                    ? `当前只能以本人身份发送${identity.user.displayName ? `（${identity.user.displayName}）` : ''}：机器人通道不可用。${identity.botHint}`
-                    : `当前只能以机器人身份发送：本人账号未连接。${identity.user.hint}`}
-                </div>
-              </>
-            )}
-          </div>
-        )}
 
         {platform === Platform.MAIL && (
           <div>
@@ -424,6 +433,48 @@ export function ComposeModal({
             </>
           )}
         </div>
+
+        {/* 发送身份：只在后端下发了身份视图（飞书 / 钉钉）时出现；两种身份都可用才可切换 */}
+        {identity && (
+          <div className="compose-identity" data-testid="compose-identity">
+            <div className="compose-field__label">发送身份</div>
+            {bothIdentitiesAvailable ? (
+              <>
+                <Radio.Group
+                  value={sendIdentity}
+                  onChange={(e) => setSendIdentity(e.target.value as IdentityRole)}
+                  aria-label="发送身份"
+                >
+                  <Radio value="user">
+                    本人
+                    {identity.user.displayName ? `（${identity.user.displayName}）` : ''}
+                  </Radio>
+                  <Radio value="bot">机器人</Radio>
+                </Radio.Group>
+                <div className="compose-field__hint">
+                  默认跟随后端策略（当前是{effectiveSend === 'user' ? '本人' : '机器人'}）。
+                  以本人发送时，收件人看到的是你；以机器人发送时，收件人看到的是机器人。
+                </div>
+              </>
+            ) : effectiveSend === 'mock' ? (
+              <>
+                <IdentityTag role="mock" action="send" />
+                <div className="compose-field__hint">
+                  当前平台是演示模式：只会生成本地模拟发送记录，不会真的发到平台，因此不能选择本人 / 机器人身份。
+                </div>
+              </>
+            ) : (
+              <>
+                <IdentityTag role={effectiveSend === 'user' ? 'user' : 'bot'} action="send" />
+                <div className="compose-field__hint">
+                  {effectiveSend === 'user'
+                    ? `当前只能以本人身份发送${identity.user.displayName ? `（${identity.user.displayName}）` : ''}：机器人通道不可用。${identity.botHint}`
+                    : `当前只能以机器人身份发送：本人账号未连接。${identity.user.hint}`}
+                </div>
+              </>
+            )}
+          </div>
+        )}
 
         <div>
           <div className="compose-field__label">文本内容（也可只发文件）</div>

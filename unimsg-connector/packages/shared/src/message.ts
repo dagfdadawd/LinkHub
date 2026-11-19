@@ -203,6 +203,12 @@ export interface ComposeRequest {
   /** 目标会话：飞书 chat_id / 钉钉 openConversationId / 微信会话名 / 邮箱收件地址 */
   conversationId?: string;
   conversationType?: 'group' | 'p2p';
+  /**
+   * 目标会话的展示名（来自选择器的名字）。
+   * 主动发送时后端拿不到会话名，不传的话这条消息在收件箱里会形成一个**没有名字的会话**；
+   * 传了就记进 conversation.title，新建会话直接显示人话。
+   */
+  conversationTitle?: string;
   /** 邮箱平台专用：从哪个邮箱账号发出（MAIL_<KEY> 的 key）；不填则用首个已配置账号 */
   mailAccount?: string;
   /**
@@ -339,7 +345,51 @@ export interface UnifiedMessage {
   aiConfidence?: number;
   aiPrecision?: 'high' | 'low';
   replyDraft?: string; // 大模型给出的可编辑回复草稿
+  /**
+   * 本次发送要**显式引用**的消息（用户右键/长按某条消息选择「回复」时才有）。
+   * 不设置 = 普通发送，不带引用条。
+   */
+  quoteRef?: {
+    /** 被引用消息在平台侧的 ID（钉钉 = openMessageId） */
+    messageId: string;
+    /** 被引用消息的发送者 ID（钉钉 = senderOpenDingtalkId） */
+    senderId: string;
+    senderName?: string;
+    /** 被引用内容摘要，前端画引用条用 */
+    text?: string;
+  };
   reply?: string; // 用户最终回写的文本（回写时发送此内容）
+  /**
+   * 回复历史：**每次回复都追加一条**。
+   *
+   * `reply` 只保留最新一条（兼容旧逻辑 / 草稿 / 重试），但如果只靠它，
+   * 同一会话里连发两条回复会互相覆盖，对话框里永远只剩最后一条 ——
+   * 用户看到的就是"新发的把旧的顶掉了"。历史条目按 at 升序，渲染成独立气泡。
+   */
+  replies?: Array<{
+    /** 回复正文（与当时实际发出的内容一致）；纯附件回复为空串 */
+    text: string;
+    /** 发送时间（ISO） */
+    at: string;
+    /** 这次回复引用了哪条消息（只有用户显式「回复某条」时才有） */
+    quote?: { text: string; senderName: string };
+    /**
+     * 这次回复带的附件。纯文件回复没有正文，不记附件就会显示成一个空气泡。
+     */
+    attachments?: AttachmentInfo[];
+    /**
+     * 这次回复**实际**用哪个身份发出的（真实通道才写；Mock 不写，如实标注）。
+     * 每条回复各记各的：同一条消息先后用本人 / 机器人回过时，气泡不能共用一个标签。
+     */
+    identity?: IdentityRole;
+    /**
+     * 这次回写失败了（没送到平台）。条目仍然保留，用户能看到"这条没发出去"并重试，
+     * 而不是让气泡停在"发送中"永远不动。
+     */
+    failed?: boolean;
+    /** 失败原因摘要（与 message.failureReason 同源，便于逐条展示） */
+    failureReason?: string;
+  }>;
   done?: boolean; // 是否已标记完成（待办类）
   /**
    * 本条消息是通过哪种身份收到的：本人账号接收 / 机器人接收。
@@ -360,6 +410,12 @@ export interface UnifiedMessage {
    * 缺省（旧数据 / Mock）按 `in` 处理，保持向后兼容。
    */
   direction?: 'in' | 'out';
+  /**
+   * 归属账号（本地账号体系的 user.id）。
+   * 缺省 = 未归属的历史/演示数据，登录用户可「认领」收进自己的收件箱。
+   * 用部署令牌（API_TOKEN，无人登录）访问时不按它过滤，保证单机演示零改动。
+   */
+  ownerId?: string;
   /**
    * 待办截止时间（ISO）。演示环境由服务端从正文做启发式推断（"明天 18:00"/"周三"/"12月3日"），
    * 解析不出就是 undefined —— 前端归入"未设置截止"，不伪造时间。

@@ -111,7 +111,7 @@ Windows 根目录脚本：
 
 ## 当前状态
 
-- **测试**：`typecheck` 通过；附件下载相关 server 用例 **43 项**全过（2026-11-19）；web 与全量 server 套件以当前工作区实际输出为准；`pnpm e2e` 20 项断言 PASS；契约自检 81 PASS。
+- **测试**：`typecheck` 通过；server **509 tests**、web **365 tests** 全过（2026-11-13，以实际输出为准）；`pnpm e2e` 20 项断言 PASS；契约自检 81 PASS。
 - **持久化**：默认内存 + 可选文件快照（设 `DATA_DIR`）；PostgreSQL / Redis 仅有 DDL 与仓储接口，未实装。
 - **OCR**：仍是占位实现（赛题 A 不依赖 OCR）。
 - **大模型**：OpenAI 兼容协议真实调用（默认 MiMo `mimo-v2.6-flash`），失败回退规则并标注来源。

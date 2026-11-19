@@ -7,8 +7,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Platform } from '@unimsg/shared';
@@ -35,6 +34,7 @@ import {
 } from '../connectors/dingtalkPersonal';
 import { resetIdentityCaches } from '../services/identity';
 import { learnSelfId } from '../services/echoRegistry';
+import { makeTempDir } from '../utils/tempDir';
 
 const FAKE_DWS = fileURLToPath(new URL('../../../../scripts/fake-dws.mjs', import.meta.url));
 const dirs: string[] = [];
@@ -48,7 +48,7 @@ const original = {
 };
 
 function tempDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'linkhub-dws-stream-'));
+  const dir = makeTempDir('linkhub-dws-stream-');
   dirs.push(dir);
   return dir;
 }

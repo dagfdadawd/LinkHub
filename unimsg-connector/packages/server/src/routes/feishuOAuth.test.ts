@@ -8,8 +8,7 @@ import { test, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { createApp } from '../app';
 import { config } from '../config';
@@ -21,6 +20,7 @@ import { OcrService } from '../services/ocr';
 import { RateLimiter } from '../services/rateLimiter';
 import { MessageService } from '../services/message';
 import { resetFeishuOAuthStates } from './feishuOAuth';
+import { makeTempDir } from '../utils/tempDir';
 
 const realFetch = globalThis.fetch;
 const dirs: string[] = [];
@@ -58,7 +58,7 @@ async function postStart(base: string, token = config.apiToken): Promise<Respons
 }
 
 function tempTokenFile(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'linkhub-feishu-oauth-'));
+  const dir = makeTempDir('linkhub-feishu-oauth-');
   dirs.push(dir);
   return join(dir, 'token.json');
 }

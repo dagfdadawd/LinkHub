@@ -9,7 +9,7 @@
 - 换账号的 3 步快速路径与模式判定（为什么填了凭据还是 Mock）
 - 四个平台各自的 checklist：**后台点什么 → 填哪些 env → 验证命令 → 常见报错**
 - **本人账号收发**（飞书 OAuth / 钉钉官方 CLI `dws`）的配置、验证、平台限制与回退（完整版见 [personal-identity.md](personal-identity.md)）
-- errcode 排错总表（21001 / 10014 / 535 / 550 / Unsafe Login / ENOTFOUND / ETIMEDOUT …）
+- errcode 排错总表（21001 / 10014 / 60020 / 40013 / 535 / 550 / Unsafe Login / ENOTFOUND / ETIMEDOUT …）
 - 邮箱 provider 预设表、端口与加密方式表、多账号写法
 - 飞书企业认证（21001）的现实说明
 - 安全与回滚

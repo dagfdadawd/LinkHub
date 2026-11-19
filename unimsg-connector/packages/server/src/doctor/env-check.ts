@@ -26,6 +26,10 @@ export const KNOWN_ENV_KEYS: readonly string[] = [
   'VITE_API_BASE',
   'VITE_API_TOKEN',
   'LINKHUB_DEPLOY_TOKEN',
+  // 账号体系（登录 / 注册准入）
+  'AUTH_REQUIRE_LOGIN',
+  'AUTH_REGISTRATION',
+  'AUTH_SIGNUP_CODE',
   // 运行模式
   'FEISHU_MODE',
   'DINGTALK_MODE',
@@ -81,6 +85,8 @@ export const KNOWN_ENV_KEYS: readonly string[] = [
   'DINGTALK_USER_EVENT_KINDS',
   'DWS_BIN',
   'DWS_PROFILE',
+  // dws 登录态目录（fix-dingtalk.bat / 运行期自动发现都会用到，属于合法变量）
+  'DWS_CONFIG_DIR',
   // 内置/自定义工具目录（pnpm run fetch:dws 可指定下载目标）
   'LINKHUB_TOOLS_DIR',
   'DWS_AUTH_TIMEOUT_MS',

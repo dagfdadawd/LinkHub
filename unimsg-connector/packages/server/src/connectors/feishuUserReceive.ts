@@ -19,8 +19,6 @@ import {
   MsgStatus, Platform, type AttachmentInfo, type UnifiedMessage,
 } from '@unimsg/shared';
 import { genTraceId } from './base';
-import { isSelfEcho } from './feishu';
-import { matchEcho } from '../services/echoRegistry';
 import {
   FEISHU_BASE_SCOPES,
   FEISHU_USER_RECEIVE_SCOPES as FEISHU_USER_RECEIVE_SCOPES_CORE,
@@ -429,6 +427,11 @@ export function mapFeishuUserMessage(
 
   const sender = raw.sender ?? {};
   if (sender.sender_type === 'system') return null;
+  // 自己发的消息：只在 ID 类型明确是 open_id（或未标注）时才按字符串比较，避免跨 ID 空间误判
+  if (selfOpenId && typeof sender.id === 'string' && sender.id) {
+    const idType = typeof sender.id_type === 'string' ? sender.id_type : '';
+    if ((idType === '' || idType === 'open_id') && sender.id === selfOpenId) return null;
+  }
 
   const msgType = typeof raw.msg_type === 'string' ? raw.msg_type : 'text';
   const content = safeJson(raw.body?.content);
@@ -446,56 +449,21 @@ export function mapFeishuUserMessage(
     body = postText(content);
   } else if (msgType === 'file') {
     const name = typeof content?.file_name === 'string' ? content.file_name : '';
-    const fileKey = typeof content?.file_key === 'string' ? content.file_key : '';
-    const size = Number(content?.file_size ?? 0);
     type = 'file';
     body = name ? `[文件] ${name}` : '[文件]';
-    attachments.push({
-      name: name || '飞书文件',
-      mimeType: 'application/octet-stream',
-      size: Number.isFinite(size) && size > 0 ? size : 0,
-      ...(fileKey ? { fileKey, resourceType: 'file' as const } : {}),
-    });
+    attachments.push({ name: name || '飞书文件', mimeType: 'application/octet-stream', size: 0 });
   } else if (msgType === 'image') {
-    const imageKey = typeof content?.image_key === 'string' ? content.image_key : '';
-    const stamp = createdAt.replace(/[-:T]/g, '').slice(0, 14);
     type = 'image';
     body = '[图片]';
-    attachments.push({
-      // 不写死 .png：飞书图片实际可能是 JPEG，下载时按响应/文件头补正确扩展名
-      name: `图片-${stamp}`,
-      mimeType: 'image/*',
-      size: 0,
-      ...(imageKey ? { fileKey: imageKey, resourceType: 'image' as const } : {}),
-    });
   } else if (msgType === 'audio') {
-    const fileKey = typeof content?.file_key === 'string' ? content.file_key : '';
     type = 'file';
     body = '[语音]';
-    attachments.push({
-      name: '语音',
-      mimeType: 'audio/*',
-      size: 0,
-      ...(fileKey ? { fileKey, resourceType: 'file' as const } : {}),
-    });
   } else if (msgType === 'media') {
-    const name = typeof content?.file_name === 'string' ? content.file_name : '';
-    const fileKey = typeof content?.file_key === 'string' ? content.file_key : '';
     type = 'file';
-    body = name ? `[视频] ${name}` : '[视频]';
-    attachments.push({
-      name: name || '视频',
-      mimeType: 'video/*',
-      size: 0,
-      ...(fileKey ? { fileKey, resourceType: 'file' as const } : {}),
-    });
+    body = typeof content?.file_name === 'string' ? `[视频] ${content.file_name}` : '[视频]';
   } else if (msgType === 'sticker') {
-    const imageKey = typeof content?.file_key === 'string' ? content.file_key : '';
     type = 'image';
     body = '[表情]';
-    if (imageKey) {
-      attachments.push({ name: '表情', mimeType: 'image/*', size: 0, fileKey: imageKey, resourceType: 'image' });
-    }
   } else if (msgType === 'interactive' || msgType === 'share_chat' || msgType === 'share_user') {
     // 卡片/名片类消息：可展示，但没有纯文本正文（不臆造内容）
     type = 'text';
@@ -507,36 +475,6 @@ export function mapFeishuUserMessage(
   if (!body.trim()) return null;
 
   const senderId = typeof sender.id === 'string' && sender.id ? sender.id : 'unknown';
-  const senderIdType = typeof sender.id_type === 'string' ? sender.id_type : '';
-  const isSelfSender = Boolean(
-    selfOpenId
-    && senderId !== 'unknown'
-    && (senderIdType === '' || senderIdType === 'open_id')
-    && senderId === selfOpenId,
-  );
-
-  /**
-   * 自己发出的消息：
-   *  - 文本仍跳过（收件箱只收「别人找我」；自己的发件不入库，避免刷屏）；
-   *  - 文件/图片/语音/视频放行，标 direction=out —— 这是 A 方案：
-   *    让「本人从飞书手机/桌面发出的文件」出现在会话里，附件才可以下载。
-   *  - LinkHub 自己刚通过飞书发出的文件会回推：先用本进程 message_id 精确识别，
-   *    再用 echoRegistry 按「同会话 + 附件名 + 时间窗」兜底，避免多出一条重复消息。
-   */
-  if (isSelfSender) {
-    const selfMedia = msgType === 'file' || msgType === 'image' || msgType === 'media' || msgType === 'audio';
-    if (!selfMedia) return null;
-    if (isSelfEcho(raw)) return null;
-    const echoed = matchEcho({
-      platform: Platform.FEISHU,
-      conversationId: chat.chatId,
-      text: body,
-      fileNames: attachments.map((a) => a.name),
-      now,
-    });
-    if (echoed) return null;
-  }
-
   const conversationType = chat.chatMode === 'p2p' ? 'p2p' : 'group';
 
   /**
@@ -564,7 +502,6 @@ export function mapFeishuUserMessage(
     type,
     body,
     ...(attachments.length > 0 ? { attachments } : {}),
-    ...(isSelfSender ? { direction: 'out' as const } : {}),
     receivedAs: 'user',
     status: MsgStatus.RECEIVED,
     createdAt,

@@ -9,6 +9,7 @@ import { resolve } from 'node:path';
 import express, { type ErrorRequestHandler, type RequestHandler } from 'express';
 import cors from 'cors';
 import { MessageService } from './services/message';
+import { authRouter } from './routes/auth';
 import { healthRouter } from './routes/health';
 import { webhookRouter } from './routes/webhook';
 import { messagesRouter } from './routes/messages';
@@ -100,6 +101,8 @@ export function createApp(svc: MessageService, options: CreateAppOptions = {}) {
   app.use('/api', healthRouter(svc)); // 公共
   app.use('/api', webhookRouter(svc)); // 平台验签
   app.use('/api', feishuOAuthCallbackRouter()); // 公共 OAuth 回调（浏览器跳转，无 Bearer）
+  // 必须挂在任何 apiAuth 之前：否则「先有令牌才能登录」成死循环
+  app.use('/api', authRouter(svc)); // 公共：注册/登录/当前用户/登出
   app.use('/api', apiAuth, messagesRouter(svc)); // Bearer 鉴权
   app.use('/api', apiAuth, feishuOAuthRouter()); // Bearer 鉴权：发起飞书用户授权
   app.use('/api', apiAuth, dingtalkPersonalRouter()); // Bearer 鉴权：钉钉本人身份（dws 登录/状态/注销）

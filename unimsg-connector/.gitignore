@@ -1,6 +1,8 @@
 node_modules/
 dist/
 .env
+# 测试 / e2e 的兜底临时目录（%TEMP% 不可写的机器上会落在这里）
+.tmp/
 # e2e / 运维日志（可随时删除，不进仓库）
 *.log
 *.log.err
@@ -24,5 +26,7 @@ data/
 tools/
 # 本地导入的邮箱账号（含授权码！personal 版「连接账号」页保存，绝不进仓库）
 .linkhub-mail-accounts.json
+# 本地账号库（注册的账号 + 会话令牌，含口令哈希；无 DATA_DIR 时落在仓库根，绝不进仓库）
+.linkhub-users.json
 # 本地应用配置（GUI 填写的平台凭据/模式，含 App Secret，绝不进仓库；有 DATA_DIR 时在 DATA_DIR 下）
 .linkhub-config.json

@@ -11,7 +11,7 @@
  * type / keyword / onlyReview 在本地补齐（与 AppStore 的本地过滤一致）。
  */
 import type {
-  ComposeAck, ComposeRequest, OutboundAttachment, SendCapabilities,
+  ComposeAck, ComposeRequest, IdentityRole, OutboundAttachment, SendCapabilities,
 } from '@unimsg/shared';
 import type { Platform, TraceEntry, UnifiedMessage } from '../types';
 import type {
@@ -23,7 +23,10 @@ import type {
   AppConfigSource,
   AppConfigUpdate,
   AppConfigView,
+  AuthStatus,
+  DownloadedFile,
   ContactDirectory,
+  PublicUser,
   DingtalkLoginOptions,
   DingtalkLoginStart,
   DingtalkPersonalStatus,
@@ -32,7 +35,6 @@ import type {
   MailAccountInput,
   MailAccountTestResult,
   MailAccountView,
-  DownloadedFile,
   MessageApi,
   MessageFilter,
   OnboardingView,
@@ -46,6 +48,7 @@ import type {
   WechatBridgeStopResult,
 } from './api';
 import { APP_CONFIG_LLM_FIELD_KEYS, APP_CONFIG_PLATFORM_FIELD_KEYS } from './api';
+import { clearSession, getSession } from './session';
 import { sortMessages } from '../utils/format';
 import { filenameFromContentDisposition } from '../utils/download';
 
@@ -60,15 +63,40 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * 这些接口的 401 表示「提交的凭证不对」，不是「登录态失效」：
+ * 要原样展示后端文案，且绝不能顺手清掉本地会话。
+ */
+const CREDENTIAL_CHECK_PATHS = [
+  '/api/auth/login',
+  '/api/auth/register',
+  '/api/auth/reset-password',
+  '/api/auth/password',
+] as const;
+
+function isCredentialCheckPath(path: string): boolean {
+  return CREDENTIAL_CHECK_PATHS.some((p) => path === p || path.startsWith(`${p}?`));
+}
+
 export class HttpApi implements MessageApi {
   private readonly baseUrl: string;
   private readonly timeoutMs: number;
 
-  constructor(baseUrl: string, private readonly token: string, timeoutMs = 8_000) {
+  constructor(
+    baseUrl: string,
+    /** 令牌来源：登录后是会话令牌，未登录时回退部署令牌（每次请求实时求值） */
+    private readonly token: string | (() => string),
+    timeoutMs = 8_000,
+  ) {
     // 去掉末尾斜杠，避免拼出 //api 这种双斜杠路径
     this.baseUrl = baseUrl.replace(/\/+$/, '');
     // 请求超时兜底：后端/网络异常时不让 UI 永久 loading
     this.timeoutMs = timeoutMs;
+  }
+
+  /** 每次请求实时求值：登录/退出后立刻切换令牌，不需要重建 HttpApi */
+  private authToken(): string {
+    return typeof this.token === 'function' ? this.token() : this.token;
   }
 
   async list(filter?: MessageFilter): Promise<UnifiedMessage[]> {
@@ -105,7 +133,13 @@ export class HttpApi implements MessageApi {
     }
   }
 
-  async reply(id: string, text: string, attachments?: OutboundAttachment[]): Promise<ReplyAck> {
+  async reply(
+    id: string,
+    text: string,
+    attachments?: OutboundAttachment[],
+    identity?: IdentityRole,
+    quoteTraceId?: string,
+  ): Promise<ReplyAck> {
     // 后端返回 202 { ok, message, taskId }，入队即返回，sent/synced 走 WS 推送
     const body = await this.request<{ message: UnifiedMessage; taskId: string }>(
       `/api/messages/${encodeURIComponent(id)}/reply`,
@@ -114,6 +148,10 @@ export class HttpApi implements MessageApi {
         body: JSON.stringify({
           text,
           ...(attachments && attachments.length > 0 ? { attachments } : {}),
+          // 不传 = 跟随后端平台策略；传了就按这个身份发，不可用时后端回 400 中文错误
+          ...(identity ? { identity } : {}),
+          // 显式引用：只有用户点了某条消息的「回复」才有
+          ...(quoteTraceId ? { quoteTraceId } : {}),
         }),
       },
     );
@@ -131,6 +169,111 @@ export class HttpApi implements MessageApi {
   async capabilities(): Promise<SendCapabilities[]> {
     const body = await this.request<{ data?: SendCapabilities[] }>('/api/capabilities');
     return body.data ?? [];
+  }
+
+  /**
+   * 注册成功即返回会话令牌（后端省掉"注册完再登录一次"）。
+   * 令牌与用户信息由调用方写进 session 存储，这里只透传。
+   */
+  async register(input: {
+    username: string;
+    password: string;
+    displayName?: string;
+    signupCode?: string;
+  }): Promise<{ user: PublicUser; token: string; recoveryCode: string }> {
+    const body = await this.request<{
+      data?: { user: PublicUser; token: string; recoveryCode: string };
+    }>('/api/auth/register', { method: 'POST', body: JSON.stringify(input) });
+    if (!body.data) throw new ApiError('注册失败：后端没有返回会话', 500);
+    return body.data;
+  }
+
+  async login(input: { username: string; password: string }): Promise<{ user: PublicUser; token: string }> {
+    const body = await this.request<{ data?: { user: PublicUser; token: string } }>(
+      '/api/auth/login',
+      { method: 'POST', body: JSON.stringify(input) },
+    );
+    if (!body.data) throw new ApiError('登录失败：后端没有返回会话', 500);
+    return body.data;
+  }
+
+  async logout(): Promise<void> {
+    await this.request('/api/auth/logout', { method: 'POST', body: '{}' }).catch(() => undefined);
+  }
+
+  async me(): Promise<PublicUser | undefined> {
+    try {
+      const body = await this.request<{ data?: { user: PublicUser } }>('/api/auth/me');
+      return body.data?.user;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * 登录态/策略。旧后端没有这个接口 → 按「不要求登录」处理（单机演示零改动）。
+   */
+  async authStatus(): Promise<AuthStatus> {
+    const fallback: AuthStatus = { requireLogin: false, hasUsers: false, machineOwner: null, user: null };
+    try {
+      const body = await this.request<{ data?: Partial<AuthStatus> }>('/api/auth/status');
+      const data = body.data ?? {};
+      const reg = (data as { registration?: { open?: unknown; requireCode?: unknown; reason?: unknown } }).registration;
+      return {
+        requireLogin: Boolean(data.requireLogin),
+        hasUsers: Boolean(data.hasUsers),
+        ...(reg && typeof reg === 'object'
+          ? {
+              registration: {
+                open: reg.open !== false,
+                requireCode: reg.requireCode === true,
+                ...(typeof reg.reason === 'string' && reg.reason ? { reason: reg.reason } : {}),
+              },
+            }
+          : {}),
+        machineOwner: data.machineOwner ?? null,
+        user: data.user ?? null,
+      };
+    } catch {
+      return fallback;
+    }
+  }
+
+  /** 改口令：后端会作废全部会话，调用方必须紧接着清本地会话并跳登录 */
+  async changePassword(input: { oldPassword: string; newPassword: string }): Promise<{ revoked: number }> {
+    const body = await this.request<{ data?: { revoked: number } }>('/api/auth/password', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+    return { revoked: body.data?.revoked ?? 0 };
+  }
+
+  async logoutAll(): Promise<{ revoked: number }> {
+    const body = await this.request<{ data?: { revoked: number } }>('/api/auth/logout-all', {
+      method: 'POST',
+      body: '{}',
+    });
+    return { revoked: body.data?.revoked ?? 0 };
+  }
+
+  async claimMessages(): Promise<{ claimed: number }> {
+    const body = await this.request<{ data?: { claimed: number } }>('/api/messages/claim', {
+      method: 'POST',
+      body: '{}',
+    });
+    return { claimed: body.data?.claimed ?? 0 };
+  }
+
+  async resetPassword(input: {
+    username: string;
+    recoveryCode: string;
+    newPassword: string;
+  }): Promise<{ revoked: number; recoveryCode?: string }> {
+    const body = await this.request<{ data?: { revoked: number; recoveryCode?: string } }>(
+      '/api/auth/reset-password',
+      { method: 'POST', body: JSON.stringify(input) },
+    );
+    return { revoked: body.data?.revoked ?? 0, ...(body.data?.recoveryCode ? { recoveryCode: body.data.recoveryCode } : {}) };
   }
 
   /** 发送目标名录：旧后端没有该接口时返回空名录（前端退回「只列已有会话」） */
@@ -471,7 +614,7 @@ export class HttpApi implements MessageApi {
         signal: init?.signal ?? controller.signal,
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${this.token}`,
+          Authorization: `Bearer ${this.authToken()}`,
           ...(init?.headers ?? {}),
         },
       });
@@ -487,8 +630,31 @@ export class HttpApi implements MessageApi {
 
     const body = (await res.json().catch(() => null)) as ({ ok?: boolean; error?: string } & Record<string, unknown>) | null;
 
-    if (res.status === 401) throw new ApiError('未授权：API Token 无效或缺失', 401);
-    if (res.status === 404) throw new ApiError('资源不存在', 404);
+    // 401 有三种含义，不能都笼统说成「API Token 无效」：
+    //  - 凭证校验类接口（登录/注册/重置/改口令）的 401 = 用户名或口令不对，
+    //    必须原样透出后端文案，且**不能**清本地会话（旧密码填错不该被踢下线）；
+    //  - 带着会话令牌的一般接口 401 = 会话过期/被作废（改口令、退出所有设备、重启丢会话），
+    //    这时必须清掉本地会话，AuthGate 会立刻把用户送回登录页；
+    //  - 没有会话（部署令牌）→ 才是令牌配错了。
+    if (res.status === 401) {
+      if (isCredentialCheckPath(path)) {
+        throw new ApiError(String(body?.error ?? '用户名或口令不正确'), 401);
+      }
+      if (getSession()) {
+        clearSession();
+        throw new ApiError('登录已过期，请重新登录', 401);
+      }
+      throw new ApiError('未授权：API Token 无效或缺失', 401);
+    }
+    if (res.status === 404) {
+      // 账号接口是新增的：旧后端没有这些路由，提示「重启」比「资源不存在」有用得多
+      throw new ApiError(
+        path.startsWith('/api/auth/') || path === '/api/messages/claim'
+          ? '当前后端版本过旧，没有账号接口：请重启 LinkHub Server 后再试'
+          : '资源不存在',
+        404,
+      );
+    }
     if (!res.ok) throw new ApiError(String(body?.error ?? `请求失败（HTTP ${res.status}）`), res.status);
     // 少数接口把「自检未通过」放在 200 + ok:false（如邮箱测试）：需要明细的调用方跳过这里
     if (body && body.ok === false && !opts.allowOkFalse) {

@@ -14,8 +14,9 @@
  * 默认输出：仓库上一级目录 `LinkHub-deliver-<YYYYMMDD-HHmm>.zip`
  */
 import { execFileSync } from 'node:child_process';
-import { existsSync, statSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { existsSync, mkdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -32,7 +33,51 @@ const pad = (n) => String(n).padStart(2, '0');
 const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`;
 const outZip = outArg >= 0 && args[outArg + 1]
   ? resolve(args[outArg + 1])
-  : resolve(repoRoot, '..', `LinkHub-deliver-${stamp}.zip`);
+  : resolveDefaultOutput();
+
+/**
+ * 默认输出到仓库上一级目录（不污染仓库）。
+ * 但某些机器上仓库就在盘符根（如 D:\\LinkHub），上一级 D:\\ 普通用户不可写，
+ * 直接写会得到一个很隐晦的 `git archive ... Permission denied`。
+ * 这里先探测可写性，不可写就退到用户主目录，并提示可用 --out 指定位置。
+ */
+function resolveDefaultOutput() {
+  const name = `LinkHub-deliver-${stamp}.zip`;
+  // 依次尝试：仓库上一级（不污染仓库）→ 仓库内 dist/（已被 .gitignore 忽略）→ 用户主目录
+  const candidates = [
+    { dir: resolve(repoRoot, '..'), why: '仓库上一级目录' },
+    { dir: join(repoRoot, 'dist'), why: '仓库内 dist/（已被 gitignore）' },
+    { dir: homedir(), why: '用户主目录' },
+  ];
+  for (const { dir } of candidates) {
+    try {
+      mkdirSync(dir, { recursive: true });
+    } catch {
+      continue;
+    }
+    if (canWriteDir(dir)) {
+      if (dir !== candidates[0].dir) {
+        console.warn(`[deliver] ⚠️ ${candidates[0].dir} 不可写（常见于仓库放在盘符根目录），改输出到${dir}。`);
+        console.warn('[deliver] 如需指定位置：node scripts/deliver.mjs --out <zip路径>');
+      }
+      return join(dir, name);
+    }
+  }
+  console.error('[deliver] ✖ 找不到可写的输出目录；请用 --out 指定一个可写路径，例如：');
+  console.error(`[deliver]   node scripts/deliver.mjs --out "${join(monorepo, 'LinkHub-deliver.zip')}"`);
+  process.exit(1);
+}
+
+function canWriteDir(dir) {
+  try {
+    const probe = join(dir, `.linkhub-deliver-probe-${process.pid}`);
+    writeFileSync(probe, 'ok');
+    unlinkSync(probe);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function run(cmd, cmdArgs, cwd = repoRoot) {
   return execFileSync(cmd, cmdArgs, { cwd, encoding: 'utf8' }).trim();

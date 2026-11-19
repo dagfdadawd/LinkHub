@@ -1,7 +1,7 @@
 import { MsgStatus, Platform, FILE_LIMITS } from '../../types';
 import type { UnifiedMessage, TraceEntry } from '../../types';
 import type {
-  ComposeAck, ComposeRequest, OutboundAttachment, SendCapabilities,
+  ComposeAck, ComposeRequest, IdentityRole, OutboundAttachment, SendCapabilities,
 } from '@unimsg/shared';
 import type {
   AccountInfo,
@@ -10,9 +10,11 @@ import type {
   AppConfigSaveResult,
   AppConfigUpdate,
   AppConfigView,
-  ContactDirectory,
-  DemoApi,
+  AuthStatus,
   DownloadedFile,
+  ContactDirectory,
+  PublicUser,
+  DemoApi,
   DingtalkLoginOptions,
   DingtalkLoginStart,
   DingtalkPersonalStatus,
@@ -139,6 +141,8 @@ export class MockApi implements DemoApi {
   private seq = 0;
   private incomingSeq = 0;
   private failNextSend = false;
+  /** 演示模式的账号表（内存态：刷新即失效，只用于讲清账号闭环） */
+  private demoUsers = new Map<string, { user: PublicUser; password: string }>();
 
   constructor(private realtime: EmitterRealtime, options: MockOptions = {}) {
     this.options = { ...DEFAULTS, ...options };
@@ -177,19 +181,50 @@ export class MockApi implements DemoApi {
     return this.messages.get(id);
   }
 
-  async reply(id: string, text: string, attachments?: OutboundAttachment[]): Promise<ReplyAck> {
+  async reply(
+    id: string,
+    text: string,
+    attachments?: OutboundAttachment[],
+    identity?: IdentityRole,
+    quoteTraceId?: string,
+  ): Promise<ReplyAck> {
     const cur = this.messages.get(id);
     if (!cur) throw new Error('message not found');
     await this.wait();
 
     const info = describeOutbound(attachments);
+    // 显式引用：只有用户点了某条消息的「回复」才有，与真实后端一致
+    const quoted = quoteTraceId ? this.messages.get(quoteTraceId) : undefined;
+    const quote = quoted
+      ? { text: (quoted.body ?? '').slice(0, 120), senderName: quoted.sender?.name ?? '' }
+      : undefined;
+    // 与真实后端一致：每次回复都追加到 replies 历史，只写 reply 会互相覆盖
+    const withEntry = (payload: Record<string, unknown>) => ({
+      ...payload,
+      replies: [
+        ...(cur.replies ?? []),
+        { text, at: new Date().toISOString(), ...(quote ? { quote } : {}) },
+      ],
+    });
+    // 身份只对本次发送有效，Mock 同样不写回消息（与真实后端契约一致）；
+    // Mock 也不伪造 delivery.identity（契约：模拟通道不冒充本人 / 机器人）。
+    const identityFields = identity ? { requestedIdentity: identity } : {};
     this.patch(
       id,
-      { status: MsgStatus.PROCESSING, reply: text, ...(info.length > 0 ? { attachments: info } : {}) },
+      withEntry({
+        status: MsgStatus.PROCESSING,
+        reply: text,
+        ...identityFields,
+        ...(info.length > 0 ? { attachments: info } : {}),
+      }),
       'processing',
       info.length > 0 ? `带 ${info.length} 个附件` : undefined,
     );
-    const replied = this.patch(id, { status: MsgStatus.REPLIED, reply: text }, 'replied');
+    const replied = this.patch(
+      id,
+      withEntry({ status: MsgStatus.REPLIED, reply: text, ...identityFields }),
+      'replied',
+    );
 
     const shouldFail = this.failNextSend;
     this.failNextSend = false;
@@ -327,6 +362,91 @@ export class MockApi implements DemoApi {
       reason: '演示模式没有真实通讯录，只能发给已有会话。',
       items: [],
     };
+  }
+
+  /** 演示模式的账号体系：本地内存校验，刷新即失效，绝不冒充真实后端 */
+  async register(input: { username: string; password: string; displayName?: string; signupCode?: string }) {
+    await this.wait();
+    const username = (input.username ?? '').trim();
+    const password = (input.password ?? '').trim();
+    if (username.length < 2) throw new Error('用户名需 2-32 位');
+    if (password.length < 6) throw new Error('口令至少 6 位');
+    const user: PublicUser = {
+      id: `mock-${username}`,
+      username,
+      displayName: (input.displayName ?? '').trim() || username,
+      createdAt: new Date().toISOString(),
+    };
+    this.demoUsers.set(username.toLowerCase(), { user, password });
+    return { user, token: `mock-token-${username}`, recoveryCode: 'DEMO-CODE-0001' };
+  }
+
+  async login(input: { username: string; password: string }) {
+    await this.wait();
+    const hit = this.demoUsers.get((input.username ?? '').trim().toLowerCase());
+    if (!hit || hit.password !== input.password) throw new Error('用户名或口令不正确');
+    return { user: hit.user, token: `mock-token-${hit.user.username}` };
+  }
+
+  async logout(): Promise<void> {
+    await this.wait();
+  }
+
+  async me(): Promise<PublicUser | undefined> {
+    return undefined;
+  }
+
+  /** 纯前端演示：没有后端、没有账号库，永远不要求登录，注册也始终开放 */
+  async authStatus(): Promise<AuthStatus> {
+    return {
+      requireLogin: false,
+      hasUsers: false,
+      registration: { open: true, requireCode: false },
+      machineOwner: null,
+      user: null,
+    };
+  }
+
+  /** 演示模式：只改内存里的口令，不涉及真实会话 */
+  async changePassword(input: { oldPassword: string; newPassword: string }): Promise<{ revoked: number }> {
+    await this.wait();
+    const entry = [...this.demoUsers.values()].find((u) => u.password === input.oldPassword);
+    if (!entry) throw new Error('原口令不正确');
+    if ((input.newPassword ?? '').length < 6) throw new Error('口令至少 6 位');
+    entry.password = input.newPassword;
+    return { revoked: 1 };
+  }
+
+  async logoutAll(): Promise<{ revoked: number }> {
+    await this.wait();
+    return { revoked: 1 };
+  }
+
+  /** 演示模式没有真实归属字段，认领即把全部演示消息标记为该账号 */
+  async claimMessages(): Promise<{ claimed: number }> {
+    await this.wait();
+    const count = this.messages.size;
+    for (const [id, m] of this.messages) {
+      this.messages.set(id, { ...m, ownerId: 'demo' });
+    }
+    return { claimed: count };
+  }
+
+  /** 演示模式：恢复码固定 DEMO-CODE-0001 */
+  async resetPassword(input: {
+    username: string;
+    recoveryCode: string;
+    newPassword: string;
+  }): Promise<{ revoked: number; recoveryCode?: string }> {
+    await this.wait();
+    if ((input.recoveryCode ?? '').replace(/[\s-]/g, '').toUpperCase() !== 'DEMOCODE0001') {
+      throw new Error('用户名或恢复码不正确');
+    }
+    const entry = this.demoUsers.get((input.username ?? '').trim().toLowerCase());
+    if (!entry) throw new Error('用户名或恢复码不正确');
+    if ((input.newPassword ?? '').length < 6) throw new Error('口令至少 6 位');
+    entry.password = input.newPassword;
+    return { revoked: 1, recoveryCode: 'DEMO-CODE-0001' };
   }
 
   async feishuOAuthStart(): Promise<FeishuOAuthStart> {

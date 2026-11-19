@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { App as AntApp, Button, Input, Modal, Popover, Select, Skeleton } from 'antd';
 import { CloseOutlined, FilterOutlined, SearchOutlined, SyncOutlined } from '@ant-design/icons';
 import { useAppState } from '../../hooks/useAppState';
 import { useHotkeys } from '../../hooks/useHotkeys';
 import { store, services } from '../../store';
 import { filterMessages } from '../../store/appStore';
+import { useSession } from '../../services/session';
 import type { MessageApi } from '../../services/api';
 import { MsgStatus, Platform } from '../../types';
 import { PLATFORM_META, STATUS_META, TYPE_LABEL } from '../../utils/format';
@@ -33,6 +34,7 @@ import {
 import { DetailPanel } from './DetailPanel';
 import { ChannelTabs, CHANNEL_DEFS, type ChannelOption } from './ChannelTabs';
 import { ConversationRow } from './ConversationRow';
+import { DEMO_GROUP_MESSAGES, mentionsMe } from '../preview/demoGroupMessages';
 
 const STATUS_OPTIONS = Object.values(MsgStatus).map((s) => ({
   value: s,
@@ -56,30 +58,57 @@ function focusReplyComposer() {
   if (!focus()) window.setTimeout(focus, 80);
 }
 
-/** 平台只给了 open_id / cid… 这类裸 ID 时，标题需要按名录换成可读名字 */
-const RAW_ID_TITLE_RE = /^(ou_|oc_|on_|open_|cid|user_)[A-Za-z0-9_+/=-]{6,}$/;
-
 /**
  * 名录补名：老消息入库时平台没给会话名（飞书单聊常见），
  * 用 /api/contacts 拿到的「会话 ID → 名字」把标题补成人话；拿不到就保持原样。
  */
+interface DirectoryInfo {
+  name: string;
+  type?: 'p2p' | 'group';
+}
+
+/**
+ * 用品名录修正会话的**名字和类型**。
+ *
+ * 钉钉个人事件既没有会话名、类型也只能靠 event_type 猜（实测把群判成了单聊），
+ * 而 `dws chat +chat-list` 两样都有。这里以名录为准，猜错的地方就地纠正。
+ */
 function withContactNames(
   list: import('../../utils/conversations').Conversation[],
-  names: Map<string, string>,
+  directory: Map<string, DirectoryInfo>,
 ) {
-  if (names.size === 0) return list;
+  if (directory.size === 0) return list;
   return list.map((c) => {
     if (!c.conversationId) return c;
-    const name = names.get(`${c.platform}:${c.conversationId}`);
-    if (!name || !RAW_ID_TITLE_RE.test(c.title)) return c;
-    return { ...c, title: name };
+    const hit = directory.get(`${c.platform}:${c.conversationId}`);
+    if (!hit) return c;
+    /**
+     * 会话名以**平台会话名录为准**。
+     *
+     * 之前只替换"空 / 群聊 / 裸 ID"的标题，结果单聊一直是发送者名（例如会话里有几个人
+     * 说话时，标题会跟着最后一条消息的发送者变），和手机上的会话名对不上。
+     */
+    const nextTitle = hit.name || c.title;
+    // 类型以名录为准（事件里的推断经常错）
+    const nextType = hit.type ?? c.conversationType;
+    if (nextTitle === c.title && nextType === c.conversationType) return c;
+    return { ...c, title: nextTitle, conversationType: nextType };
   });
 }
 
 export function InboxPage() {
   const state = useAppState();
+  /** 当前登录账号：空态文案据此区分「没消息」和「消息还没归属给你」 */
+  const session = useSession();
   const navigate = useNavigate();
   const { traceId } = useParams();
+  /** 群消息视图预览：/inbox?preview=groups 时用假数据展示「频道标签 + @我置顶」 */
+  const [searchParams] = useSearchParams();
+  const previewMode = searchParams.get('preview') === 'groups';
+  /** 频道条的视觉样式：soft(胶囊) / underline(下划线) / quiet(纯文本) */
+  const previewTabStyle = (searchParams.get('tabstyle') ?? 'quiet') as 'soft' | 'underline' | 'quiet';
+  /** 预览里的频道：全部 / 单聊 / @我 / 群消息 */
+  const [previewChannel, setPreviewChannel] = useState<'all' | 'direct' | 'at' | 'group'>('all');
   const [listCollapsed, setListCollapsed] = useState(false);
   const toast = AntApp.useApp().message;
   const injectSeq = useRef(0);
@@ -139,7 +168,11 @@ export function InboxPage() {
     void handleInject();
   };
 
-  const visible = useMemo(() => filterMessages(state.messages, state.filters), [state.messages, state.filters]);
+  const previewMessages = previewMode ? DEMO_GROUP_MESSAGES : state.messages;
+  const visible = useMemo(
+    () => (previewMode ? previewMessages : filterMessages(state.messages, state.filters)),
+    [previewMode, previewMessages, state.messages, state.filters],
+  );
   const selected = traceId ? state.messages.find((m) => m.traceId === traceId) : undefined;
 
   /**
@@ -147,10 +180,13 @@ export function InboxPage() {
    * 选中态用「URL 里的 traceId 属于哪个会话」反查，因此任何一条消息的深链都能定位到会话。
    */
   const conversations = useMemo(() => buildConversations(visible), [visible]);
-  const allConversations = useMemo(() => buildConversations(state.messages), [state.messages]);
+  const sourceMessages = previewMode ? DEMO_GROUP_MESSAGES : state.messages;
+  const allConversations = useMemo(() => buildConversations(sourceMessages), [sourceMessages]);
 
   /** 会话 ID → 可读名字（飞书本人会话名录）；旧后端没有该接口时为空表，不影响使用 */
-  const [contactNames, setContactNames] = useState<Map<string, string>>(new Map());
+  const [contactNames, setContactNames] = useState<Map<string, DirectoryInfo>>(new Map());
+  /** 名录读取失败的平台原因：用于提示「为什么会话名是群聊」，而不是静默降级 */
+  const [directoryIssues, setDirectoryIssues] = useState<Array<{ platform: string; reason: string }>>([]);
   useEffect(() => {
     // 单测会 mock 掉 store 模块（没有 services/api），这里做能力探测而不是硬依赖
     const api = (services as { api?: MessageApi } | undefined)?.api;
@@ -160,17 +196,58 @@ export function InboxPage() {
       [Platform.FEISHU, Platform.DINGTALK].map((p) => api.contacts(p).catch(() => undefined)),
     ).then((list) => {
       if (!alive) return;
-      const map = new Map<string, string>();
+      const map = new Map<string, DirectoryInfo>();
+      const issues: Array<{ platform: string; reason: string }> = [];
       for (const dir of list) {
-        if (!dir?.available) continue;
-        for (const item of dir.items) map.set(`${dir.platform}:${item.id}`, item.name);
+        if (!dir?.available) {
+          if (dir?.reason) issues.push({ platform: String(dir.platform), reason: dir.reason });
+          continue;
+        }
+        for (const item of dir.items) {
+          map.set(`${dir.platform}:${item.id}`, { name: item.name, type: item.type });
+        }
       }
       if (map.size > 0) setContactNames(map);
+      setDirectoryIssues(issues);
     });
     return () => {
       alive = false;
     };
   }, []);
+
+  /**
+   * 预览模式：把会话按频道分组，并算出 @我 的数量。
+   * 只在 /inbox?preview=groups 生效，正常使用完全不走这段逻辑。
+   */
+  const previewBuckets = useMemo(() => {
+    if (!previewMode) return { all: [], direct: [], group: [], at: [] as typeof conversations };
+    const isGroup = (c: typeof conversations[number]) => c.conversationType === 'group';
+    const hasAt = (c: typeof conversations[number]) =>
+      c.messages.some((m) => mentionsMe(String(m.body ?? '')));
+    const direct = conversations.filter((c) => c.kind === 'im' && !isGroup(c));
+    const group = conversations.filter((c) => isGroup(c));
+    const at = conversations.filter((c) => hasAt(c));
+    return { all: conversations, direct, group, at };
+  }, [previewMode, conversations]);
+
+  const previewList = useMemo(() => {
+    if (!previewMode) return conversations;
+    if (previewChannel === 'direct') return previewBuckets.direct;
+    if (previewChannel === 'group') return previewBuckets.group;
+    if (previewChannel === 'at') return previewBuckets.at;
+    // 「全部」：@我 的会话排最前，其次单聊，最后群
+    const atKeys = new Set(previewBuckets.at.map((c) => c.key));
+    return [
+      ...previewBuckets.at,
+      ...conversations.filter((c) => !atKeys.has(c.key) && previewBuckets.direct.some((d) => d.key === c.key)),
+      ...conversations.filter((c) => !atKeys.has(c.key) && previewBuckets.group.some((g) => g.key === c.key)),
+      ...conversations.filter(
+        (c) => !atKeys.has(c.key)
+          && !previewBuckets.direct.some((d) => d.key === c.key)
+          && !previewBuckets.group.some((g) => g.key === c.key),
+      ),
+    ];
+  }, [previewMode, previewChannel, conversations, previewBuckets]);
 
   const namedConversations = useMemo(
     () => withContactNames(conversations, contactNames),
@@ -185,8 +262,8 @@ export function InboxPage() {
     [namedAllConversations, traceId],
   );
   const imConversations = useMemo(
-    () => namedConversations.filter((c) => c.kind === 'im'),
-    [namedConversations],
+    () => (previewMode ? previewList.filter((c) => c.kind === 'im') : namedConversations.filter((c) => c.kind === 'im')),
+    [previewMode, previewList, namedConversations],
   );
   const mailConversations = useMemo(
     () => namedConversations.filter((c) => c.kind === 'mail'),
@@ -362,6 +439,24 @@ export function InboxPage() {
     </div>
   );
 
+  /**
+   * 名录不可用提示：钉钉/飞书的名字来自平台接口，登录态过期时只能显示「群聊」。
+   * 静默降级会让用户以为程序坏了，所以直接把原因和该做什么摆出来。
+   */
+  const directoryBanner = directoryIssues.length > 0 ? (
+    <div className="list-notice" role="status">
+      <div className="list-notice__title">会话名暂时读不到</div>
+      <div className="list-notice__body">
+        {directoryIssues.map((it) => (
+          <div key={it.platform}>{it.reason}</div>
+        ))}
+        <div className="list-notice__hint">
+          钉钉：双击 D:\LinkHub-push\login-dingtalk.bat（右键以管理员身份运行），完成后刷新本页。
+        </div>
+      </div>
+    </div>
+  ) : null;
+
   const listBody = state.loading ? (
     <div className="list-loading">
       {[0, 1, 2, 3].map((i) => (
@@ -377,7 +472,12 @@ export function InboxPage() {
         description="按上方错误提示排查后端（是否启动、端口与 token 是否一致）后刷新页面重试。"
       />
     ) : isEmptyInbox ? (
-      firstRunVisible ? (
+      session ? (
+        <EmptyState
+          title="这个账号下还没有消息"
+          description="历史消息如果还没归属到你，请到「设置 → 账号 → 数据归属」点「认领无主的历史消息」。"
+        />
+      ) : firstRunVisible ? (
         <EmptyState
           title="还没有收到消息"
           description="从上方「连接账号」开始连接，或点「先体验演示」注入一条示例消息。"
@@ -500,11 +600,35 @@ export function InboxPage() {
               aria-label="搜索消息"
             />
 
-            <ChannelTabs
-              options={channelOptions}
-              value={state.filters.platform}
-              onChange={(platform) => store.setFilters({ platform })}
-            />
+            {/* 预览模式用假数据，平台渠道计数会失真 → 直接隐藏，避免误导 */}
+            {!previewMode && (
+              <ChannelTabs
+                options={channelOptions}
+                value={state.filters.platform}
+                onChange={(platform) => store.setFilters({ platform })}
+              />
+            )}
+
+            {previewMode && (
+              <div className="pv-tabs pv-tabs--inline" data-style={previewTabStyle} data-testid="preview-channels">
+                {([
+                  ['all', '全部', previewBuckets.all.length],
+                  ['direct', '单聊', previewBuckets.direct.length],
+                  ['at', '@我', previewBuckets.at.length],
+                  ['group', '群消息', previewBuckets.group.length],
+                ] as const).map(([id, label, count]) => (
+                  <button
+                    type="button"
+                    key={id}
+                    className={`pv-tab${previewChannel === id ? ' pv-tab--active' : ''}`}
+                    onClick={() => setPreviewChannel(id)}
+                  >
+                    {label}
+                    <span className="pv-tab__count">{count}</span>
+                  </button>
+                ))}
+              </div>
+            )}
 
             {/* 微信 4.x：没有可访问性控件树，只能「按需拉取」（拖选复制）。
                 只在选中微信渠道时出现，不打扰其它平台的常规使用。 */}
@@ -622,6 +746,8 @@ export function InboxPage() {
               </Popover>
             </div>
           </div>
+
+          {directoryBanner}
 
           <div className={`list-scroll${selectedConv ? '' : ' list-scroll--grouped'}`}>{listBody}</div>
         </section>

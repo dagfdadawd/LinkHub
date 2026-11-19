@@ -6,8 +6,7 @@
  */
 import { test, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { Platform } from '@unimsg/shared';
 import { config } from '../config';
@@ -17,6 +16,7 @@ import {
   maybeAutoEnableDingtalkPersonalIdentity,
   maybeRevertDingtalkPersonalIdentity,
 } from './personalIdentity';
+import { makeTempDir } from '../utils/tempDir';
 
 const dirs: string[] = [];
 const original = {
@@ -27,7 +27,7 @@ const original = {
 };
 
 function tempDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'linkhub-personal-identity-'));
+  const dir = makeTempDir('linkhub-personal-identity-');
   dirs.push(dir);
   return dir;
 }

@@ -1,3 +1,4 @@
+import userEvent from '@testing-library/user-event';
 /**
  * InboxPage 接线测试：证明首屏空态接的是「一键注入入口」而不是文档说明。
  *
@@ -6,7 +7,6 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ACCOUNTS } from '../../services/mock/fixtures';
 import { MsgStatus, Platform } from '../../types';

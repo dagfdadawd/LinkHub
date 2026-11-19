@@ -4,8 +4,7 @@
  */
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Platform } from '@unimsg/shared';
 import { config } from '../config';
@@ -14,6 +13,7 @@ import { resetDingtalkPersonalClientCache } from '../connectors/dingtalkPersonal
 import { resetIdentityCaches } from './identity';
 import { listAccounts } from './account';
 import { resetWechatBridgeCache, wechatBridgeStatus } from './wechatBridge';
+import { makeTempDir } from '../utils/tempDir';
 
 const dirs: string[] = [];
 const original = {
@@ -29,7 +29,7 @@ const original = {
 };
 
 function tempTokenFile(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'linkhub-account-'));
+  const dir = makeTempDir('linkhub-account-');
   dirs.push(dir);
   return join(dir, 'token.json');
 }

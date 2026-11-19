@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Alert, Button, Card, Col, message, Popconfirm, Row, Tag, Typography } from 'antd';
@@ -19,7 +19,7 @@ import {
 import type { DeliveryMode, PlatformIdentityView } from '@unimsg/shared';
 import { useAppState } from '../../hooks/useAppState';
 import { Platform } from '../../types';
-import type { AccountInfo, MailAccountInfo } from '../../services/api';
+import type { AccountInfo, DingtalkPersonalStatus, MailAccountInfo } from '../../services/api';
 import { store } from '../../store';
 import { PLATFORM_META, formatDateTime, toneStyle } from '../../utils/format';
 import { checkEnvRestart } from '../../utils/envRestart';
@@ -141,7 +141,72 @@ function formatExpiry(value?: string): string {
  *  - 没连接时说明「下一步点哪里、为什么需要登录、登录后会怎样」；
  *  - 如实标注：随平台整体 Mock 时一律「模拟」，不显示成本人/机器人真实通道。
  */
-export function IdentityBlock({
+export 
+/** 把秒数转成「1 小时 58 分」这种口语时长 */
+function formatRemaining(sec: number): string {
+  if (sec <= 0) return '已过期';
+  const h = Math.floor(sec / 3600);
+  const m = Math.round((sec % 3600) / 60);
+  if (h > 0) return `${h} 小时 ${m} 分`;
+  return `${Math.max(1, m)} 分钟`;
+}
+
+/**
+ * 钉钉本人身份的**有效期倒计时**。
+ *
+ * dws 的访问令牌约 2 小时到期；如果续期失败（普通权限进程写不进凭据库），
+ * 整个登录态会失效、收件箱的会话名会退回「群聊」——用户很难把这两件事联系起来。
+ * 所以在到期前直接显示剩余时间，提前提醒重新授权。
+ */
+function DingtalkSessionHint({ onRelogin }: { onRelogin?: () => void }) {
+  const [status, setStatus] = useState<DingtalkPersonalStatus | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    const load = () => {
+      void store
+        .dingtalkPersonalStatus()
+        .then((next) => {
+          if (alive) setStatus(next);
+        })
+        .catch(() => undefined);
+    };
+    load();
+    // 1 分钟刷新一次：既能看到剩余时间在减少，也不会频繁打后端（后端有 30s 缓存）
+    const timer = window.setInterval(load, 60_000);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  if (!status?.authenticated) return null;
+  const left = status.tokenExpiresInSec;
+  if (left === undefined) return null;
+
+  const expired = left <= 0;
+  const soon = left > 0 && left < 15 * 60;
+
+  return (
+    <div className={`dt-session${expired ? ' dt-session--bad' : soon ? ' dt-session--warn' : ''}`}>
+      <span className="dt-session__dot" />
+      <span className="dt-session__text">
+        {expired
+          ? '钉钉登录已过期：收件箱的会话名会退回「群聊」'
+          : soon
+            ? `钉钉登录将在 ${formatRemaining(left)} 后到期`
+            : `钉钉登录有效，剩余 ${formatRemaining(left)}`}
+      </span>
+      {(expired || soon) && onRelogin && (
+        <Button size="small" type="primary" onClick={onRelogin}>
+          重新登录
+        </Button>
+      )}
+    </div>
+  );
+}
+
+function IdentityBlock({
   platform,
   identity,
   actionsEnabled,
@@ -264,6 +329,11 @@ export function IdentityBlock({
           {identity.botAvailable ? '机器人通道可用（兜底）：' : '机器人通道不可用：'}
           {identity.botHint}
         </div>
+      )}
+
+      {/* 钉钉：显示登录剩余有效期，快到期/已过期时给「重新登录」 */}
+      {platform === Platform.DINGTALK && linked && (
+        <DingtalkSessionHint onRelogin={showConnect ? onConnect : undefined} />
       )}
 
       {(showConnect || (canStart && linked && platform === Platform.DINGTALK && onLogout)) && (

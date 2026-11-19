@@ -182,6 +182,11 @@ export function normalizeCompose(raw: unknown): ComposeRequest {
     ? v.conversationType
     : undefined;
 
+  // 目标会话名（可选）：主动发送时后端拿不到名字，用前端选择器的显示名补齐
+  const conversationTitle = typeof v.conversationTitle === 'string'
+    ? v.conversationTitle.trim().slice(0, 64)
+    : '';
+
   const mailAccount = typeof v.mailAccount === 'string' ? v.mailAccount.trim() : '';
   if (v.mailAccount !== undefined && v.mailAccount !== null && typeof v.mailAccount !== 'string') {
     throw new InvalidOutboundRequest('mailAccount 必须是字符串（邮箱账号 key）');
@@ -215,6 +220,7 @@ export function normalizeCompose(raw: unknown): ComposeRequest {
     platform: platform as Platform,
     ...(conversationId ? { conversationId } : {}),
     ...(conversationType ? { conversationType } : {}),
+    ...(conversationTitle ? { conversationTitle } : {}),
     ...(mailAccount ? { mailAccount } : {}),
     ...(identity ? { identity } : {}),
     ...(todo ? { todo } : {}),

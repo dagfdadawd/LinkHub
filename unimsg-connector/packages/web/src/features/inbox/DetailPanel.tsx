@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Alert, App as AntApp, Button, Dropdown, Image, Tag, Tooltip } from 'antd';
 import type { MenuProps } from 'antd';
@@ -19,7 +19,7 @@ import {
   SendOutlined,
 } from '@ant-design/icons';
 import { MsgStatus } from '../../types';
-import type { AttachmentInfo, OutboundAttachment, UnifiedMessage } from '../../types';
+import type { AttachmentInfo, IdentityRole, OutboundAttachment, UnifiedMessage } from '../../types';
 import { formatBytes } from '../../utils/attachments';
 import { canDownloadAttachment, saveBlobAsFile } from '../../utils/download';
 import { formatSendError } from '../../utils/sendError';
@@ -170,13 +170,35 @@ export function DetailPanel({
   const [sending, setSending] = useState(false);
   /** 重新生成 AI 建议：按钮 loading，避免连点重复调用模型 */
   const [regenerating, setRegenerating] = useState(false);
+  /** 用户显式选中的「引用回复」目标；为空 = 普通发送（不带引用条） */
+  const [quoteTarget, setQuoteTarget] = useState<UnifiedMessage | null>(null);
+  /** 发送中的回复：先以气泡上屏，成功由服务端 reply 接管，失败保留并给出原因 */
+  const [pendingReply, setPendingReply] = useState<{ text: string; at: number; failed?: string } | null>(null);
+
+
   /** 发送成功后短暂冷却：清空输入框 + 禁用按钮，避免手滑把同一内容再发一次（P2-2） */
   const [cooldown, setCooldown] = useState(false);
   const cooldownTimer = useRef<number>();
   /** 聊天区滚到底：会话里最新一条永远在视野内（与 IM 一致） */
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  /** 移动端长按识别（引用回复入口） */
+  const longPressTimer = useRef<number>();
 
   const messages = thread && thread.length > 0 ? thread : [message];
+
+  /**
+   * 发送中的气泡什么时候撤掉：
+   * 一旦服务端消息里已经带上这次回复（replies 最新一条 / reply 字段），就**同一帧**不画它，
+   * 否则会先冒出"正式气泡"再撤回"发送中气泡"，用户看到的就是闪一下。
+   */
+  const pendingVisible = pendingReply
+    ? !messages.some((m) => {
+      const latest = m.replies && m.replies.length > 0
+        ? m.replies[m.replies.length - 1].text
+        : (m.reply ?? '');
+      return latest.trim() === pendingReply.text.trim();
+    })
+    : false;
   /** 回复要挂在「最后一条入站消息」上：出站消息没有平台回写目标 */
   const replyTarget = [...messages].reverse().find((m) => !isOut(m)) ?? message;
   const threadInboundCount = messages.filter((m) => !isOut(m)).length;
@@ -204,6 +226,7 @@ export function DetailPanel({
   const visibleMessages = messages.filter((m) => !echoDuplicates.has(m.traceId));
 
   useEffect(() => {
+    setQuoteTarget(null);
     setText(replyTarget.replyDraft ?? '');
     setSending(false);
     setCooldown(false);
@@ -211,11 +234,69 @@ export function DetailPanel({
     return () => window.clearTimeout(cooldownTimer.current);
   }, [replyTarget.traceId, replyTarget.replyDraft]);
 
-  // 换会话 / 新消息进来后，把聊天记录定位到底部
+  /**
+   * 回复条数指纹：回复是挂在消息上的 `replies` 数组，**不改变 messages.length**，
+   * 旧依赖只看消息条数/最后 traceId，所以"发完一条回复"不会触发滚动，
+   * 新气泡落在视口外 —— 用户就会以为"我发的消息没显示"。
+   */
+  const repliesFingerprint = messages.reduce(
+    (n, m) => n + (m.replies?.length ?? (m.reply ? 1 : 0)),
+    0,
+  );
+
+  /**
+   * 贴底跟随：只有「用户本来就在底部」时才自动滚，并且用平滑滚动。
+   *
+   * 之前让动效发涩的三处：
+   *  1. 状态每变一次（processing → replied → sent → synced）就硬跳一次 `scrollTop`，
+   *     同一秒内跳 3~4 次，气泡看起来在抖；状态变化并不改变高度，根本不需要滚；
+   *  2. 用户正在往上翻历史时也会被强行拽回底部；
+   *  3. 挂载时用的是同一个硬跳，和 CSS 的 `scroll-behavior: smooth` 互相打架。
+   */
+  const stickToBottomRef = useRef(true);
+  const handleChatScroll = (): void => {
+    const el = scrollRef.current;
+    if (!el) return;
+    // 96px 容差：贴底时自然跟随，稍微上翻一点就不要抢
+    stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 96;
+  };
+
+  // 挂载 / 换会话（本组件按会话重新挂载）：立刻到底，不要动画
   useEffect(() => {
     const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [messages.length, messages[messages.length - 1]?.traceId, selectedStatusKey(messages)]);
+    if (!el) return;
+    stickToBottomRef.current = true;
+    const prev = el.style.scrollBehavior;
+    el.style.scrollBehavior = 'auto';
+    el.scrollTop = el.scrollHeight;
+    const raf = window.requestAnimationFrame(() => {
+      el.style.scrollBehavior = prev;
+    });
+    return () => {
+      window.cancelAnimationFrame(raf);
+      el.style.scrollBehavior = prev;
+    };
+  }, []);
+
+  // 新增内容（新消息 / 新回复 / 刚上屏的发送中气泡）才平滑跟随
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || !stickToBottomRef.current) return;
+    const raf = window.requestAnimationFrame(() => {
+      // jsdom / 老浏览器没有 Element.scrollTo，退回直接赋值（不影响真实浏览器的平滑滚动）
+      if (typeof el.scrollTo === 'function') {
+        el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+      } else {
+        el.scrollTop = el.scrollHeight;
+      }
+    });
+    return () => window.cancelAnimationFrame(raf);
+  }, [
+    messages.length,
+    messages[messages.length - 1]?.traceId,
+    repliesFingerprint,
+    pendingReply?.text,
+  ]);
 
   const canMarkDone = !message.done;
   // 投递方式：Mock 必须如实标注，不能显示成真实平台已收到；真实回写带身份时一并展示。
@@ -246,21 +327,31 @@ export function DetailPanel({
     const content = text.trim();
     if (!content && attachments.length === 0) return;
     setSending(true);
+    // 先上屏：发送中的内容立刻作为右侧气泡出现（否则失败时对话框里什么都没有）
+    setPendingReply({ text: content || `[附件] ${attachments.map((a) => a.name).join(', ')}`, at: Date.now() });
     try {
-      await store.reply(replyTarget.traceId, content, attachments);
+      // 回复永远跟随后端平台策略：身份只在「新建发送」里选，避免上一次的选择粘到这—条消息上
+      // quoteTarget 为空则普通发送；只有用户点了「回复」才引用
+      await store.reply(replyTarget.traceId, content, attachments, undefined, quoteTarget?.traceId);
+      setQuoteTarget(null);
       /**
        * 提交成功不再弹 toast：气泡会立刻出现，状态（已同步/待重试）就在消息里实时变，
        * 再盖一层「已提交，正在发送」既挡视线又重复。只有失败才提示。
        */
+      setPendingReply(null);
       // P2-2：清空输入框 + 2 秒防重复，避免手滑再点一次重复打扰对方
       setText('');
       setCooldown(true);
       window.clearTimeout(cooldownTimer.current);
       cooldownTimer.current = window.setTimeout(() => setCooldown(false), 2000);
     } catch (e) {
-      toast.error(
-        formatSendError(e instanceof Error ? e.message : '发送失败，请重试', account?.identity),
+      const reason = formatSendError(
+        e instanceof Error ? e.message : '发送失败，请重试',
+        account?.identity,
       );
+      // 失败也留在对话框里：带上原因，可一键重发（用户不会以为"消息没发出去也没痕迹"）
+      setPendingReply((prev) => (prev ? { ...prev, failed: reason } : null));
+      toast.error(reason);
     } finally {
       setSending(false);
     }
@@ -397,6 +488,122 @@ export function DetailPanel({
   const headerOutOnly = threadInboundCount === 0;
 
   /** 单条消息的气泡（入站左 / 出站右），含附件、告警、回写内容 */
+  /**
+   * 回复气泡独立渲染：它按「回复发生的时刻」参与整条线程排序，
+   * 不再紧贴在原消息下面（否则回复 11-12 的消息会在 11-18 跑到最上面）。
+   * 每次回复各占一个气泡（来自 message.replies 历史），不会被下一次回复覆盖。
+   */
+  const renderReplyBubble = (
+    m: UnifiedMessage,
+    entry: {
+      text: string;
+      at: string;
+      attachments?: AttachmentInfo[];
+      identity?: IdentityRole;
+      failed?: boolean;
+      failureReason?: string;
+      /** 这次回复引用了哪条消息（只有显式引用时才有） */
+      quote?: { text: string; senderName: string };
+    },
+    isLatest: boolean,
+  ) => {
+    // 纯文件回复没有正文：附件必须算在气泡内容里，否则就是一个空气泡
+    const files = entry.attachments
+      ?? (isLatest ? m.replyAttachments : undefined)
+      ?? [];
+    const hasText = Boolean(entry.text?.trim());
+    /**
+     * 身份按「这一条回复实际用的身份」渲染（entry.identity），不再共用整条消息的
+     * delivery.identity —— 同一个会话先后用本人 / 机器人回过时，共用一个标签必然错一半。
+     * 老数据没有逐条身份时退回投递身份，再退回默认（本人）。
+     */
+    const bubbleIdentity = entry.identity ?? m.delivery?.identity ?? 'user';
+    return (
+      <div
+        className="bubble-row bubble-row--out"
+        key={`${m.traceId}:reply:${entry.at}:${entry.text}`}
+        data-reply-failed={entry.failed ? 'true' : undefined}
+      >
+        <div className="bubble-wrap bubble-wrap--out">
+          <div className={`bubble bubble--out${entry.failed ? ' is-failed' : ''}`}>
+            {entry.quote && (
+              <div className="bubble__quote" data-testid="quoted-block">
+                <div className="bubble__quote-name">{entry.quote.senderName || '对方'}</div>
+                <div className="bubble__quote-text">{entry.quote.text || '（原消息为空）'}</div>
+              </div>
+            )}
+            {hasText && <div className="message-body">{entry.text}</div>}
+            {files.length > 0 && <AttachmentList items={files} label="回复附件" traceId={m.traceId} field="replyAttachments" />}
+            {!hasText && files.length === 0 && (
+              <div className="message-body bubble__empty">（空内容）</div>
+            )}
+          </div>
+          <div className="bubble__meta bubble__meta--out">
+            {entry.failed ? (
+              <>
+                <span className="bubble__label">发送失败</span>
+                <Tooltip
+                  title={
+                    entry.failureReason
+                      ? `原因：${formatSendError(entry.failureReason, account?.identity)}`
+                      : '这条没有发出去，可直接重试'
+                  }
+                >
+                  <span className="chip chip--warn">未送达</span>
+                </Tooltip>
+              </>
+            ) : (
+              <>
+                <IdentityTag role={bubbleIdentity} action="send" short />
+                <span>{formatDateTime(entry.at)}</span>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  /**
+   * 线程渲染顺序：**按事件发生时间升序**。
+   * 一条入站消息 + 它的每一次回复都是独立事件，各自排序；
+   * 只看 `reply` 单字段会让"后来的回复覆盖前一条"，对话框里永远只剩最后一句。
+   */
+  const threadItems = useMemo(() => {
+    type Item = {
+      key: string;
+      at: number;
+      node: 'msg' | 'reply';
+      m: UnifiedMessage;
+      entry?: { text: string; at: string };
+      isLatest?: boolean;
+    };
+    const items: Item[] = [];
+    for (const m of visibleMessages) {
+      items.push({ key: m.traceId, at: Date.parse(m.createdAt) || 0, node: 'msg', m });
+      /**
+       * 回复历史：有 replies 就用 replies。
+       * 没有时的历史兜底**只对入站消息成立**——出站消息（含「新建发送」）的 `reply`
+       * 是「这次发出去的文本」，body 也是同一段话；把它当回复再画一遍，
+       * 对话框里就会出现两条内容一模一样的气泡（线上真实出现过）。
+       */
+      const entries = m.replies && m.replies.length > 0
+        ? m.replies
+        : (!isOut(m) && m.reply ? [{ text: m.reply, at: m.updatedAt || m.createdAt }] : []);
+      entries.forEach((entry, index) => {
+        items.push({
+          key: `${m.traceId}:reply:${index}`,
+          at: Date.parse(entry.at) || 0,
+          node: 'reply',
+          m,
+          entry,
+          isLatest: index === entries.length - 1,
+        });
+      });
+    }
+    return items.sort((a, b) => a.at - b.at);
+  }, [visibleMessages]);
+
   const renderMessage = (m: UnifiedMessage) => {
     const out = isOut(m);
     const isAnchor = m.traceId === message.traceId;
@@ -408,12 +615,7 @@ export function DetailPanel({
             <div className="bubble bubble--out">
               <div className="message-body">{m.body}</div>
               {m.attachments && m.attachments.length > 0 && (
-                <AttachmentList
-                  items={m.attachments}
-                  label="附件"
-                  traceId={m.traceId}
-                  field="attachments"
-                />
+                <AttachmentList items={m.attachments} label="附件" traceId={m.traceId} field="attachments" />
               )}
             </div>
             <div className="bubble__meta bubble__meta--out">
@@ -485,19 +687,33 @@ export function DetailPanel({
           />
         )}
 
-        <div className="bubble-row bubble-row--in">
+        <div
+          className="bubble-row bubble-row--in"
+          onContextMenu={(e) => {
+            // 桌面：右键这条消息 → 回复（引用它）
+            e.preventDefault();
+            setQuoteTarget(m);
+            focusComposer();
+          }}
+          onTouchStart={() => {
+            // 移动端：长按 500ms 触发（短按仍可正常点链接）
+            window.clearTimeout(longPressTimer.current);
+            longPressTimer.current = window.setTimeout(() => {
+              setQuoteTarget(m);
+              focusComposer();
+            }, 500);
+          }}
+          onTouchEnd={() => window.clearTimeout(longPressTimer.current)}
+          onTouchMove={() => window.clearTimeout(longPressTimer.current)}
+          data-quote-trace={m.traceId}
+        >
           <AvatarBadge name={m.sender.name} platform={m.platform} size={30} />
           <div className="bubble-wrap">
             <div className="bubble" aria-label="原始消息内容">
               <div className="message-body">{m.body}</div>
 
               {m.attachments && m.attachments.length > 0 && (
-                <AttachmentList
-                  items={m.attachments}
-                  label="附件"
-                  traceId={m.traceId}
-                  field="attachments"
-                />
+                <AttachmentList items={m.attachments} label="附件" traceId={m.traceId} field="attachments" />
               )}
             </div>
             <div className="bubble__meta">
@@ -507,39 +723,20 @@ export function DetailPanel({
               )}
               {m.dueAt && <span className="chip chip--type">截止 {formatDateTime(m.dueAt)}</span>}
               {m.receivedAs && <IdentityTag role={m.receivedAs} action="receive" short />}
+              <button
+                type="button"
+                className="bubble__reply-btn"
+                aria-label="回复这条消息"
+                onClick={() => {
+                  setQuoteTarget(m);
+                  focusComposer();
+                }}
+              >
+                回复
+              </button>
             </div>
           </div>
         </div>
-
-        {/* 这条消息的回写内容：紧跟在它下面，作为右侧气泡 */}
-        {m.reply && (
-          <div className="bubble-row bubble-row--out">
-            <div className="bubble-wrap bubble-wrap--out">
-              <div className="bubble bubble--out">
-                <div className="message-body">{m.reply}</div>
-                {/* 回复自带的附件挂在回复气泡里；挂在原消息上会变成「对方那句话带着我的文件」 */}
-                {m.replyAttachments && m.replyAttachments.length > 0 && (
-                  <AttachmentList
-                    items={m.replyAttachments}
-                    label="回复附件"
-                    traceId={m.traceId}
-                    field="replyAttachments"
-                  />
-                )}
-              </div>
-              {/* 回复气泡只在失败时需要说明；成功时不挂时间，避免时间轴看起来倒序
-                  （回复紧贴原消息渲染，而回复时间可能晚于后面的消息） */}
-              {m.status === MsgStatus.FAILED && (
-                <div className="bubble__meta bubble__meta--out">
-                  <span className="bubble__label">待重试的回复</span>
-                  {delivery.kind !== 'none' && (
-                    <span className="chip chip--type">{delivery.text}</span>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
       </div>
     );
   };
@@ -628,9 +825,44 @@ export function DetailPanel({
             </div>
           </header>
 
-          <div className="chat-scroll" ref={scrollRef}>
+          <div className="chat-scroll" ref={scrollRef} onScroll={handleChatScroll}>
             <div className="thread">
-              {visibleMessages.map((m) => renderMessage(m))}
+              {threadItems.map((item) => (
+                item.node === 'reply' && item.entry
+                  ? renderReplyBubble(item.m, item.entry, Boolean(item.isLatest))
+                  : renderMessage(item.m)
+              ))}
+
+              {/* 发送中的回复：立刻上屏，成功后被服务端 reply 接管，失败保留并给出重试 */}
+              {pendingVisible && pendingReply && (
+                <div className="bubble-row bubble-row--out bubble-row--pending" data-testid="pending-reply">
+                  <div className="bubble-wrap bubble-wrap--out">
+                    <div className={`bubble bubble--out${pendingReply.failed ? ' is-failed' : ''}`}>
+                      <div className="message-body">{pendingReply.text}</div>
+                    </div>
+                    <div className="bubble__meta bubble__meta--out">
+                      {pendingReply.failed ? (
+                        <>
+                          <span className="pending-reply__error">{pendingReply.failed}</span>
+                          <Button
+                            size="small"
+                            type="link"
+                            loading={sending}
+                            onClick={() => void handleSend()}
+                          >
+                            重发
+                          </Button>
+                          <Button size="small" type="link" onClick={() => setPendingReply(null)}>
+                            丢弃
+                          </Button>
+                        </>
+                      ) : (
+                        <span>发送中…</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* 状态流转 + 消息信息：降级成可展开详情，不占阅读空间 */}
               <details className="detail__more">
@@ -712,8 +944,8 @@ export function DetailPanel({
             {replyIdentity && (
               <div className="composer__identity" data-testid="reply-identity">
                 <span className="composer__identity-label">本次回复</span>
-                {/* 长句提示收进 Tooltip：常驻一行会把输入区顶高，而且「以你本人账号发出」
-                    这类信息看一眼标签就够了；真正需要读（未登录原因）时悬停可见 */}
+                {/* 回复不提供身份切换：一律跟随后端平台策略（用户要换身份去「新建发送」）。
+                    这里只如实显示这次会以哪个身份发出。 */}
                 <Tooltip title={replyIdentityHint || undefined}>
                   <span>
                     <IdentityTag role={replyIdentity} action="send" />
@@ -726,6 +958,15 @@ export function DetailPanel({
               value={text}
               sending={sending}
               sendDisabled={cooldown}
+              {...(quoteTarget
+                ? {
+                  quote: {
+                    text: String(quoteTarget.body ?? '').slice(0, 120),
+                    senderName: quoteTarget.sender?.name ?? '',
+                  },
+                }
+                : {})}
+              onClearQuote={() => setQuoteTarget(null)}
               onChange={setText}
               onSend={handleSend}
             />
@@ -750,10 +991,4 @@ onRegenerate={() => void handleRegenerate()}
       </div>
     </div>
   );
-}
-
-/** 滚动依赖键：最后一条的状态变化（回写成功）也要把视图带到底部 */
-function selectedStatusKey(messages: UnifiedMessage[]): string {
-  const last = messages[messages.length - 1];
-  return last ? `${last.traceId}:${last.status}:${last.reply ?? ''}` : '';
 }

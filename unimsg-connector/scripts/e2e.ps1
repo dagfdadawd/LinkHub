@@ -34,8 +34,29 @@ Write-Host "[e2e] starting server on port $Port (forced mock mode, isolated from
 $env:SERVER_PORT = "$Port"
 # 注意：Windows 上把环境变量设成空字符串等于【删除】它，dotenv 会再读回 .env 里的 DATA_DIR，
 # 所以这里用独立临时目录（而不是空串）隔离消息快照/水位，e2e 结束一并清理。
-$e2eData = Join-Path ([System.IO.Path]::GetTempPath()) ("linkhub-e2e-" + [guid]::NewGuid().ToString("N"))
-New-Item -ItemType Directory -Path $e2eData -Force | Out-Null
+# NOTE: this file is kept ASCII-only (Windows PowerShell 5.1 reads it as ANSI).
+# GetTempPath() can return an empty string (TMP/TEMP cleared) and some managed
+# machines have a %TEMP% that exists but is not writable, so fall back to repo .tmp.
+# Override the location explicitly with LINKHUB_E2E_DATA if needed.
+function New-E2eDataDir {
+  $name = "linkhub-e2e-" + [guid]::NewGuid().ToString("N")
+  $candidates = @()
+  if ($env:LINKHUB_E2E_DATA) { $candidates += $env:LINKHUB_E2E_DATA }
+  $tmp = [System.IO.Path]::GetTempPath()
+  if (-not [string]::IsNullOrWhiteSpace($tmp)) { $candidates += $tmp }
+  $candidates += (Join-Path $root ".tmp")
+  foreach ($dir in $candidates) {
+    $full = Join-Path $dir $name
+    try {
+      New-Item -ItemType Directory -Path $full -Force -ErrorAction Stop | Out-Null
+      return $full
+    } catch {
+      Write-Host "[e2e] cannot create temp dir under $dir, trying next candidate" -ForegroundColor Yellow
+    }
+  }
+  throw "[e2e] no writable temp dir found; set LINKHUB_E2E_DATA to a writable path"
+}
+$e2eData = New-E2eDataDir
 $env:DATA_DIR = $e2eData
 $env:DATA_FILE = Join-Path $e2eData "linkhub-state.json"
 $env:FEISHU_USER_STATE_FILE = Join-Path $e2eData "feishu-user-receive.json"

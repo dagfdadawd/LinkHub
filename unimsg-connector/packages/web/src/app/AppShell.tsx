@@ -10,6 +10,7 @@ import {
   HistoryOutlined,
   InboxOutlined,
   LinkOutlined,
+  LoginOutlined,
   MoonOutlined,
   ReloadOutlined,
   SearchOutlined,
@@ -19,7 +20,8 @@ import {
   ThunderboltOutlined,
 } from '@ant-design/icons';
 import { useAppState } from '../hooks/useAppState';
-import { store } from '../store';
+import { store, services } from '../store';
+import { clearSession, useSession } from '../services/session';
 import { PlatformGlyph } from '../components/PlatformGlyph';
 import { footerShortLabel, footerState } from '../utils/footerState';
 import { clamp } from '../utils/format';
@@ -138,7 +140,22 @@ export function AppShell() {
   const compact = useIsCompact();
   const profile = useProfile();
   const prefs = usePreferences();
+  /** 当前登录账号（未登录 = null，此时回退部署令牌，演示模式仍可用） */
+  const session = useSession();
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  /** 退出登录：先让服务端作废会话，再清本地状态；失败也照清，避免卡在"退不出去" */
+  const handleLogout = useCallback(async () => {
+    try {
+      await services.api.logout();
+    } catch {
+      // 忽略：本地清理优先
+    }
+    clearSession();
+    services.realtime.reconnectNow?.();
+    message.success('已退出登录');
+    navigate('/login', { replace: true });
+  }, [message, navigate]);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [composeOpen, setComposeOpen] = useState(false);
 
@@ -511,6 +528,35 @@ export function AppShell() {
         </nav>
 
         <div className="side__foot">
+          {/* 账号：闭环起点「我是谁」——未登录显示去登录，登录后显示当前用户 */}
+          {session ? (
+            <Tooltip title={`${session.user.displayName} · 点击退出登录`} placement="right">
+              <button
+                className="side-link side-link--plain side-account"
+                type="button"
+                aria-label={`当前用户 ${session.user.displayName}，点击退出登录`}
+                onClick={() => void handleLogout()}
+              >
+                <span className="side-link__icon side-account__badge" aria-hidden="true">
+                  {initialOf(session.user.displayName)}
+                </span>
+                <span className="side-link__label">{session.user.displayName}</span>
+              </button>
+            </Tooltip>
+          ) : (
+            <button
+              className="side-link side-link--plain"
+              type="button"
+              aria-label="登录或注册"
+              onClick={() => navigate('/login')}
+            >
+              <span className="side-link__icon" aria-hidden="true">
+                <LoginOutlined />
+              </span>
+              <span className="side-link__label">登录</span>
+            </button>
+          )}
+
           <button
             className="side-link side-link--plain"
             type="button"
@@ -617,7 +663,15 @@ export function AppShell() {
       </div>
 
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
-      <ComposeModal open={composeOpen} onClose={() => setComposeOpen(false)} />
+      <ComposeModal
+        open={composeOpen}
+        onClose={() => setComposeOpen(false)}
+        /**
+         * 发完直接跳到「刚发出去的那条消息」所在会话。
+         * 不跳的话，用户在 A 对话框里发到 B 会话，会以为消息没发出去。
+         */
+        onSent={(taskId) => navigate(`/inbox/${encodeURIComponent(taskId)}`)}
+      />
       <CommandPalette
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}
