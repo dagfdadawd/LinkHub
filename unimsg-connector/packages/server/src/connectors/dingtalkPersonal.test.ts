@@ -6,8 +6,7 @@
  */
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
@@ -37,6 +36,7 @@ import {
   type DwsRunResult,
   type DwsRunner,
 } from './dingtalkPersonal';
+import { makeTempDir } from '../utils/tempDir';
 
 const FAKE_DWS = fileURLToPath(new URL('../../../../scripts/fake-dws.mjs', import.meta.url));
 const dirs: string[] = [];
@@ -47,7 +47,7 @@ const originalEnv = {
 };
 
 function tempDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'linkhub-dws-'));
+  const dir = makeTempDir('linkhub-dws-');
   dirs.push(dir);
   return dir;
 }

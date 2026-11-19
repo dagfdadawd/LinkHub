@@ -4,10 +4,10 @@
  */
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { FeishuUserAuth, type FeishuUserAuthOptions } from './feishuUserAuth';
+import { makeTempDir } from '../utils/tempDir';
 
 const dirs: string[] = [];
 
@@ -37,7 +37,7 @@ function stubFetch(replies: Array<{ body: unknown; status?: number }>, calls: Ca
 }
 
 function makeAuth(overrides: Partial<FeishuUserAuthOptions> = {}): FeishuUserAuth {
-  const dir = mkdtempSync(join(tmpdir(), 'linkhub-feishu-auth-'));
+  const dir = makeTempDir('linkhub-feishu-auth-');
   dirs.push(dir);
   return new FeishuUserAuth({
     appId: 'cli_test',

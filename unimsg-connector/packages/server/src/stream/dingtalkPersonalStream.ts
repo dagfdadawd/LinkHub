@@ -18,8 +18,7 @@
  * 事件 → 统一消息 → `svc.ingestUnified()`（与机器人链路共用幂等/trace/广播，receivedAs='user'）。
  */
 import { spawn, execFile } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { Platform, type UnifiedMessage } from '@unimsg/shared';
 import { config } from '../config';
@@ -35,6 +34,7 @@ import {
 } from '../connectors/dingtalkPersonal';
 import { identityChannelsReal, resolveIdentity } from '../services/identity';
 import { isSelfId, learnSelfId, learnedSelfIds, matchEcho } from '../services/echoRegistry';
+import { makeTempDir } from '../utils/tempDir';
 
 /** 重启退避：1s → 2s → 4s … 上限 60s */
 export const RESTART_BASE_MS = 1_000;
@@ -247,7 +247,7 @@ async function hydrateMediaPreview(
   const media = msg.attachments?.find((a) => a.mediaId);
   if (!media?.mediaId || !evt?.messageId || !evt.conversationId) return;
 
-  const dir = mkdtempSync(join(tmpdir(), 'linkhub-media-'));
+  const dir = makeTempDir('linkhub-media-');
   const out = join(dir, 'media');
   try {
     await dingtalkPersonalClient().downloadMedia({

@@ -13,6 +13,8 @@
  * 前端据此说明「为什么只能选已有会话」，而不是假装有通讯录。
  */
 import { Platform } from '@unimsg/shared';
+import { config } from '../config';
+import { classifyDwsFailure, createSpawnRunner } from '../connectors/dingtalkPersonal';
 import { feishuUserAuth } from '../connectors/feishuUserAuth';
 import { fetchUserChats } from '../connectors/feishuUserReceive';
 
@@ -67,6 +69,59 @@ async function listFeishu(): Promise<DirectoryResult> {
   }
 }
 
+/**
+ * 钉钉会话名录：`dws chat +chat-list --types group,p2p --page-all -f json`。
+ *
+ * 这条命令能拿到**真实会话名**（群名 / 对方昵称），而个人事件里没有名字，
+ * 所以收件箱的会话名和「发消息」选择器都靠它。未登录时如实返回不可用原因。
+ */
+async function listDingtalk(): Promise<DirectoryResult> {
+  const bin = config.identity.dingtalk.bin;
+  const profile = config.identity.dingtalk.profile;
+  const run = createSpawnRunner(bin);
+  const args = [
+    'chat', '+chat-list',
+    '--types', 'group,p2p',
+    '--page-all',
+    '-f', 'json',
+    ...(profile ? ['--profile', profile] : []),
+  ];
+  let r;
+  try {
+    r = await run(args, { timeoutMs: 25_000 });
+  } catch (e) {
+    return unavailable(Platform.DINGTALK, `钉钉会话名录读取失败：${e instanceof Error ? e.message : String(e)}`);
+  }
+  if (r.code !== 0) {
+    const info = classifyDwsFailure(r, 'dws chat +chat-list');
+    return unavailable(Platform.DINGTALK, `钉钉会话名录不可用：${info.message}`);
+  }
+  let parsed: any;
+  try {
+    parsed = JSON.parse(r.stdout);
+  } catch {
+    return unavailable(Platform.DINGTALK, '钉钉会话名录返回了非 JSON 内容，已忽略');
+  }
+  if (parsed?.error) {
+    return unavailable(Platform.DINGTALK, `钉钉会话名录不可用：${parsed.error.message ?? '未知错误'}`);
+  }
+  const chats: any[] = Array.isArray(parsed?.chats) ? parsed.chats : [];
+  const items: DirectoryEntry[] = chats
+    .filter((c) => Boolean(c?.openConversationId))
+    .map((c) => ({
+      id: String(c.openConversationId),
+      name: String(c.name ?? '').trim() || String(c.openConversationId),
+      // 钉钉把单聊投影成 conversationType=direct
+      type: (c.conversationType === 'direct' || c.chatMode === 'p2p') ? 'p2p' : 'group',
+    }));
+  return {
+    platform: Platform.DINGTALK,
+    available: true,
+    items,
+    source: '钉钉本人账号加入的会话（群聊 + 单聊，含真实群名）',
+  };
+}
+
 /** 列出某平台可用于「发送给」的目标（带缓存，避免每次开弹窗都打平台接口） */
 export async function listDirectory(platform: Platform): Promise<DirectoryResult> {
   const hit = cache.get(platform);
@@ -76,11 +131,7 @@ export async function listDirectory(platform: Platform): Promise<DirectoryResult
   if (platform === Platform.FEISHU) {
     result = await listFeishu();
   } else if (platform === Platform.DINGTALK) {
-    // 钉钉个人事件自带会话名，会话目标仍以「已有会话」为准；不臆造通讯录
-    result = unavailable(
-      Platform.DINGTALK,
-      '钉钉目前只能发给「已有会话」：会话名来自收到的消息。按钉钉号给人发新会话需要额外授权。',
-    );
+    result = await listDingtalk();
   } else if (platform === Platform.WECOM) {
     result = unavailable(Platform.WECOM, '企业微信当前是演示模式，没有可用名录。');
   } else {

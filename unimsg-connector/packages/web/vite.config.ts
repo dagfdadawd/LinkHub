@@ -7,6 +7,10 @@ const sharedEntry = fileURLToPath(new URL('../shared/src/index.ts', import.meta.
 // LinkHub Web · Vite + Vitest 一体化配置
 export default defineConfig({
   plugins: [react()],
+  // 构建/启动时间戳：一眼判断浏览器跑的是不是最新代码（旧产物排查过很久）
+  define: {
+    __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
+  },
   resolve: {
     alias: {
       // 直接复用 monorepo 的统一消息契约
@@ -26,7 +30,9 @@ export default defineConfig({
     chunkSizeWarningLimit: 900,
     rollupOptions: {
       output: {
-        // 两层单向拆分：业务 → vendor → react-vendor，避免多层互相引用形成循环 chunk
+        // 三层单向拆分：业务 → antd（含 rc-* 底层组件）→ vendor → react-vendor。
+        // 之前 antd 与杂项全挤在 vendor 里，单文件 938 kB（gzip 297 kB），
+        // 首屏要等一整块解析完；拆出来后 vendor 只剩真正零散的依赖。
         manualChunks(id) {
           if (!id.includes('node_modules')) return undefined;
           if (
@@ -38,6 +44,14 @@ export default defineConfig({
             id.includes('@remix-run')
           ) {
             return 'react-vendor';
+          }
+          if (
+            id.includes('/antd/') ||
+            id.includes('@ant-design/') ||
+            id.includes('/rc-') ||
+            id.includes('@rc-component/')
+          ) {
+            return 'antd';
           }
           return 'vendor';
         },

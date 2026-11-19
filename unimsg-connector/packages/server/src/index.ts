@@ -2,19 +2,24 @@
  * 服务入口：装配依赖 → 创建应用 → 挂 WebSocket → 监听端口。
  */
 import http from 'node:http';
+import { readdirSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import { Platform } from '@unimsg/shared';
 import { createApp, formatListenError, parseCorsOrigins } from './app';
 import { config, modeOf } from './config';
 import { DEFAULT_DEV_TOKEN, apiTokenWarning, productionTokenBlocker, resolveApiToken } from './middlewares/auth';
 import { InMemoryRepository } from './db/repository';
 import { connectors } from './connectors/registry';
+import { ensureDwsConfigDir } from './connectors/dwsConfigDir';
 import { maskAddress } from './services/account';
 import { LlmService } from './services/llm';
 import { OcrService } from './services/ocr';
 import { RateLimiter } from './services/rateLimiter';
 import { MessageService } from './services/message';
+import { userStore } from './routes/auth';
 import { startDingtalkStream } from './stream/dingtalkStream';
 import { startFeishuStream } from './stream/feishuStream';
+import { loadUserReceiveState } from './stream/feishuUserPoller';
 import { reloadMailPoller, startMailPoller, stopMailPoller } from './stream/mailPoller';
 import { initMailAccounts } from './services/mailAccounts';
 import {
@@ -51,6 +56,31 @@ const svc = new MessageService(
 
 // 已学习到的本人 ID 落到历史数据上：把以前误当「来信」入库的本人消息改标为「我发出的」
 svc.applyLearnedSelfDirections();
+// 飞书的「本人」是轮询水位文件里的 selfOpenId（钉钉走上面那条学习链）
+{
+  const feishuSelf = loadUserReceiveState(config.identity.feishu.stateFile).state.selfOpenId;
+  if (feishuSelf) {
+    const fixed = svc.markOwnMessagesAsOut(Platform.FEISHU, [feishuSelf]);
+    if (fixed > 0) console.log(`[identity] 飞书：已纠正 ${fixed} 条本人消息的方向`);
+  }
+}
+// 历史回声：旧版本飞书没有回声抑制，自己发出的消息被当成来信存了一份 → 归到「我发出的」
+svc.repairEchoDuplicates();
+// 历史残留：旧版本把「本次发送身份」写死在消息上（会永久粘住）→ 抹掉
+svc.cleanupLegacySendIdentity();
+
+// 已有账号时，最早注册的那个默认为「机器主人」：新收的消息自动归属它（其余账号靠认领）
+const machineOwner = userStore().list()[0];
+if (machineOwner) {
+  svc.setDefaultOwner(machineOwner.id);
+  // ① 归属指向已删除账号的消息先恢复为无主（否则谁都看不见，认领也认领不到）
+  const validIds = new Set(userStore().list().map((u) => u.id));
+  const released = svc.releaseOrphanOwners(validIds);
+  if (released > 0) console.log(`[auth] ${released} 条消息的归属账号已不存在，已恢复为无主`);
+  // ② 历史消息（ownerId 为空）归机器主人：否则老用户一登录就"消息全没了"
+  const claimed = svc.claimUnowned(machineOwner.id);
+  if (claimed > 0) console.log(`[auth] 已把 ${claimed} 条历史消息归属到机器主人 ${machineOwner.displayName}`);
+}
 
 /**
  * 邮箱账号「运行时导入」初始化：
@@ -75,6 +105,9 @@ const mailAccountsStore = initMailAccounts({
 void mailAccountsStore;
 
 const corsOrigins = parseCorsOrigins(process.env.CORS_ORIGINS);
+// dws 配置目录：环境变量没设时自动探测本机已登录的目录（否则钉钉永远读不到登录态）
+ensureDwsConfigDir();
+
 const app = createApp(svc, { corsOrigins });
 const server = http.createServer(app);
 const wss = initWs(server);
@@ -134,7 +167,26 @@ server.listen(config.port, listenHost, () => {
   const store = config.dataFile ? `file-snapshot(${config.dataFile})` : 'memory';
   console.log(`[unimsg] server listening on ${listenHost ?? '0.0.0.0'}:${config.port} (store=${store})`);
   console.log(`[unimsg] 本机访问: http://${displayHost}:${config.port}`);
-  if (config.webDist) console.log(`[unimsg] 同源托管前端: ${config.webDist}`);
+  if (config.webDist) {
+    console.log(`[unimsg] 同源托管前端: ${config.webDist}`);
+    // 旧 dist 会让"改了前端却看不到变化"，之前为此排查过很久 → 启动时直接告警
+    try {
+      const distIndex = join(config.webDist, 'index.html');
+      const srcDir = join(config.webDist, '../../src');
+      const newestSrc = Math.max(
+        ...readdirSync(srcDir, { recursive: true } as never)
+          .filter((f) => /\.(tsx?|css)$/.test(String(f)))
+          .map((f) => statSync(join(srcDir, String(f))).mtimeMs),
+      );
+      const distTime = statSync(distIndex).mtimeMs;
+      if (Number.isFinite(newestSrc) && distTime < newestSrc - 60_000) {
+        console.warn('[unimsg] ⚠️ 前端构建产物比源码旧：你看到的是旧界面。');
+        console.warn(`[unimsg]    请先执行 pnpm --filter @unimsg/web build，然后强刷浏览器（Ctrl+F5）。`);
+      }
+    } catch {
+      // 目录结构不符（容器内等）时跳过检查，不影响启动
+    }
+  }
   console.log(`[unimsg] auth=Bearer ${effectiveToken === DEFAULT_DEV_TOKEN ? 'dev-token(默认/空值回退)' : '***'}`);
   const tokenWarning = apiTokenWarning(config.apiToken);
   if (tokenWarning) {

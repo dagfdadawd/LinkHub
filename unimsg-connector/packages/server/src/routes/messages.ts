@@ -1,9 +1,11 @@
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 import { Platform, MsgStatus, type IdentityRole } from '@unimsg/shared';
-import { MessageService } from '../services/message';
+import { MessageService, type Viewer } from '../services/message';
 import { listAccounts } from '../services/account';
 import { IdentityUnavailableError } from '../services/identity';
 import { config } from '../config';
+import type { AuthedRequest } from '../middlewares/auth';
+import { machineOwnerId } from '../middlewares/auth';
 import {
   InvalidOutboundRequest,
   normalizeAttachments,
@@ -21,6 +23,16 @@ function parseIdentity(raw: unknown): { value?: IdentityRole; error?: string } {
 export function messagesRouter(svc: MessageService) {
   const r = Router();
 
+  /**
+   * 当前查看者：登录用户带 userId（service 层据此做归属校验）；
+   * 部署令牌/无人登录 = undefined = 全量视图。
+   * 所有带 `:id` 的接口都必须把 viewer 一路传下去——归属校验在 service 层，不在这里。
+   */
+  const viewerOf = (req: Request): Viewer | undefined => {
+    const user = (req as AuthedRequest).user;
+    return user ? { userId: user.id } : undefined;
+  };
+
   r.get('/accounts', (_req, res) => {
     res.json({ ok: true, data: listAccounts() });
   });
@@ -28,7 +40,8 @@ export function messagesRouter(svc: MessageService) {
   // 全链路回放：消息 + 闭环日志
   r.get('/messages/trace/:traceId', (req, res) => {
     const traceId = req.params.traceId;
-    res.json({ ok: true, data: svc.getTrace(traceId), log: svc.getLoopLog(traceId) });
+    const viewer = viewerOf(req);
+    res.json({ ok: true, data: svc.getTrace(traceId, viewer), log: svc.getLoopLog(traceId, viewer) });
   });
 
   // 各平台发送能力（文本/文件、大小上限、当前通道），前端据此渲染「新建发送」表单
@@ -39,11 +52,23 @@ export function messagesRouter(svc: MessageService) {
   r.get('/messages', (req, res) => {
     const platform = typeof req.query.platform === 'string' ? (req.query.platform as Platform) : undefined;
     const status = typeof req.query.status === 'string' ? (req.query.status as MsgStatus) : undefined;
-    res.json({ ok: true, data: svc.list({ platform, status }) });
+    // 登录用户只看到自己的消息（数据隔离）；部署令牌（无人登录）看到全部
+    res.json({ ok: true, data: svc.list({ platform, status }, viewerOf(req)) });
+  });
+
+  /** 认领「未归属」的历史消息到当前账号：隔离演示的入口 */
+  r.post('/messages/claim', (req, res) => {
+    const user = (req as AuthedRequest).user;
+    if (!user) {
+      res.status(400).json({ ok: false, error: '需要先登录：认领会把历史消息归属到你的账号' });
+      return;
+    }
+    const claimed = svc.claimUnowned(user.id);
+    res.json({ ok: true, data: { claimed } });
   });
 
   r.get('/messages/:id', (req, res) => {
-    const m = svc.get(req.params.id);
+    const m = svc.get(req.params.id, viewerOf(req));
     if (!m) {
       res.status(404).json({ ok: false, error: 'not found' });
       return;
@@ -58,7 +83,7 @@ export function messagesRouter(svc: MessageService) {
    */
   r.post('/messages/:id/reanalyze', async (req, res) => {
     try {
-      const outcome = await svc.reanalyze(req.params.id);
+      const outcome = await svc.reanalyze(req.params.id, viewerOf(req));
       const rawReason = outcome.fallbackReason?.slice(0, 180);
       const message = outcome.message;
       // 三种结论分开说，别让「输入太短」被误读成 API / Key 坏了：
@@ -116,15 +141,26 @@ export function messagesRouter(svc: MessageService) {
       return;
     }
     try {
-      const ack = await svc.reply(req.params.id, text, attachments, identity);
+      // 归属校验在 service 内部完成：别人的消息直接 404，不再有「回复顺手改归属」的副作用
+      // quoteTraceId：显式引用某条消息；不传 = 普通发送（不再默认引用上一条）
+      const quoteTraceId = typeof req.body?.quoteTraceId === 'string' && req.body.quoteTraceId.trim()
+        ? req.body.quoteTraceId.trim()
+        : undefined;
+      const ack = await svc.reply(req.params.id, text, attachments, identity, viewerOf(req), quoteTraceId);
       res.status(202).json({ ok: true, ...ack });
     } catch (e) {
-      // 身份不可用是可修复的入参问题 → 400（中文可操作）；消息不存在 → 404
+      // 三种结果分开：身份不可用 → 400（可修复的入参问题）；别人的消息/不存在 → 404；
+      // 其余（探测身份的请求失败等）→ 500，别把基础设施故障说成"消息不存在"。
       if (e instanceof IdentityUnavailableError) {
         res.status(400).json({ ok: false, error: e.message });
         return;
       }
-      res.status(404).json({ ok: false, error: 'not found' });
+      const reason = e instanceof Error ? e.message : String(e);
+      if (/not found/i.test(reason)) {
+        res.status(404).json({ ok: false, error: 'not found' });
+        return;
+      }
+      res.status(500).json({ ok: false, error: `回写失败：${reason}` });
     }
   });
 
@@ -134,6 +170,14 @@ export function messagesRouter(svc: MessageService) {
    * 与 reply 走同一套闭环状态机，返回 202 + traceId，sent/synced 经 WS 推送。
    */
   r.post('/messages/compose', async (req, res) => {
+    // 机器级发送：主动发消息用的是本机已连接的真实账号，
+    // 因此只允许机器主人调用（普通成员不能借主人的飞书/钉钉/邮箱发信）。
+    const caller = (req as AuthedRequest).user;
+    const ownerId = machineOwnerId(svc);
+    if (caller && ownerId && caller.id !== ownerId) {
+      res.status(403).json({ ok: false, error: '只有机器主人可以主动发起发送；请让主人账号操作' });
+      return;
+    }
     let request;
     try {
       request = normalizeCompose(req.body);
@@ -144,6 +188,9 @@ export function messagesRouter(svc: MessageService) {
     }
     try {
       const ack = await svc.compose(request);
+      // 主动发送的消息同样归属当前账号
+      const user = (req as AuthedRequest).user;
+      if (user) svc.assignOwner(ack.taskId, user.id);
       res.status(202).json({ ok: true, ...ack });
     } catch (e) {
       // 缺少目标会话属于可修复的入参问题，回 400 并带可操作提示；其余按 500 处理
@@ -154,7 +201,7 @@ export function messagesRouter(svc: MessageService) {
 
   r.post('/messages/:id/done', async (req, res) => {
     try {
-      await svc.markDone(req.params.id);
+      await svc.markDone(req.params.id, viewerOf(req));
       res.json({ ok: true });
     } catch {
       res.status(404).json({ ok: false, error: 'not found' });
@@ -164,7 +211,7 @@ export function messagesRouter(svc: MessageService) {
   // 手动加入待办：普通消息也可转成待办（幂等），不改业务状态、不触发平台回写
   r.post('/messages/:id/todo', async (req, res) => {
     try {
-      const message = await svc.markTodo(req.params.id);
+      const message = await svc.markTodo(req.params.id, viewerOf(req));
       res.json({ ok: true, data: message });
     } catch {
       res.status(404).json({ ok: false, error: 'not found' });
@@ -180,7 +227,7 @@ export function messagesRouter(svc: MessageService) {
       // ids 可选：前端只想标记「当前筛选范围内」的未读时传入
       const raw = (req.body ?? {}) as { ids?: unknown };
       const ids = Array.isArray(raw.ids) ? raw.ids.filter((v): v is string => typeof v === 'string') : undefined;
-      const changed = await svc.markAllRead(ids);
+      const changed = await svc.markAllRead(ids, viewerOf(req));
       res.json({ ok: true, changed });
     } catch {
       res.status(500).json({ ok: false, error: 'mark all read failed' });
@@ -189,7 +236,7 @@ export function messagesRouter(svc: MessageService) {
 
   r.post('/messages/:id/read', async (req, res) => {
     try {
-      const message = await svc.markRead(req.params.id, true);
+      const message = await svc.markRead(req.params.id, true, viewerOf(req));
       res.json({ ok: true, data: message });
     } catch {
       res.status(404).json({ ok: false, error: 'not found' });
@@ -198,7 +245,7 @@ export function messagesRouter(svc: MessageService) {
 
   r.post('/messages/:id/unread', async (req, res) => {
     try {
-      const message = await svc.markRead(req.params.id, false);
+      const message = await svc.markRead(req.params.id, false, viewerOf(req));
       res.json({ ok: true, data: message });
     } catch {
       res.status(404).json({ ok: false, error: 'not found' });

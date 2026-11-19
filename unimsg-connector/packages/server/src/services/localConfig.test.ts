@@ -4,8 +4,7 @@
  */
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   LOCAL_CONFIG_FALLBACK_NAME,
@@ -22,10 +21,11 @@ import {
   sanitizeLocalConfig,
   writeLocalConfigFile,
 } from './localConfig';
+import { makeTempDir } from '../utils/tempDir';
 
 const dirs: string[] = [];
 function tempDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'linkhub-local-config-'));
+  const dir = makeTempDir('linkhub-local-config-');
   dirs.push(dir);
   return dir;
 }

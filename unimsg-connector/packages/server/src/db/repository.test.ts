@@ -3,11 +3,11 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Platform, MsgStatus } from '@unimsg/shared';
 import { InMemoryRepository } from './repository';
+import { makeTempDir } from '../utils/tempDir';
 
 function message(traceId: string): Parameters<InMemoryRepository['save']>[0] {
   const now = new Date().toISOString();
@@ -31,7 +31,7 @@ test('纯内存模式（默认）不产生任何文件副作用', () => {
 });
 
 test('快照：消息 / trace / DLQ / 幂等表重启后完整恢复', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'linkhub-repo-'));
+  const dir = makeTempDir('linkhub-repo-');
   const file = join(dir, 'state.json');
   try {
     const a = new InMemoryRepository(file);
@@ -56,7 +56,7 @@ test('快照：消息 / trace / DLQ / 幂等表重启后完整恢复', () => {
 });
 
 test('快照损坏时不阻断启动，退回空状态', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'linkhub-repo-'));
+  const dir = makeTempDir('linkhub-repo-');
   const file = join(dir, 'state.json');
   try {
     writeFileSync(file, '{ broken json', 'utf8');

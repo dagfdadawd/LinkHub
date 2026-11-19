@@ -340,17 +340,38 @@ test('ingestUnified：个人身份接收器与 ingest 共用幂等/trace 链路�
   );
 });
 
-test('reply 指定 identity：写入 sendIdentity 并在 processing trace 里如实标注', async () => {
-  const { svc, repo } = makeSvc();
+test('reply 指定 identity：只对本次发送生效，绝不写回消息（否则会永久粘住身份）', async () => {
+  const repo = new InMemoryRepository();
+  const seen: Array<string | undefined> = [];
+  const spyConnectors = {
+    ...connectors,
+    [Platform.FEISHU]: {
+      ...connectors[Platform.FEISHU],
+      send: async (msg: { sendIdentity?: string }) => {
+        seen.push(msg.sendIdentity);
+        return { ok: true as const, mode: 'mock' as const };
+      },
+    },
+  };
+  const svc = new MessageService(
+    repo, spyConnectors, new LlmService(), new OcrService(), new RateLimiter(3, 5), () => {},
+  );
   const { message } = await svc.ingest(Platform.FEISHU, feishuSample);
+
   const ack = await svc.reply(message.traceId, '收到', [], 'bot');
-  assert.equal(ack.message.sendIdentity, 'bot');
+  assert.equal(ack.message.sendIdentity, undefined, '请求里的身份不能写进消息');
   await wait();
-  const saved = repo.get(message.traceId)!;
-  assert.equal(saved.sendIdentity, 'bot');
+  assert.deepEqual(seen, ['bot'], '本次发送必须按指定身份发出');
+  assert.equal(repo.get(message.traceId)!.sendIdentity, undefined, '发完也不能留在消息上');
+
   const processing = repo.getLoopLog(message.traceId).find((e) => e.event === 'processing');
   assert.match(processing?.detail ?? '', /指定发送身份=机器人/);
   assert.ok(!(processing?.detail ?? '').endsWith('，'), '不得有尾逗号');
+
+  // 第二次回复不再指定身份 → 交还平台策略（undefined），不会被上一次的选择带走
+  await svc.reply(message.traceId, '第二条');
+  await wait();
+  assert.deepEqual(seen, ['bot', undefined], '上一次选的身份不能粘到下一次发送');
 });
 
 

@@ -379,6 +379,38 @@ describe('HttpApi', () => {
     await expect(api.list()).rejects.toMatchObject({ name: 'ApiError', status: 401 });
   });
 
+  it('登录接口的 401 透出后端原话，不清掉已有会话（旧口令错不该被踢下线）', async () => {
+    const { setSession, resetSessionForTest } = await import('./session');
+    resetSessionForTest();
+    setSession({
+      token: 'old-session',
+      user: { id: 'u1', username: 'zhang', displayName: '张三', createdAt: '2026-01-01' },
+    });
+    mockFetch(jsonResponse({ ok: false, error: '用户名或口令不正确' }, 401));
+    const api = new HttpApi(BASE, TOKEN);
+
+    await expect(api.login({ username: 'zhang', password: 'wrong' })).rejects.toThrow('用户名或口令不正确');
+    // 会话没有被清掉（登录失败的 401 不是"会话过期"）
+    const session = await import('./session');
+    expect(session.getSession()?.token).toBe('old-session');
+    resetSessionForTest();
+  });
+
+  it('改口令的 401 透出“原口令不正确”，且不触发本地登出', async () => {
+    const session = await import('./session');
+    session.resetSessionForTest();
+    session.setSession({
+      token: 'live-session',
+      user: { id: 'u1', username: 'zhang', displayName: '张三', createdAt: '2026-01-01' },
+    });
+    mockFetch(jsonResponse({ ok: false, error: '原口令不正确' }, 401));
+    const api = new HttpApi(BASE, TOKEN);
+
+    await expect(api.changePassword({ oldPassword: 'nope', newPassword: 'newpass123' })).rejects.toThrow('原口令不正确');
+    expect(session.getSession()?.token).toBe('live-session');
+    session.resetSessionForTest();
+  });
+
   it('网络异常映射为 ApiError（status=0）', async () => {
     const fn = vi.fn().mockRejectedValueOnce(new TypeError('fetch failed'));
     vi.stubGlobal('fetch', fn);

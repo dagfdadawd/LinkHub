@@ -6,7 +6,7 @@
  *  - 后续：HttpApi（对接 packages/server 的 REST/WS），页面代码零改动
  */
 import type {
-  ComposeAck, ComposeRequest, DeliveryMode, OutboundAttachment, PlatformIdentityView,
+  ComposeAck, ComposeRequest, DeliveryMode, IdentityRole, OutboundAttachment, PlatformIdentityView,
   SendCapabilities, UserIdentityStatus,
 } from '@unimsg/shared';
 import type { MsgType, TraceEntry, UnifiedMessage } from '../types';
@@ -24,6 +24,41 @@ export interface MessageFilter {
 export interface ReplyAck {
   message: UnifiedMessage;
   taskId: string;
+}
+
+/** 账号体系：注册/登录后返回的公开用户信息（不含口令哈希/盐） */
+export interface PublicUser {
+  id: string;
+  username: string;
+  displayName: string;
+  createdAt: string;
+  /** 最近一次登录时间（登录审计；从未登录 = undefined） */
+  lastLoginAt?: string;
+  /** 最近一次登录来源 IP */
+  lastLoginIp?: string;
+}
+
+/**
+ * 登录态与策略（GET /api/auth/status）。
+ *
+ * - `requireLogin`：本机是否要求先登录。只有它为 true 且本地没有会话时才把用户挡到登录页；
+ *   纯前端 Mock / 旧后端一律 false，保证「零账号演示」不被登录页挡住。
+ * - `machineOwner`：平台连接是机器级的，收进来的消息默认归属这位账号（可能为 null = 还没人认领）。
+ */
+export interface AuthStatus {
+  requireLogin: boolean;
+  hasUsers: boolean;
+  /**
+   * 自助注册策略（旧后端不返回 = 按开放处理，保持零改动）：
+   * `open=false` 时注册入口应置灰并显示 `reason`；`requireCode=true` 时需要填邀请码。
+   */
+  registration?: {
+    open: boolean;
+    requireCode: boolean;
+    reason?: string;
+  };
+  machineOwner: { id: string; displayName: string } | null;
+  user: PublicUser | null;
 }
 
 /**
@@ -116,6 +151,17 @@ export interface DingtalkPersonalStatus {
   authenticated: boolean;
   /** 与 UserIdentityStatus.state 同枚举，可直接映射 */
   state?: UserIdentityStatus['state'];
+  /** 钉钉访问令牌到期时间（ISO） */
+  tokenExpiresAt?: string;
+  /** 刷新令牌到期时间（ISO） */
+  refreshExpiresAt?: string;
+  /** 距离访问令牌到期还有多少秒（后端算好，避免本机时钟偏差） */
+  tokenExpiresInSec?: number;
+  /** 当前登录的钉钉用户名 / 企业名 */
+  userName?: string;
+  corpName?: string;
+  tokenValid?: boolean;
+  refreshTokenValid?: boolean;
   displayName?: string;
   detail?: string;
   /** 当前状态 + 下一步（中文、可操作） */
@@ -414,7 +460,15 @@ export interface MessageApi {
   list(filter?: MessageFilter): Promise<UnifiedMessage[]>;
   get(id: string): Promise<UnifiedMessage | undefined>;
   /** 文本与附件可同时发送（赛题 A 功能需求 3） */
-  reply(id: string, text: string, attachments?: OutboundAttachment[]): Promise<ReplyAck>;
+  reply(
+    id: string,
+    text: string,
+    attachments?: OutboundAttachment[],
+    /** 本次回写的身份：bot=机器人 / user=本人；不传 = 跟随后端平台策略 */
+    identity?: IdentityRole,
+    /** 显式引用某条消息（右键「回复」时传入）；不传 = 普通发送，不带引用条 */
+    quoteTraceId?: string,
+  ): Promise<ReplyAck>;
   /** 从统一入口主动向指定平台/会话发送，不依赖先收到消息 */
   compose(req: ComposeRequest): Promise<ComposeAck>;
   /** 用当前 AI 配置重新分析这条消息（真实后端会调模型，Mock 走本地规则） */
@@ -426,6 +480,27 @@ export interface MessageApi {
    * 前端据此退回「只列已有会话」，不影响发送。
    */
   contacts(platform: Platform): Promise<ContactDirectory>;
+  /** 注册：成功后直接拿到会话令牌（后端同时登录）+ 一次性恢复码 */
+  register(input: { username: string; password: string; displayName?: string; signupCode?: string }): Promise<{ user: PublicUser; token: string; recoveryCode: string }>;
+  /** 登录：返回会话令牌 + 公开用户信息 */
+  login(input: { username: string; password: string }): Promise<{ user: PublicUser; token: string }>;
+  /** 登出：服务端作废会话令牌（失败不阻塞前端清理本地状态） */
+  logout(): Promise<void>;
+  /** 用当前令牌换当前用户；未登录/过期返回 undefined */
+  me(): Promise<PublicUser | undefined>;
+  /**
+   * 公开的登录态/策略：`requireLogin` 决定前端要不要先跳登录页。
+   * 旧后端 / 纯 Mock 没有这个概念时返回 requireLogin=false（不破坏单机演示）。
+   */
+  authStatus(): Promise<AuthStatus>;
+  /** 修改口令：成功后该账号全部会话作废，需重新登录 */
+  changePassword(input: { oldPassword: string; newPassword: string }): Promise<{ revoked: number }>;
+  /** 退出所有设备：作废该账号全部会话，返回条数 */
+  logoutAll(): Promise<{ revoked: number }>;
+  /** 认领「未归属」的历史消息到当前账号，返回认领条数（数据隔离演示入口） */
+  claimMessages(): Promise<{ claimed: number }>;
+  /** 忘记口令：用注册时发的恢复码重置，无需旧口令；成功后返回新恢复码 */
+  resetPassword(input: { username: string; recoveryCode: string; newPassword: string }): Promise<{ revoked: number; recoveryCode?: string }>;
   /** 发起飞书用户身份授权，返回需要打开的飞书授权页 URL */
   feishuOAuthStart(): Promise<FeishuOAuthStart>;
   /**

@@ -98,6 +98,33 @@ function bool(v: string | undefined, def = false): boolean {
   return v ? v === 'true' || v === '1' : def;
 }
 
+export type AuthLoginMode = 'auto' | 'on' | 'off';
+
+/**
+ * `AUTH_REQUIRE_LOGIN` 三态解析：
+ *  - `true/1/yes` → on；`false/0/no` → off；缺省或 `auto` → auto（有账号就要求登录）。
+ * 非法值按 auto 处理，不静默变成"永久关闭鉴权"。
+ */
+function parseAuthMode(raw: string | undefined): AuthLoginMode {
+  const v = (raw ?? '').trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(v)) return 'on';
+  if (['0', 'false', 'no', 'off'].includes(v)) return 'off';
+  return 'auto';
+}
+
+export type RegistrationMode = 'auto' | 'open' | 'closed';
+
+/**
+ * `AUTH_REGISTRATION` 解析：非法值一律回退 auto（安全默认），
+ * 不会因为拼错就静默变成"永久开放注册"。
+ */
+function parseRegistrationMode(raw: string | undefined): RegistrationMode {
+  const v = (raw ?? '').trim().toLowerCase();
+  if (['open', 'on', 'true', '1', 'yes'].includes(v)) return 'open';
+  if (['closed', 'off', 'false', '0', 'no'].includes(v)) return 'closed';
+  return 'auto';
+}
+
 /**
  * Node 测试运行器会给子进程注入 NODE_TEST_CONTEXT：
  * 单测里默认把所有平台锁成 mock（绝不外呼、不打真实接口），
@@ -188,6 +215,21 @@ export const config = {
   dataFile: explicitDataFile || (dataDir ? join(dataDir, 'linkhub-state.json') : ''),
 
   /**
+   * 本地账号库（注册/登录/会话）落盘位置。
+   * 默认 unimsg-connector/.linkhub-users.json（已 gitignore）；设了 DATA_DIR 时进数据目录。
+   * 单测（underTest）下为空串 = 纯内存，绝不写开发机上的真实账号库。
+   */
+  usersFile: underTest
+    ? ''
+    : ((process.env.USERS_FILE ?? '').trim()
+      ? (isAbsolute((process.env.USERS_FILE ?? '').trim())
+        ? (process.env.USERS_FILE ?? '').trim()
+        : resolve(here, '../../../', (process.env.USERS_FILE ?? '').trim()))
+      : dataDir
+        ? join(dataDir, 'users.json')
+        : resolve(here, '../../../.linkhub-users.json')),
+
+  /**
    * 请求体上限（MB）：base64 附件约为原始大小的 4/3。
    * 默认 64MB 对应「单文件 20MB / 总计 40MB」的 FILE_LIMITS，留足 JSON 包装余量。
    */
@@ -201,6 +243,31 @@ export const config = {
 
   // 入口鉴权令牌（服务端私有；前端登录后携带 Bearer）。未配置时用 dev-token 便于本地演示。
   apiToken,
+
+  /**
+   * 是否强制登录（决定部署级 API_TOKEN 还能不能调业务接口）。
+   *
+   * `AUTH_REQUIRE_LOGIN` 三态：`true` = 始终要求；`false` = 永不要求；缺省 = `auto`。
+   * `auto` 的语义：**本机一旦建了账号就要求登录**——否则 dev-token 可以绕过数据隔离；
+   * 还没建账号时保持零配置可演示。单测（usersFile 为空 = 纯内存账号库）不参与 auto。
+   */
+  authRequireLoginMode: parseAuthMode(process.env.AUTH_REQUIRE_LOGIN),
+
+  /** 兼容旧字段：仅当显式 `AUTH_REQUIRE_LOGIN=true` 才为 true；要不要拦部署令牌请用 loginRequired() */
+  authRequireLogin: parseAuthMode(process.env.AUTH_REQUIRE_LOGIN) === 'on',
+
+  /**
+   * 注册准入（`AUTH_REGISTRATION` 三态，默认 auto）：
+   *  - auto：本机没有账号时可自助注册第一个账号；之后默认关闭注册，
+   *          若设置了 `AUTH_SIGNUP_CODE` 则凭邀请码仍可添加成员；
+   *  - open：始终允许自助注册（旧行为，仅推荐本机演示）；
+   *  - closed：始终关闭注册（已有账号只能由运维改账号库）。
+   * 单测（usersFile 为空 = 纯内存账号库）不参与限制。
+   */
+  authRegistrationMode: parseRegistrationMode(process.env.AUTH_REGISTRATION),
+
+  /** 邀请码：设置后，本机已有账号时的注册必须带上它 */
+  authSignupCode: (process.env.AUTH_SIGNUP_CODE ?? '').trim(),
 
   /** 钉钉 Stream 长连接（免公网回调），开启后额外订阅机器人消息 */
   dingtalkStream: platforms.dingtalk.stream,

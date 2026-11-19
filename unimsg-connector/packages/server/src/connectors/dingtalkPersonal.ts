@@ -145,6 +145,16 @@ export interface DwsAuthStatus {
   checkedAt: number;
   /** 探测失败原因（超时/JSON 解析失败等），authenticated=false 时一并给出 */
   error?: string;
+  /** 访问令牌到期时间（ISO）；前端据此显示倒计时 */
+  expiresAt?: string;
+  /** 刷新令牌到期时间（ISO） */
+  refreshExpiresAt?: string;
+  /** 当前登录的钉钉用户名 / 企业名 */
+  userName?: string;
+  corpName?: string;
+  /** 令牌是否仍然有效（dws 自报） */
+  tokenValid?: boolean;
+  refreshTokenValid?: boolean;
 }
 
 export interface DwsProfile {
@@ -468,6 +478,14 @@ export function parseAuthStatusJson(stdout: string, stderr = ''): {
   authenticated: boolean;
   message?: string;
   version?: string;
+  /** 访问令牌到期时间（dws 的 expires_at） */
+  expiresAt?: string;
+  /** 刷新令牌到期时间（refresh_expires_at） */
+  refreshExpiresAt?: string;
+  userName?: string;
+  corpName?: string;
+  tokenValid?: boolean;
+  refreshTokenValid?: boolean;
 } {
   const text = stdout.trim();
   const json = tryParseJson(text);
@@ -479,7 +497,25 @@ export function parseAuthStatusJson(stdout: string, stderr = ''): {
       ? versionCheck.current.trim()
       : undefined;
     const message = typeof r.message === 'string' && r.message.trim() ? r.message.trim() : undefined;
-    return { authenticated, ...(message ? { message } : {}), ...(version ? { version } : {}) };
+    const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
+    const bool = (v: unknown) => (typeof v === 'boolean' ? v : undefined);
+    const expiresAt = str(r.expires_at ?? r.expiresAt);
+    const refreshExpiresAt = str(r.refresh_expires_at ?? r.refreshExpiresAt);
+    const userName = str(r.user_name ?? r.userName);
+    const corpName = str(r.corp_name ?? r.corpName);
+    const tokenValid = bool(r.token_valid ?? r.tokenValid);
+    const refreshTokenValid = bool(r.refresh_token_valid ?? r.refreshTokenValid);
+    return {
+      authenticated,
+      ...(message ? { message } : {}),
+      ...(version ? { version } : {}),
+      ...(expiresAt ? { expiresAt } : {}),
+      ...(refreshExpiresAt ? { refreshExpiresAt } : {}),
+      ...(userName ? { userName } : {}),
+      ...(corpName ? { corpName } : {}),
+      ...(tokenValid !== undefined ? { tokenValid } : {}),
+      ...(refreshTokenValid !== undefined ? { refreshTokenValid } : {}),
+    };
   }
   // 非 JSON 兜底：dws 某些子命令/版本会输出纯文本
   const authenticated = /已登录|logged in|authenticated:\s*true/i.test(text)
@@ -1558,12 +1594,18 @@ export class DingtalkPersonalClient {
       { code: session.exitCode ?? 1, stdout: session.output.out, stderr: session.output.err },
       `${this.commandLabel()} auth login`,
     );
+    // dws 配置目录不可写（~/.dws/.data.lock 被拒）时给可执行的修复方向
+    const lockHint = /data\.lock|Access is denied|permission denied/i.test(info.message)
+      ? '（原因看起来是 dws 配置目录不可写：先删掉 %USERPROFILE%\.dws\.data.lock，'
+        + '或在启动前设置 DWS_CONFIG_DIR 指向一个可写目录，再重试登录）'
+      : '';
+
     return {
       started: false,
       mode: session.mode,
       command: session.command,
       instructions: `登录未能自动启动（${info.kind === 'not-logged-in' ? '需要你本人授权' : info.kind === 'permission' ? '企业侧未开启 CLI 访问' : 'dws 返回错误'}）：`
-        + `${info.message} 也可在本机终端手动执行 ${this.loginCommand()}。`,
+        + `${info.message}${lockHint} 也可在本机终端手动执行 ${this.loginCommand()}。`,
       ...hints,
     };
   }
@@ -1628,6 +1670,12 @@ export class DingtalkPersonalClient {
       checkedAt,
       ...(parsed.message ? { message: parsed.message } : {}),
       ...(version ? { version } : {}),
+      ...(parsed.expiresAt ? { expiresAt: parsed.expiresAt } : {}),
+      ...(parsed.refreshExpiresAt ? { refreshExpiresAt: parsed.refreshExpiresAt } : {}),
+      ...(parsed.userName ? { userName: parsed.userName } : {}),
+      ...(parsed.corpName ? { corpName: parsed.corpName } : {}),
+      ...(parsed.tokenValid !== undefined ? { tokenValid: parsed.tokenValid } : {}),
+      ...(parsed.refreshTokenValid !== undefined ? { refreshTokenValid: parsed.refreshTokenValid } : {}),
     };
     this.statusCache = status;
     return status;

@@ -4,14 +4,14 @@
  */
 import { test, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { Platform, MsgStatus, type OutboundAttachment } from '@unimsg/shared';
 import { config, forceAllModes } from '../config';
 import { feishuConnector, resetFeishuEchoRegistry } from './feishu';
 import { resetFeishuUserAuthCache } from './feishuUserAuth';
 import { resetTokenCache } from './real';
+import { makeTempDir } from '../utils/tempDir';
 
 const origFetch = globalThis.fetch;
 const dirs: string[] = [];
@@ -44,7 +44,7 @@ function stubFetch(replies: unknown[]): Call[] {
 }
 
 function tempTokenFile(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'linkhub-feishu-send-'));
+  const dir = makeTempDir('linkhub-feishu-send-');
   dirs.push(dir);
   return join(dir, 'token.json');
 }

@@ -2,6 +2,7 @@ import { EmitterRealtime } from '../services/realtime';
 import { MockApi } from '../services/mock/mockApi';
 import { HttpApi } from '../services/httpApi';
 import { WsRealtime } from '../services/wsRealtime';
+import { currentToken } from '../services/session';
 import { AppStore } from './appStore';
 import type { MessageApi } from '../services/api';
 import type { RealtimeClient } from '../services/realtime';
@@ -33,8 +34,9 @@ function buildWsUrl(base: string, token: string): string {
 function createServices(): { api: MessageApi; realtime: RealtimeClient } {
   if (useRealBackend) {
     const httpBase = rawBase.replace(/\/+$/, ''); // '' → 相对路径 /api/*（同源）
-    const realtime = new WsRealtime(buildWsUrl(rawBase, apiToken));
-    return { api: new HttpApi(httpBase, apiToken), realtime };
+    const realtime = new WsRealtime(() => buildWsUrl(rawBase, currentToken(apiToken)));
+    // 会话令牌优先（登录后），未登录回退部署令牌（单机演示 / 旧部署零改动）
+    return { api: new HttpApi(httpBase, () => currentToken(apiToken)), realtime };
   }
   const realtime = new EmitterRealtime();
   const api = new MockApi(realtime, {

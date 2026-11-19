@@ -18,6 +18,8 @@ export interface RealtimeClient {
   subscribeStatus(listener: (status: RealtimeStatus) => void): () => void;
   getStatus(): RealtimeStatus;
   close(): void;
+  /** 登录态变化后强制用当前令牌重连（Mock 客户端不需要，故为可选） */
+  reconnectNow?: () => void;
 }
 
 /** 可手动 emit 的客户端：Mock 服务用它模拟服务端推送 */

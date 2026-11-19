@@ -10,8 +10,7 @@ import { test, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import express from 'express';
 import { config, monorepoRoot } from '../config';
@@ -22,6 +21,7 @@ import {
   readLocalConfig,
   resetRestartBaselineForTests,
 } from '../services/localConfig';
+import { makeTempDir } from '../utils/tempDir';
 
 const dirs: string[] = [];
 /**
@@ -69,7 +69,7 @@ const original = {
 };
 
 function tempDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'linkhub-app-config-'));
+  const dir = makeTempDir('linkhub-app-config-');
   dirs.push(dir);
   return dir;
 }

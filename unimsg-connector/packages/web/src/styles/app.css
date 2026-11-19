@@ -9,8 +9,27 @@
   /* 语义色 —— Apple：浅灰桌面 + 白卡片 + 系统蓝 */
   /* 主色只做三件事：选中 / 主操作 / 链接；大面积一律交给 --brand-soft */
   --brand: #007aff;
+  --brand-hover: #0068d9;
+  --on-brand: #ffffff;
   --brand-soft: #eaf3ff;
   --brand-line: #d6e6fb;
+
+  /* 登录 / 注册页专用强调色（#1677ff），不覆盖 --brand，避免影响工作台 */
+  --auth-accent: #1677ff;
+  --auth-accent-hover: #4096ff;
+  --auth-accent-active: #0958d9;
+  --auth-accent-soft: #eff6ff;
+  --auth-accent-border: #dbeafe;
+  --auth-accent-ink: #0958d9;
+  --auth-track: #f3f6fb;
+  --auth-input-border: #e3e8ef;
+  --auth-input-border-hover: #c7d4e6;
+  --auth-card-border: #eaeef4;
+  --auth-label: #475467;
+  --auth-muted: #98a2b3;
+  --auth-shadow:
+    0 1px 2px rgb(16 24 40 / 4%),
+    0 24px 60px -24px rgb(16 24 40 / 18%);
   --copper: #ff9500;
   --copper-soft: #fff4e5;
 
@@ -42,9 +61,9 @@
   --danger: #d70015;
   --danger-soft: #fdecee;
 
-  /* 主操作按钮：低饱和雾蓝灰（不用高饱和品牌蓝做大色块） */
-  --send: #4f6070;
-  --send-hover: #445465;
+  /* 主操作按钮：与顶栏「新建发送」统一为品牌蓝（主操作只此一种颜色） */
+  --send: #007aff;
+  --send-hover: #0068d9;
   --send-ink: #ffffff;
   /* 弹层遮罩：唯一一个纯黑半透明，集中一处便于整体调浓淡 */
   --scrim: color-mix(in srgb, #000 26%, transparent);
@@ -54,12 +73,9 @@
 
   /* 发送按钮状态色：未回写 = 明亮品牌蓝；回写成功 = 沉静深石墨。
      由 .ripple-btn--ready / --sent 局部重绑 --send*，波纹与 spinner 自动跟随。 */
-  --send-ready: #0071e3;
-  --send-ready-hover: #0058b0;
+  --send-ready: #007aff;
+  --send-ready-hover: #0068d9;
   --send-ready-ink: #ffffff;
-  --send-sent: #3a4450;
-  --send-sent-hover: #2c3540;
-  --send-sent-ink: #ffffff;
 
   /* 形状与层级：软角、细边、极轻阴影（无发光）
      圆角尺阶：6 小控件 / 8 控件 / 10 按钮 / 12 输入 / 14 气泡 / 16 卡片 /
@@ -140,8 +156,27 @@
 
 [data-theme='dark'] {
   --brand: #0a84ff;
+  --brand-hover: #0a6fd8;
+  --on-brand: #ffffff;
   --brand-soft: #0a2540;
   --brand-line: #173a5e;
+
+  /* 登录 / 注册页强调色（暗色下提亮，保证对比度） */
+  --auth-accent: #3b8cff;
+  --auth-accent-hover: #69a8ff;
+  --auth-accent-active: #1677ff;
+  --auth-accent-soft: #0c1c33;
+  --auth-accent-border: #1c3a5e;
+  --auth-accent-ink: #8ec2ff;
+  --auth-track: #1c1c1e;
+  --auth-input-border: #3a3a3c;
+  --auth-input-border-hover: #4d4d50;
+  --auth-card-border: #2c2c2e;
+  --auth-label: #c7c7cc;
+  --auth-muted: #8e8e93;
+  --auth-shadow:
+    0 1px 2px rgb(0 0 0 / 50%),
+    0 24px 60px -24px rgb(0 0 0 / 70%);
   --copper: #ff9f0a;
   --copper-soft: #2a1d0a;
 
@@ -168,18 +203,15 @@
   --danger: #ff453a;
   --danger-soft: #2b1315;
 
-  --send: #8ea2b2;
-  --send-hover: #9db1c0;
-  --send-ink: #0b1014;
+  --send: #0a84ff;
+  --send-hover: #3d9bff;
+  --send-ink: #ffffff;
   --send-wave: rgba(255, 255, 255, 0.5);
 
-  /* 暗色主题：亮蓝配深墨字才保得住对比度；「暗」态沉到接近容器的石墨灰 */
+  /* 暗色主题：主操作同样走亮蓝，白字保对比度；「已发送」态沉到石墨灰 */
   --send-ready: #0a84ff;
   --send-ready-hover: #3d9bff;
-  --send-ready-ink: #04182b;
-  --send-sent: #3a3a3c;
-  --send-sent-hover: #48484a;
-  --send-sent-ink: #f5f5f7;
+  --send-ready-ink: #ffffff;
 
   /* 工作台语义色（暗色）：气泡保持「对方深、自己蓝」的相对关系，
      AI 面板比聊天底再亮一档，避免整屏糊成一片 */
@@ -458,8 +490,8 @@ button {
   padding: 0 13px;
   border: 0;
   border-radius: var(--r-8);
-  background: var(--send);
-  color: var(--send-ink);
+  background: var(--brand);
+  color: var(--on-brand);
   font-family: inherit;
   font-size: 0.8125rem;
   font-weight: 500;
@@ -470,7 +502,7 @@ button {
 }
 
 .cmdbar__compose:hover {
-  background: var(--send-hover);
+  background: var(--brand-hover);
 }
 
 .cmdbar__compose:active {
@@ -1678,6 +1710,9 @@ button {
   white-space: nowrap;
   background: var(--tag-soft);
   color: var(--tag-ink);
+  /* 回写会把状态连跳 3 次（processing→replied→sent→synced），
+     颜色直接跳变看起来像在闪，这里做一次短过渡 */
+  transition: background-color 200ms ease, color 200ms ease;
 }
 
 .status-badge--small {
@@ -2187,10 +2222,12 @@ button {
   --send-ink: var(--send-ready-ink);
 }
 
+/* 已回写态：颜色与可发送态统一为品牌蓝（之前是石墨灰，看起来像禁用）；
+   状态差异由 data-send-state 与文案承担，不再靠"变灰"表达 */
 .ripple-btn--sent {
-  --send: var(--send-sent);
-  --send-hover: var(--send-sent-hover);
-  --send-ink: var(--send-sent-ink);
+  --send: var(--brand);
+  --send-hover: var(--brand-hover);
+  --send-ink: var(--on-brand);
 }
 
 .ripple-btn--solid {
@@ -3648,13 +3685,13 @@ button {
 
 .ant-btn.settings__save,
 .ant-btn.settings__save:hover {
-  background: var(--send);
-  color: var(--send-ink) !important;
-  box-shadow: 0 1px 2px rgba(17, 17, 19, 0.05), 0 10px 26px -18px rgba(79, 96, 112, 0.9);
+  background: var(--brand);
+  color: var(--on-brand) !important;
+  box-shadow: 0 1px 2px rgba(17, 17, 19, 0.05), 0 10px 26px -18px color-mix(in srgb, var(--brand) 85%, transparent);
 }
 
 .ant-btn.settings__save:hover:not(:disabled) {
-  background: var(--send-hover);
+  background: var(--brand-hover);
 }
 
 /* 设置弹窗：左侧分栏导航 + 右侧表单行 */
@@ -7352,6 +7389,42 @@ html.vt-morph .detail {
   gap: 10px;
 }
 
+/**
+ * 「发送中」气泡入场：淡入 + 轻微上浮，让"点发送 → 气泡出现"有一个落点。
+ *
+ * 只给**发送中**这一枚做动画，不给服务端确认后的气泡做：
+ * 两枚是同一位置的替换，如果都做入场，确认时会出现"淡出→再淡入"的闪烁。
+ * 现在确认只是同一位置换成「身份 + 时间」，高度一致，观感是原地"落定"。
+ */
+@keyframes bubble-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.bubble-row--pending {
+  animation: bubble-in 170ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bubble-row--pending {
+    animation: none;
+  }
+
+  .chat-scroll {
+    scroll-behavior: auto;
+  }
+
+  .status-badge {
+    transition: none;
+  }
+}
+
 .bubble-row--out {
   justify-content: flex-end;
 }
@@ -7405,6 +7478,9 @@ html.vt-morph .detail {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+  /* 固定高度：发送中气泡只写「发送中…」，确认后换成「身份 + 时间」，
+     不占位的话替换瞬间整行会抖一下 */
+  min-height: 18px;
   padding: 0 4px;
   font-size: 0.6875rem;
   color: var(--text-3);
@@ -8904,4 +8980,1202 @@ html.vt-morph .detail {
   font-size: 0.95em;
   display: grid;
   place-items: center;
+}
+
+/* ============================================================
+   登录 / 注册页 · SaaS 卡片
+   只作用于 .auth-page，不改工作台任何样式。
+   强调色单独成令牌（--auth-accent），不覆盖全局 --brand，避免影响其它页面。
+   （色值令牌集中在 :root / [data-theme='dark']，与全站约定一致）
+   ============================================================ */
+.auth-page {
+  /* 全局 html/body/#root 是 overflow:hidden，这里必须自己可滚动，
+     否则卡片一旦高于视口，底部按钮就永远够不到 */
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: clamp(16px, 4vh, 36px) 20px;
+  background: var(--bg);
+  font-family: var(--font-sans);
+}
+
+/* 登录守卫的「检查登录状态」占位：只在这几十毫秒里出现，避免先闪一下空收件箱 */
+.auth-gate {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  gap: 12px;
+  background: var(--bg);
+  color: var(--text-3);
+}
+
+.auth-gate__text {
+  font-size: 0.8125rem;
+}
+
+.auth-card {
+  width: min(440px, 100%);
+  margin: auto;
+  padding: 24px 28px 18px;
+  border-radius: var(--r-22);
+  background: var(--surface);
+  border: 1px solid var(--auth-card-border);
+  box-shadow: var(--auth-shadow);
+}
+
+/* 登录 / 重置 / 恢复码：比注册页更舒展，避免卡片显得又扁又宽。
+   注册页字段多，继续走上面的紧凑基准。 */
+.auth-card--roomy {
+  padding: 32px 32px 26px;
+}
+
+.auth-card--roomy .auth-brand {
+  margin-bottom: 24px;
+}
+
+.auth-card--roomy .auth-head {
+  margin-bottom: 22px;
+}
+
+.auth-card--roomy .auth-title {
+  margin-bottom: 8px;
+  font-size: 2rem;
+}
+
+.auth-card--roomy .auth-sub {
+  font-size: 0.875rem;
+}
+
+.auth-card--roomy .auth-tabs {
+  margin-bottom: 22px;
+}
+
+.auth-card--roomy .auth-tab {
+  height: 40px;
+  font-size: 0.875rem;
+}
+
+.auth-card--roomy .auth-form .ant-form-item {
+  margin-bottom: 18px;
+}
+
+.auth-card--roomy .auth-form .ant-form-item-label {
+  padding-bottom: 6px;
+}
+
+.auth-card--roomy .auth-form .ant-form-item-label > label {
+  font-size: 0.8125rem;
+}
+
+.auth-card--roomy .auth-form .ant-input,
+.auth-card--roomy .auth-form .ant-input-affix-wrapper {
+  min-height: 48px;
+  padding: 10px 14px;
+  font-size: 0.9375rem;
+}
+
+.auth-card--roomy .auth-form .ant-input-affix-wrapper > .ant-input {
+  min-height: auto;
+  padding: 0;
+}
+
+.auth-card--roomy .auth-submit.ant-btn {
+  height: 48px;
+  margin-top: 6px;
+  font-size: 0.9375rem;
+}
+
+.auth-card--roomy .auth-links {
+  min-height: 20px;
+  margin-top: 18px;
+}
+
+.auth-card--roomy .auth-links__hint,
+.auth-card--roomy .auth-link {
+  font-size: 0.8125rem;
+}
+
+.auth-card--roomy .auth-foot {
+  margin-top: 22px;
+  padding-top: 16px;
+  font-size: 0.75rem;
+}
+
+.auth-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 14px;
+}
+
+.auth-brand__dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--auth-accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--auth-accent) 14%, transparent);
+}
+
+.auth-brand__name {
+  font-size: 0.9375rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+.auth-head {
+  margin-bottom: 12px;
+}
+
+.auth-title {
+  margin: 0 0 5px;
+  font-size: 1.625rem;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+
+.auth-sub {
+  margin: 0;
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  color: var(--text-2);
+}
+
+/* 胶囊式 Tab：浅灰轨道 + 白色选中块 */
+.auth-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 3px;
+  margin-bottom: 14px;
+  border-radius: var(--r-10);
+  background: var(--auth-track);
+}
+
+.auth-tab {
+  height: 36px;
+  border: 0;
+  border-radius: var(--r-8);
+  background: transparent;
+  color: var(--text-2);
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.auth-tab:hover {
+  color: var(--auth-accent);
+}
+
+.auth-tab.is-active {
+  background: var(--surface);
+  color: var(--auth-accent);
+  box-shadow:
+    0 1px 2px rgb(16 24 40 / 8%),
+    0 4px 12px -4px rgb(16 24 40 / 12%);
+}
+
+.auth-tab:focus-visible {
+  outline: 2px solid var(--auth-accent);
+  outline-offset: 2px;
+}
+
+/* 表单 */
+.auth-form .ant-form-item {
+  margin-bottom: 10px;
+}
+
+/* 注册 / 重置：口令与确认口令并排，少一行高度；窄屏自动堆叠 */
+.auth-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 12px;
+}
+
+.auth-row .ant-form-item {
+  margin-bottom: 10px;
+}
+
+.auth-form .ant-form-item-label {
+  padding-bottom: 3px;
+}
+
+.auth-form .ant-form-item-label > label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--auth-label);
+}
+
+.auth-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.auth-label .anticon {
+  font-size: 0.875rem;
+  color: var(--auth-muted);
+}
+
+/* 输入框：46px 高、10px 圆角、聚焦蓝色描边 + 柔和外圈 */
+.auth-form .ant-input,
+.auth-form .ant-input-affix-wrapper {
+  min-height: 40px;
+  padding: 7px 12px;
+  border-radius: var(--r-10);
+  border-color: var(--auth-input-border);
+  background: var(--surface);
+  font-size: 0.875rem;
+  box-shadow: none;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.auth-form .ant-input-affix-wrapper {
+  padding-block: 0;
+}
+
+.auth-form .ant-input:hover,
+.auth-form .ant-input-affix-wrapper:hover {
+  border-color: var(--auth-input-border-hover);
+}
+
+.auth-form .ant-input:focus,
+.auth-form .ant-input-focused,
+.auth-form .ant-input-affix-wrapper.ant-input-affix-wrapper-focused,
+.auth-form .ant-input-affix-wrapper:focus-within {
+  border-color: var(--auth-accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--auth-accent) 12%, transparent);
+}
+
+/* affix 内层的真实 input 不重复描边 */
+.auth-form .ant-input-affix-wrapper > .ant-input {
+  min-height: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.auth-form .ant-input-affix-wrapper > .ant-input:hover,
+.auth-form .ant-input-affix-wrapper > .ant-input:focus {
+  border: 0;
+  box-shadow: none;
+}
+
+.auth-form .ant-input-prefix {
+  margin-inline-end: 8px;
+  color: var(--auth-muted);
+}
+
+.auth-form .ant-input-suffix {
+  color: var(--auth-muted);
+}
+
+.auth-form .ant-input[disabled],
+.auth-form .ant-input-affix-wrapper-disabled {
+  background: var(--auth-track);
+  border-color: var(--auth-input-border);
+  color: var(--auth-muted);
+}
+
+/* 校验错误：浅红提示条 */
+.auth-form .ant-form-item-explain-error {
+  margin-top: 4px;
+  font-size: 0.75rem;
+  color: var(--danger);
+}
+
+.auth-error {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border-radius: var(--r-10);
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+/* 注册关闭提示：浅蓝信息卡 */
+.auth-notice.ant-alert {
+  margin: 0 0 10px;
+  padding: 8px 11px;
+  border-radius: var(--r-12);
+  background: var(--auth-accent-soft);
+  border: 1px solid var(--auth-accent-border);
+}
+
+.auth-notice .ant-alert-icon {
+  color: var(--auth-accent);
+}
+
+.auth-notice .ant-alert-message {
+  margin-bottom: 1px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--auth-accent-ink);
+}
+
+.auth-notice .ant-alert-description {
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+/* 主按钮：48px 高、12px 圆角，含悬停/按下/禁用态 */
+.auth-submit.ant-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 42px;
+  margin-top: 0;
+  border-radius: var(--r-10);
+  font-size: 0.875rem;
+  font-weight: 600;
+  background: var(--auth-accent);
+  box-shadow: 0 6px 16px -8px color-mix(in srgb, var(--auth-accent) 52%, transparent);
+  transition: background 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+}
+
+.auth-submit.ant-btn:not(:disabled):hover {
+  background: var(--auth-accent-hover);
+  box-shadow: 0 8px 20px -8px color-mix(in srgb, var(--auth-accent) 58%, transparent);
+  transform: translateY(-1px);
+}
+
+.auth-submit.ant-btn:not(:disabled):active {
+  background: var(--auth-accent-active);
+  transform: none;
+  box-shadow: none;
+}
+
+.auth-submit.ant-btn:disabled,
+.auth-submit.ant-btn:disabled:hover {
+  background: var(--auth-track);
+  border-color: transparent;
+  color: var(--auth-muted);
+  box-shadow: none;
+  transform: none;
+}
+
+.auth-submit .anticon {
+  font-size: 0.875rem;
+}
+
+/* 忘记口令 / 返回登录 */
+.auth-links {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 18px;
+  margin-top: 10px;
+}
+
+.auth-links__hint {
+  font-size: 0.75rem;
+  color: var(--text-2);
+}
+
+.auth-links__sep {
+  width: 1px;
+  height: 12px;
+  background: var(--border);
+}
+
+.auth-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--auth-accent);
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.auth-link:hover {
+  color: var(--auth-accent-hover);
+  text-decoration: underline;
+}
+
+.auth-link:focus-visible {
+  outline: 2px solid var(--auth-accent);
+  outline-offset: 3px;
+  border-radius: var(--r-6);
+}
+
+.auth-foot {
+  margin: 12px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-size: 0.6875rem;
+  line-height: 1.6;
+  color: var(--text-3);
+  text-align: center;
+}
+
+/* 恢复码展示：等宽大字，方便抄写 */
+.auth-recovery {
+  margin: 14px 0 12px;
+  padding: 14px 10px;
+  border-radius: var(--r-14);
+  background: var(--auth-accent-soft);
+  border: 1px dashed var(--auth-accent-border);
+  color: var(--auth-accent-ink);
+  font-family: var(--font-mono);
+  font-size: 1.125rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-align: center;
+  user-select: all;
+}
+
+.auth-meta {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 16px;
+}
+
+.auth-meta > div {
+  display: flex;
+  gap: 10px;
+  font-size: 0.75rem;
+  line-height: 1.6;
+}
+
+.auth-meta dt {
+  flex: none;
+  color: var(--text-3);
+}
+
+.auth-meta dd {
+  margin: 0;
+  color: var(--text-2);
+}
+
+/* 移动端 / 矮屏：卡片贴顶，避免内容被裁切 */
+@media (max-width: 520px) {
+  .auth-page {
+    padding: 16px 12px;
+  }
+
+  .auth-card {
+    padding: 22px 18px 18px;
+  }
+
+  .auth-title {
+    font-size: 1.5rem;
+  }
+
+  .auth-brand {
+    margin-bottom: 14px;
+  }
+
+  .auth-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* 侧栏账号入口：登录后显示首字徽标 */
+.side-account__badge {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-size: 0.6875rem;
+  font-weight: 600;
+}
+
+/* 设置 · 账号分区（改口令 / 退出所有设备） */
+.set-section__title {
+  margin: 16px 0 6px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.set-hint {
+  margin: 0 0 10px;
+  font-size: 0.75rem;
+  line-height: 1.6;
+  color: var(--text-2);
+}
+
+.account-pwd {
+  display: grid;
+  gap: 8px;
+  max-width: 320px;
+}
+
+.account-pwd .ant-btn {
+  justify-self: start;
+}
+
+/* 发送中的回复气泡：失败时留在对话框里，红字给原因 + 重发 */
+.bubble--out.is-failed {
+  background: var(--danger-soft);
+  color: var(--danger);
+  border: 1px solid color-mix(in srgb, var(--danger) 30%, transparent);
+}
+
+.pending-reply__error {
+  color: var(--danger);
+  max-width: 320px;
+  display: inline-block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 引用回复：输入框上方的引用条 */
+.composer__quote {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.5rem 0.65rem;
+  margin-bottom: 0.5rem;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  border-left: 2px solid var(--brand);
+}
+
+.composer__quote-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.composer__quote-name {
+  font-size: 0.75rem;
+  color: var(--brand);
+  font-weight: 600;
+}
+
+.composer__quote-text {
+  font-size: 0.8125rem;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer__quote-close {
+  border: none;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 0.15rem;
+}
+
+/* 发出的气泡里的引用块 */
+.bubble__quote {
+  border-left: 2px solid color-mix(in srgb, var(--brand) 55%, transparent);
+  background: color-mix(in srgb, var(--on-brand) 12%, transparent);
+  border-radius: var(--r-xs);
+  padding: 0.35rem 0.5rem;
+  margin-bottom: 0.35rem;
+  max-width: 100%;
+}
+
+.bubble__quote-name {
+  font-size: 0.75rem;
+  font-weight: 600;
+  opacity: 0.85;
+}
+
+.bubble__quote-text {
+  font-size: 0.8125rem;
+  opacity: 0.8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+/* 入站气泡的「回复」入口：hover 才出现，避免干扰阅读 */
+.bubble__reply-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 0.75rem;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  padding: 0 0.25rem;
+}
+
+.bubble-row:hover .bubble__reply-btn {
+  opacity: 1;
+}
+
+/* ---- 群消息展示方案原型（/preview/groups）：独立命名空间，确认方案后可整体删除 ---- */
+.pv {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--bg);
+  color: var(--text-1);
+}
+
+.pv__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.85rem 1.25rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.pv__title {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+
+.pv__sub {
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: var(--text-3);
+}
+
+.pv__body {
+  display: grid;
+  grid-template-columns: 22rem 1fr;
+  gap: 1rem;
+  padding: 1rem;
+  min-height: 0;
+  flex: 1;
+}
+
+.pv__list {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  padding: 0.5rem;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.pv__section {
+  font-size: 0.75rem;
+  color: var(--text-3);
+  padding: 0.5rem 0.6rem 0.25rem;
+}
+
+.pv__section--gap {
+  margin-top: 0.75rem;
+  border-top: 1px solid var(--line);
+  padding-top: 0.75rem;
+}
+
+.pv-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  border: none;
+  background: transparent;
+  border-radius: var(--r-md);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+
+.pv-row:hover {
+  background: var(--surface-2);
+}
+
+.pv-row--active {
+  background: var(--brand-soft);
+}
+
+.pv-row--group {
+  font-weight: 600;
+}
+
+.pv-row--nested {
+  padding-left: 2.6rem;
+  font-size: 0.8125rem;
+}
+
+.pv-row__icon {
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  display: grid;
+  place-items: center;
+  color: var(--brand);
+  flex: none;
+}
+
+.pv-row__main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.pv-row__name {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.875rem;
+}
+
+.pv-row__preview {
+  font-size: 0.75rem;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pv-row__time {
+  font-size: 0.6875rem;
+  color: var(--text-3);
+  flex: none;
+}
+
+.pv-row__badge {
+  font-size: 0.6875rem;
+  min-width: 1.15rem;
+  height: 1.15rem;
+  padding: 0 0.3rem;
+  border-radius: var(--r-full);
+  background: var(--brand);
+  color: var(--on-brand);
+  display: grid;
+  place-items: center;
+}
+
+.pv-row__at {
+  font-size: 0.6875rem;
+  color: var(--danger);
+  background: var(--danger-soft);
+  border-radius: var(--r-full);
+  padding: 0 0.35rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+}
+
+.pv-row__dot {
+  width: 0.375rem;
+  height: 0.375rem;
+  border-radius: var(--r-full);
+  background: var(--danger);
+  flex: none;
+}
+
+.pv__panes {
+  display: grid;
+  grid-template-columns: 1fr 20rem;
+  gap: 1rem;
+  min-height: 0;
+}
+
+.pv-chat {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.pv-chat__head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.pv-chat__title {
+  font-weight: 600;
+  font-size: 0.9375rem;
+}
+
+.pv-chat__body {
+  padding: 1rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.pv-msg {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  align-items: flex-start;
+}
+
+.pv-msg--out {
+  align-items: flex-end;
+}
+
+.pv-msg__who {
+  font-size: 0.75rem;
+  color: var(--text-3);
+}
+
+.pv-msg__bubble {
+  background: var(--surface-2);
+  border-radius: var(--r-md);
+  padding: 0.5rem 0.7rem;
+  font-size: 0.875rem;
+  max-width: 34rem;
+}
+
+.pv-msg--out .pv-msg__bubble {
+  background: var(--brand);
+  color: var(--on-brand);
+}
+
+.pv-msg__bubble--at {
+  box-shadow: inset 2px 0 0 var(--danger);
+}
+
+.pv-msg__time {
+  font-size: 0.6875rem;
+  color: var(--text-3);
+}
+
+.pv__note {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.pv__note h4 {
+  margin: 0;
+  font-size: 0.9375rem;
+}
+
+.pv__note ul {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.8125rem;
+  color: var(--text-2);
+}
+
+.pv__actions {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.pv__hint {
+  font-size: 0.6875rem;
+  color: var(--text-3);
+}
+
+/* C 方案：频道标签 */
+.pv__tabs {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.35rem;
+  margin-bottom: 0.35rem;
+  background: var(--surface-2);
+  border-radius: var(--r-md);
+}
+
+.pv__tab {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 0.8125rem;
+  padding: 0.35rem 0.25rem;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+}
+
+.pv__tab--active {
+  background: var(--surface);
+  color: var(--brand);
+  font-weight: 600;
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--text-1) 8%, transparent);
+}
+
+.pv__tab-count {
+  font-size: 0.6875rem;
+  color: var(--text-3);
+}
+
+.pv__tab--active .pv__tab-count {
+  color: var(--brand);
+}
+
+/* 收件箱内的频道标签（预览：/inbox?preview=groups） */
+.pv-tabs {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.25rem;
+  background: var(--surface-2);
+  border-radius: var(--r-md);
+}
+
+.pv-tabs--inline {
+  margin: 0.5rem 0 0.25rem;
+}
+
+.pv-tab {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 0.75rem;
+  padding: 0.3rem 0.2rem;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.2rem;
+  white-space: nowrap;
+}
+
+.pv-tab--active {
+  background: var(--surface);
+  color: var(--brand);
+  font-weight: 600;
+}
+
+.pv-tab__count {
+  font-size: 0.6875rem;
+  color: var(--text-3);
+}
+
+.pv-tab--active .pv-tab__count {
+  color: var(--brand);
+}
+
+/* ---- 频道切换条的三种视觉方案（用 data-style 切换，默认 soft） ---- */
+.pv-tabs[data-style='soft'] {
+  background: transparent;
+  padding: 0;
+  gap: 0.4rem;
+}
+
+.pv-tabs[data-style='soft'] .pv-tab {
+  flex: none;
+  padding: 0.3rem 0.65rem;
+  border-radius: var(--r-full);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 0.75rem;
+}
+
+.pv-tabs[data-style='soft'] .pv-tab--active {
+  background: var(--brand);
+  color: var(--on-brand);
+}
+
+.pv-tabs[data-style='soft'] .pv-tab--active .pv-tab__count {
+  color: var(--on-brand);
+  opacity: 0.85;
+}
+
+/* underline：像 Linear / Notion 的文本标签，底线表示选中 */
+.pv-tabs[data-style='underline'] {
+  background: transparent;
+  padding: 0;
+  gap: 1.1rem;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+}
+
+.pv-tabs[data-style='underline'] .pv-tab {
+  flex: none;
+  padding: 0 0 0.45rem;
+  border-radius: 0;
+  background: transparent;
+  font-size: 0.8125rem;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+
+.pv-tabs[data-style='underline'] .pv-tab--active {
+  background: transparent;
+  color: var(--text-1);
+  border-bottom-color: var(--brand);
+  font-weight: 600;
+}
+
+/* quiet：极轻的纯文本，只在选中项加粗+主色，几乎不占视觉重量 */
+.pv-tabs[data-style='quiet'] {
+  background: transparent;
+  padding: 0;
+  gap: 0.85rem;
+}
+
+.pv-tabs[data-style='quiet'] .pv-tab {
+  flex: none;
+  padding: 0.15rem 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: 0.75rem;
+  color: var(--text-3);
+}
+
+.pv-tabs[data-style='quiet'] .pv-tab--active {
+  background: transparent;
+  color: var(--brand);
+  font-weight: 600;
+}
+
+/* 独立预览页的频道条也支持三种样式（与收件箱一致） */
+.pv__tabs[data-style='quiet'] {
+  background: transparent;
+  padding: 0;
+  gap: 0.9rem;
+  margin-bottom: 0.5rem;
+}
+
+.pv__tabs[data-style='quiet'] .pv__tab {
+  flex: none;
+  background: transparent;
+  padding: 0.15rem 0;
+  color: var(--text-3);
+}
+
+.pv__tabs[data-style='quiet'] .pv__tab--active {
+  background: transparent;
+  color: var(--brand);
+  font-weight: 600;
+}
+
+.pv__tabs[data-style='underline'] {
+  background: transparent;
+  padding: 0;
+  gap: 1.2rem;
+  border-radius: 0;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 0.5rem;
+}
+
+.pv__tabs[data-style='underline'] .pv__tab {
+  flex: none;
+  background: transparent;
+  border-radius: 0;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  padding: 0 0 0.4rem;
+}
+
+.pv__tabs[data-style='underline'] .pv__tab--active {
+  background: transparent;
+  color: var(--text-1);
+  border-bottom-color: var(--brand);
+  box-shadow: none;
+}
+
+/* 名录不可用提示：解释"为什么会话名是群聊"，并给出下一步 */
+.list-notice {
+  margin: 0.5rem 0.6rem 0.25rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: var(--r-md);
+  background: var(--warning-soft);
+  border: 1px solid color-mix(in srgb, var(--warning) 28%, transparent);
+}
+
+.list-notice__title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-1);
+  margin-bottom: 0.2rem;
+}
+
+.list-notice__body {
+  font-size: 0.6875rem;
+  color: var(--text-2);
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  line-height: 1.5;
+}
+
+.list-notice__hint {
+  color: var(--text-3);
+  margin-top: 0.2rem;
+}
+
+/* 钉钉登录有效期提示 */
+.dt-session {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  font-size: 0.75rem;
+  color: var(--text-2);
+}
+
+.dt-session__dot {
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: var(--r-full);
+  background: var(--success);
+  flex: none;
+}
+
+.dt-session--warn {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.dt-session--warn .dt-session__dot {
+  background: var(--warning);
+}
+
+.dt-session--bad {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.dt-session--bad .dt-session__dot {
+  background: var(--danger);
+}
+
+.dt-session__text {
+  flex: 1;
+  min-width: 0;
 }

@@ -75,6 +75,56 @@ function copyDir(src, dest) {
   fs.mkdirSync(dest, { recursive: true });
   fs.cpSync(src, dest, { recursive: true });
 }
+
+/**
+ * 选择「能生成 zip」的工具。
+ *
+ * 历史坑：这里以前直接 `execFileSync('tar', ['-a','-cf', ...])`，默认 PATH 里的 tar 是
+ * bsdtar（Windows System32 / macOS）时没问题；但 Git Bash / MSYS / 某些 CI 里排在前面的是
+ * **GNU tar**，它不支持 zip 格式，`-a` 会按后缀猜格式并失败（exit 128），
+ * 于是「打包」这一步在能构建的机器上莫名失败。这里显式探测，并给 Windows 兜底。
+ */
+function isBsdTar(bin) {
+  if (!bin) return false;
+  try {
+    return /bsdtar/i.test(execFileSync(bin, ['--version'], { encoding: 'utf8' }));
+  } catch {
+    return false;
+  }
+}
+
+function resolveZipTool() {
+  if (process.platform === 'win32') {
+    const winTar = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe');
+    if (fs.existsSync(winTar) && isBsdTar(winTar)) return { bin: winTar, kind: 'tar' };
+  }
+  if (isBsdTar('tar')) return { bin: 'tar', kind: 'tar' };
+  if (process.platform !== 'win32') {
+    const probe = spawnSync('zip', ['-v'], { stdio: 'ignore' });
+    if (probe.status === 0) return { bin: 'zip', kind: 'zip' };
+  }
+  return null;
+}
+
+/** 压缩 <cwd>/<entry> 为真正的 zip；找不到工具时给出可执行的报错而不是隐晦的 exit 128 */
+function createZip(outZip, cwd, entry) {
+  if (fs.existsSync(outZip)) fs.rmSync(outZip);
+  const tool = resolveZipTool();
+  if (tool?.kind === 'zip') {
+    execFileSync(tool.bin, ['-r', '-q', outZip, entry], { cwd, stdio: 'inherit' });
+    return;
+  }
+  if (tool?.kind === 'tar') {
+    execFileSync(tool.bin, ['-a', '-cf', outZip, '-C', cwd, entry], { stdio: 'inherit' });
+    return;
+  }
+  if (process.platform === 'win32') {
+    const ps = `Compress-Archive -LiteralPath '${path.join(cwd, entry).replaceAll("'", "''")}' -DestinationPath '${outZip.replaceAll("'", "''")}' -Force`;
+    execFileSync('powershell', ['-NoProfile', '-Command', ps], { stdio: 'inherit' });
+    return;
+  }
+  fail('找不到可用的 zip 工具：请安装 bsdtar 或 zip（Windows 可直接用系统自带 tar.exe / PowerShell）');
+}
 function walkFiles(dir, out = []) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
@@ -368,7 +418,7 @@ if (!skipZip) {
   const zipOut = path.join(distRoot, `LinkHub-${appVersion}-win-x64.zip`);
   if (fs.existsSync(zipOut)) fs.rmSync(zipOut);
   log('zip', '压缩便携包（约 100MB，压缩后 80–100MB）…');
-  execFileSync('tar', ['-a', '-cf', zipOut, '-C', distRoot, 'LinkHub'], { stdio: 'inherit' });
+  createZip(zipOut, distRoot, 'LinkHub');
   const size = fs.statSync(zipOut).size;
   const sha = crypto.createHash('sha256').update(fs.readFileSync(zipOut)).digest('hex');
   log('zip', `完成：${zipOut}`);
@@ -465,7 +515,7 @@ function zipLite(liteRoot, version) {
   const zipOut = path.join(distRoot, `LinkHub-Lite-${version}-win-x64.zip`);
   if (fs.existsSync(zipOut)) fs.rmSync(zipOut);
   log('zip', '压缩轻量包…');
-  execFileSync('tar', ['-a', '-cf', zipOut, '-C', distRoot, path.basename(liteRoot)], { stdio: 'inherit' });
+  createZip(zipOut, distRoot, path.basename(liteRoot));
   const size = fs.statSync(zipOut).size;
   const sha = crypto.createHash('sha256').update(fs.readFileSync(zipOut)).digest('hex');
   log('zip', `完成：${zipOut}`);

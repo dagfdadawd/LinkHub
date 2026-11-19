@@ -9,10 +9,10 @@
  *  - getTrace / getLoopLog：全链路回放
  */
 import { randomUUID } from 'node:crypto';
-import { normalizeEchoText, rememberSent, learnedSelfIds } from './echoRegistry';
+import { normalizeEchoText, rememberSent, learnedSelfIds, matchEcho } from './echoRegistry';
 import {
   Platform, MsgStatus, UnifiedMessage, PlatformConnector,
-  type ComposeAck, type ComposeRequest, type IdentityRole, type OutboundAttachment,
+  type AttachmentInfo, type ComposeAck, type ComposeRequest, type IdentityRole, type OutboundAttachment,
 } from '@unimsg/shared';
 import { MessageRepository } from '../db/repository';
 import { LlmService } from './llm';
@@ -123,9 +123,44 @@ export interface SyncStatusResult {
   reason?: string;
 }
 
+/**
+ * 查看者：有 `userId` = 登录用户（只看自己的）；缺省 = 部署令牌 / 内部调用（全量视图）。
+ *
+ * 归属校验必须落在 service 层而不是路由层：按 id 的接口有 8 个，路由各自判断一定会漏，
+ * 漏一个就是「别的账号能读、能改、能回写我的消息」。
+ */
+export interface Viewer {
+  userId?: string;
+}
+
+/** 这条消息对查看者是否可见（没有 userId = 全量视图，不过滤） */
+export function visibleTo(message: UnifiedMessage, viewer?: Viewer): boolean {
+  return !viewer?.userId || message.ownerId === viewer.userId;
+}
+
+/** 归属不匹配时统一用这一句：不暴露「消息存在但不属于你」，避免探测 */
+const NOT_FOUND = 'message not found';
+
 export class MessageService {
   /** 正在重新分析的消息：同一条并发点击只跑一次，避免重复计费与重复日志 */
   private readonly reanalyzing = new Set<string>();
+
+  /**
+   * 待发表的一次回写：`reply()` / `compose()` 入队 → `processSend` 出结果后写进 `replies`。
+   *
+   * `identity` 是**本次发送**指定的身份，只活在这一条 pending 记录里：
+   * 绝不写回消息本身（历史 bug：写回后 `msg.sendIdentity` 永久粘住，
+   * 用户下次什么都不选也会沿用上次的机器人身份，群里没机器人就直接发不出去）。
+   */
+  private readonly pendingReplies = new Map<string, {
+    text: string;
+    attachments?: AttachmentInfo[];
+    identity?: IdentityRole;
+    /** 本次回复引用的消息摘要（只有显式引用时才有），用于前端画引用条 */
+    quote?: { text: string; senderName: string };
+    /** true = 这条记录来自主动发送（compose），不追加到 replies 历史 */
+    fromCompose?: boolean;
+  }>();
 
   constructor(
     private repo: MessageRepository,
@@ -167,21 +202,117 @@ export class MessageService {
    * （钉钉回声 / 手机直发）标成 direction=out，会话列表不再把它们算成未读。
    * 返回被修正的条数；没有学习记录时是纯 no-op。
    */
-  applyLearnedSelfDirections(): number {
-    const ids = learnedSelfIds(Platform.DINGTALK);
+  /**
+   * 把「本人发出、却被当成来信入库」的历史消息改标为出站。
+   *
+   * 钉钉靠 echoRegistry 学习到的本人 ID；飞书靠轮询水位文件里的 selfOpenId。
+   * 改标后不再计入未读，聊天区也渲染在右侧。
+   */
+  markOwnMessagesAsOut(platform: Platform, senderIds: string[]): number {
+    const ids = senderIds.map((v) => (v ?? '').trim()).filter(Boolean);
     if (ids.length === 0) return 0;
-    let changed = 0;
-    for (const m of this.repo.list()) {
-      if (m.platform !== Platform.DINGTALK) continue;
-      if (m.direction === 'out') continue;
-      if (!ids.includes(m.sender.id)) continue;
-      this.repo.update(m.traceId, { direction: 'out' });
-      changed += 1;
-    }
+    const targets = this.repo.list().filter(
+      (m) => m.platform === platform && m.direction !== 'out' && ids.includes(m.sender.id),
+    );
+    if (targets.length === 0) return 0;
+    const changed = this.repo.updateMany(
+      targets.map((m) => ({ id: m.traceId, patch: { direction: 'out' as const } })),
+    );
     if (changed > 0) {
-      console.log(`[identity] 已把 ${changed} 条本人发出的历史消息标为「我发出的」（不再计入未读）`);
+      console.log(`[identity] 已把 ${changed} 条本人发出的历史消息标为「我发出的」（${platform}）`);
     }
     return changed;
+  }
+
+  /** 钉钉专用：用 echoRegistry 学习到的本人 ID 纠正历史数据（保留旧入口） */
+  applyLearnedSelfDirections(): number {
+    return this.markOwnMessagesAsOut(Platform.DINGTALK, learnedSelfIds(Platform.DINGTALK));
+  }
+
+  /**
+   * 修复历史回声：早先版本飞书/企微没有回声抑制，我们自己发出的消息被平台推回来，
+   * 又被当成「收到的」存了一条，于是收件箱里凭空多出自己发的消息。
+   *
+   * 判定与界面去重保持同一规则：同平台 + 同会话 + 同正文，且与「我们发出它的时间」
+   * 相差不超过 2 分钟。只改方向（不动内容、不删数据），改标后归到「我发出的」。
+   */
+  repairEchoDuplicates(): number {
+    const ECHO_WINDOW_MS = 120_000;
+    // 索引：platform|conversationId|归一化正文 → 我们发出它的时间戳
+    const sentAt = new Map<string, number[]>();
+    const add = (m: UnifiedMessage, text: string | undefined, at: string | undefined): void => {
+      const body = normalizeEchoText(text ?? '');
+      if (!body) return;
+      const ts = Date.parse(at ?? m.createdAt);
+      if (!Number.isFinite(ts)) return;
+      const key = `${m.platform}|${m.conversation?.id ?? ''}|${body}`;
+      const list = sentAt.get(key) ?? [];
+      list.push(ts);
+      sentAt.set(key, list);
+    };
+    for (const m of this.repo.list()) {
+      if (m.direction === 'out') add(m, m.body, m.createdAt);
+      if (m.reply) add(m, m.reply, m.updatedAt);
+      for (const r of m.replies ?? []) add(m, r.text, r.at);
+    }
+
+    const targets: Array<{ id: string; patch: Partial<UnifiedMessage> }> = [];
+    for (const m of this.repo.list()) {
+      if (m.direction === 'out') continue;
+      const body = normalizeEchoText(m.body);
+      if (!body) continue;
+      const times = sentAt.get(`${m.platform}|${m.conversation?.id ?? ''}|${body}`);
+      if (!times || times.length === 0) continue;
+      const createdAt = Date.parse(m.createdAt);
+      if (!Number.isFinite(createdAt)) continue;
+      if (!times.some((t) => Math.abs(t - createdAt) <= ECHO_WINDOW_MS)) continue;
+      targets.push({ id: m.traceId, patch: { direction: 'out' } });
+    }
+    if (targets.length === 0) return 0;
+    const changed = this.repo.updateMany(targets);
+    console.log(`[identity] 已把 ${changed} 条「自己发出去又被推回来」的历史消息归到「我发出的」`);
+    return changed;
+  }
+
+  /**
+   * 清理历史残留：旧版本把「本次发送身份」写进了消息，会永久粘住身份。
+   * 现在身份是瞬态的（只对单次发送生效），启动时把旧数据上的残留抹掉，
+   * 避免回放/数据导出里出现"这条消息被标成了机器人"的误导信息。
+   */
+  cleanupLegacySendIdentity(): number {
+    const stale = this.repo.list().filter((m) => m.sendIdentity !== undefined);
+    if (stale.length === 0) return 0;
+    const n = this.repo.updateMany(stale.map((m) => ({ id: m.traceId, patch: { sendIdentity: undefined } })));
+    if (n > 0) console.log(`[identity] 已清理 ${n} 条历史消息上残留的发送身份（身份只对单次发送生效）`);
+    return n;
+  }
+
+  /**
+   * 回声抑制（入库前的最后一道闸）：我们刚发出的消息被平台推回来时直接吞掉。
+   *
+   * 钉钉本人事件流在流层已经判断过；飞书（机器人长连接 / 本人轮询）与企微都走这里。
+   * 返回原始发送记录（用于幂等回执），返回 undefined 表示不是回声。
+   */
+  private absorbEcho(platform: Platform, incoming: UnifiedMessage): UnifiedMessage | undefined {
+    const rec = matchEcho({
+      platform,
+      conversationId: incoming.conversation?.id,
+      text: incoming.body,
+      fileNames: incoming.attachments?.map((a) => a.name),
+      // 图片回推只剩 mediaId，正文为空，只能按「刚发过带图消息」判断
+      mediaOnly: incoming.type === 'image' && !incoming.body,
+    });
+    if (!rec) return undefined;
+    const original = rec.traceId ? this.repo.get(rec.traceId) : undefined;
+    if (original) {
+      writeTrace(
+        this.repo,
+        original,
+        'echo_ignored',
+        '平台把这次发送回推成了新消息，已按回声忽略（不重复入库）',
+      );
+    }
+    return original ?? incoming;
   }
 
   async ingestUnified(platform: Platform, incoming: UnifiedMessage): Promise<IngestResult> {
@@ -201,6 +332,16 @@ export class MessageService {
       writeTrace(this.repo, existing, 'redelivered', '平台重复推送，幂等忽略');
       return { message: existing, duplicate: true };
     }
+
+    // 自己刚发出去的消息被平台回推：不能再存一条「收到的」（飞书两种通道都会回推）
+    const echo = this.absorbEcho(platform, incoming);
+    if (echo) {
+      counters.deduped += 1;
+      return { message: echo, duplicate: true };
+    }
+
+    // 平台连接是机器级的：收到的消息默认归属「机器主人」，没有主人时保持无主（等认领）
+    if (this.defaultOwnerId && !incoming.ownerId) incoming.ownerId = this.defaultOwnerId;
 
     this.repo.save(incoming);
     counters.received += 1;
@@ -315,9 +456,9 @@ export class MessageService {
    * 不重跑 OCR（body 已含识别文本）、不改业务状态，只重写 AI 字段并广播 message.updated。
    * 历史消息因此不用等新消息进来也能重算。
    */
-  async reanalyze(id: string): Promise<AnalysisOutcome> {
-    const m = this.repo.get(id);
-    if (!m) throw new Error('message not found');
+  async reanalyze(id: string, viewer?: Viewer): Promise<AnalysisOutcome> {
+    // 归属守卫：不能对别人的消息触发「重新生成」（会消耗 LLM 额度并读到别人的正文）
+    const m = this.requireVisible(id, viewer);
     if (this.reanalyzing.has(id)) {
       return { message: m, source: m.intentSource === 'llm' ? 'llm' : 'rules' };
     }
@@ -343,12 +484,75 @@ export class MessageService {
   }
 
   // ---------- 展示 ----------
-  list(filter?: { platform?: Platform; status?: MsgStatus }): UnifiedMessage[] {
-    return this.repo.list(filter);
+  /**
+   * 「机器主人」：平台连接是机器级的，收进来的消息默认归属这位账号。
+   * 由入口层在首个账号注册/启动时注入；没有主人时消息保持无主，等用户认领。
+   */
+  private defaultOwnerId?: string;
+
+  setDefaultOwner(userId: string | undefined): void {
+    this.defaultOwnerId = userId;
   }
 
-  get(id: string): UnifiedMessage | undefined {
-    return this.repo.get(id);
+  getDefaultOwner(): string | undefined {
+    return this.defaultOwnerId;
+  }
+  /**
+   * 列消息。
+   * `viewer` = 当前登录账号：给了就只返回归属它的消息（数据隔离）；
+   * 不传（部署令牌 / 无人登录）= 返回全部，保持单机演示零改动。
+   * 未归属的历史数据（ownerId 缺省）在隔离视图里**不出现**，需要用户主动「认领」。
+   */
+  list(filter?: { platform?: Platform; status?: MsgStatus }, viewer?: Viewer): UnifiedMessage[] {
+    const rows = this.repo.list(filter);
+    if (!viewer?.userId) return rows;
+    return rows.filter((m) => m.ownerId === viewer.userId);
+  }
+
+  /**
+   * 认领：把「未归属」的历史消息收进当前账号（ownerId 为空才动，别人的不动）。
+   * 返回认领条数——演示"我和他怎么区分"时，先认领导入的历史数据再对比两个账号。
+   */
+  claimUnowned(userId: string): number {
+    const rows = this.repo.list().filter((m) => !m.ownerId);
+    if (rows.length === 0) return 0;
+    // 批量改 + 一次落盘：逐条 update 会让每条消息都全量重写一次快照（O(N²)）
+    const claimed = this.repo.updateMany(rows.map((m) => ({ id: m.traceId, patch: { ownerId: userId } })));
+    if (claimed > 0) this.broadcast({ type: 'messages.changed' });
+    return claimed;
+  }
+
+  /**
+   * 清理「孤儿归属」：ownerId 指向已不存在的账号时，把这些消息恢复成无主。
+   * 场景：删号、或早期版本把消息归给临时测试账号 → 日志里查不到人，消息谁都看不见。
+   * 返回恢复条数。
+   */
+  releaseOrphanOwners(validUserIds: Set<string>): number {
+    const rows = this.repo.list().filter((m) => m.ownerId && !validUserIds.has(m.ownerId));
+    if (rows.length === 0) return 0;
+    return this.repo.updateMany(rows.map((m) => ({ id: m.traceId, patch: { ownerId: undefined } })));
+  }
+
+  /** 新消息归属：ingest 时用（由调用方决定归属谁，默认不归属） */
+  assignOwner(id: string, ownerId: string): void {
+    this.repo.update(id, { ownerId } as Partial<UnifiedMessage>);
+  }
+
+  /**
+   * 读一条消息（带归属校验）。
+   * `viewer` 有 userId 时，别人的消息一律返回 undefined（路由转 404，不泄露存在性）。
+   * 内部调用（ingest / processSend / 回流）请直接用 repo.get，不要经这里。
+   */
+  get(id: string, viewer?: Viewer): UnifiedMessage | undefined {
+    const m = this.repo.get(id);
+    return m && visibleTo(m, viewer) ? m : undefined;
+  }
+
+  /** 归属守卫：不可见时抛 404 文案（路由层 catch 后回 404） */
+  private requireVisible(id: string, viewer?: Viewer): UnifiedMessage {
+    const m = this.get(id, viewer);
+    if (!m) throw new Error(NOT_FOUND);
+    return m;
   }
 
   // ---------- 处理 / 回写 ----------
@@ -364,9 +568,12 @@ export class MessageService {
     text: string,
     attachments: OutboundAttachment[] = [],
     identity?: IdentityRole,
+    viewer?: Viewer,
+    /** 显式引用目标：用户右键/长按某条消息选「回复」时才传；不传 = 普通发送（不带引用条） */
+    quoteTraceId?: string,
   ): Promise<{ message: UnifiedMessage; taskId: string }> {
-    const cur = this.repo.get(id);
-    if (!cur) throw new Error('message not found');
+    // 归属守卫放在最前：别人的消息连状态机都不进（路由转 404，不泄露存在性）
+    const cur = this.requireVisible(id, viewer);
 
     // 身份校验先做：校验失败不改状态机、不写 trace
     if (identity) {
@@ -376,15 +583,45 @@ export class MessageService {
 
     const info = describeAttachmentsWithPreview(attachments);
 
+    // 显式引用：只有用户真的选了某条消息才走引用通道，默认发送不带引用条
+    const quoteSource = quoteTraceId ? this.repo.get(quoteTraceId) : undefined;
+    const quoteRef = quoteSource
+      ? {
+        // 钉钉的 externalId 形如 `dingtalk:<openMessageId>`
+        messageId: quoteSource.externalId.replace(/^[a-z]+:/i, ''),
+        senderId: quoteSource.sender?.id ?? '',
+        senderName: quoteSource.sender?.name ?? '',
+        text: (quoteSource.body ?? '').slice(0, 120),
+      }
+      : undefined;
+    if (quoteTraceId && !quoteRef) {
+      throw new InvalidPlatformEvent(cur.platform, '要引用的消息不存在或已被删除，请重新选择');
+    }
+
     let m = this.repo.update(id, {
+      // quoteRef 只对本次发送有效：不带引用时显式清掉，避免上一次的引用粘住
+      ...(quoteRef ? { quoteRef } : {}),
       status: MsgStatus.PROCESSING,
       reply: text,
       failureReason: undefined, // 重试时清掉上一次失败原因，避免旧原因误导
-      ...(identity ? { sendIdentity: identity } : {}),
+      ...(quoteRef ? {} : { quoteRef: undefined }),
+      // 无主消息（历史数据 / 首次互动的平台来信）由回复者认领；
+      // **已经有主的一律不动**——旧实现在这里无条件覆盖 ownerId，
+      // 结果是「B 回复 A 的消息，这条消息就从 A 的收件箱跑到了 B 那里」。
+      ...(!cur.ownerId && viewer?.userId ? { ownerId: viewer.userId } : {}),
+      // 注意：这里**不写** sendIdentity。身份只对本次发送有效（见 pendingReplies），
+      // 写进消息会永久粘住，下一次不带身份的回复也会沿用上次的选择。
       // 写 replyAttachments 而不是 attachments：回复的图/文件属于这次回复，
       // 写进 attachments 会挂到原消息上（别人的话旁边突然出现我的附件）
       ...(info.length > 0 ? { replyAttachments: info } : {}),
     })!;
+    // 回复内容先进待发表，出结果（成功 / 失败）后再追加到 replies 历史
+    this.pendingReplies.set(id, {
+      text,
+      ...(quoteRef ? { quote: { text: quoteRef.text ?? '', senderName: quoteRef.senderName ?? '' } } : {}),
+      ...(info.length > 0 ? { attachments: info } : {}),
+      ...(identity ? { identity } : {}),
+    });
     // 用数组 join 拼 detail，避免「指定发送身份=本人，」这类尾逗号（评审看得到 trace 文案）
     const processingParts: string[] = [];
     if (identity) processingParts.push(`指定发送身份=${identity === 'user' ? '本人' : '机器人'}`);
@@ -402,7 +639,7 @@ export class MessageService {
     this.broadcast({ type: 'message.updated', data: m });
 
     // 异步回写：不阻塞 HTTP 响应，结果经 WS 推送
-    void this.processSend(id, attachments);
+    void this.processSend(id, attachments, identity);
     return { message: m, taskId: id };
   }
 
@@ -476,7 +713,11 @@ export class MessageService {
       platform: req.platform,
       externalId: mailKey ? `${mailKey}:compose:${uid}` : `compose:${uid}`,
       sender: { id: 'linkhub', name: 'LinkHub 统一入口' },
-      conversation: { id: conversationId, type: conversationType ?? 'group' },
+      conversation: {
+        id: conversationId,
+        type: conversationType ?? 'group',
+        ...(req.conversationTitle ? { title: req.conversationTitle } : {}),
+      },
       // 「同时加为待办」不是旁路：同一条消息记录就是待办本身（type=todo），
       // 标题 / 截止时间手填；发送链路仍按文本投递，connector 只看 reply/body。
       type: req.todo ? 'todo' : 'text',
@@ -494,7 +735,6 @@ export class MessageService {
       direction: 'out',
       createdAt: now,
       updatedAt: now,
-      ...(req.identity ? { sendIdentity: req.identity } : {}),
     };
 
     this.repo.save(msg);
@@ -525,18 +765,25 @@ export class MessageService {
     writeTrace(this.repo, m, 'replied');
     this.broadcast({ type: 'message.updated', data: m });
 
-    void this.processSend(msg.traceId, attachments);
+    void this.processSend(msg.traceId, attachments, req.identity);
     return { message: m, taskId: msg.traceId };
   }
 
   /** 失败原因截断长度：前端只展示摘要，完整原因在 trace / 死信队列里 */
   static readonly FAILURE_REASON_MAX = 300;
 
-  private async processSend(id: string, attachments: OutboundAttachment[] = []): Promise<void> {
+  private async processSend(
+    id: string,
+    attachments: OutboundAttachment[] = [],
+    /** 本次发送指定的身份；缺省 = 由平台策略决定。**只对这一次发送有效** */
+    identity?: IdentityRole,
+  ): Promise<void> {
     const cur = this.repo.get(id);
     if (!cur) return;
     const connector = this.connectors[cur.platform];
-    const outgoing: UnifiedMessage = { ...cur, body: cur.reply ?? cur.body };
+    // 显式赋值（可能是 undefined）：把历史数据里残留的 msg.sendIdentity 覆盖掉，
+    // 否则「上次选了机器人」会永久粘在这条消息上，用户之后每次都按机器人发。
+    const outgoing: UnifiedMessage = { ...cur, body: cur.reply ?? cur.body, sendIdentity: identity };
     // 内联图片数量：钉钉会用 Markdown 图文发出去，回推时只剩 mediaId，需要单独识别
     const inlineImageCount = attachments.filter((a) => /^image\//i.test(a.mimeType ?? '')).length;
 
@@ -562,13 +809,34 @@ export class MessageService {
 
       // 把"本次到底走了真实接口还是本地模拟、用了哪个身份"写进消息与闭环日志，绝不静默假装成功。
       // Mock 模式不写 identity（契约 §4：模拟通道不冒充本人/机器人）。
+      // 回复历史在这里追加：这是「真的发出去了」的唯一点。
+      const pendingReply = this.pendingReplies.get(id);
+      this.pendingReplies.delete(id);
+      const actualIdentity = result.mode === 'real' ? result.identity : undefined;
       let m = this.repo.update(id, {
         status: MsgStatus.SENT,
+        ...(pendingReply !== undefined
+          ? {
+            replies: [
+              ...(cur.replies ?? []),
+              {
+                text: pendingReply.text,
+                at,
+                ...(pendingReply.attachments && pendingReply.attachments.length > 0
+                  ? { attachments: pendingReply.attachments }
+                  : {}),
+                ...(pendingReply.quote ? { quote: pendingReply.quote } : {}),
+                // 每条回复记自己的身份：同一条消息先后用本人/机器人回过时，气泡不能共用标签
+                ...(actualIdentity ? { identity: actualIdentity } : {}),
+              },
+            ],
+          }
+          : {}),
         delivery: {
           mode: result.mode,
           platformReply: result.platformReply,
           at,
-          ...(result.mode === 'real' && result.identity ? { identity: result.identity } : {}),
+          ...(actualIdentity ? { identity: actualIdentity } : {}),
         },
       })!;
       const identityNote = result.identity === 'user'
@@ -597,13 +865,38 @@ export class MessageService {
       counters.sent += 1;
       if (result.mode === 'mock') counters.sentMock += 1;
     } catch (e) {
+      // 失败也要在对话框里留痕：把这次回复按 failed=true 写进历史。
+      // 之前失败就丢弃，界面上的「发送中」气泡永远等不到结果 —— 用户以为一直在发。
+      const pendingReply = this.pendingReplies.get(id);
+      this.pendingReplies.delete(id);
       const reason = e instanceof Error ? e.message : String(e);
       // 失败原因上浮到消息本身（P1-2）：前端详情页与 toast 直接可读，不用去回放深处翻。
       // 只截断写入消息；完整原因仍进闭环日志与死信队列。
       const failureReason = reason.length > MessageService.FAILURE_REASON_MAX
         ? `${reason.slice(0, MessageService.FAILURE_REASON_MAX)}…`
         : reason;
-      const m = this.repo.update(id, { status: MsgStatus.FAILED, failureReason })!;
+      const m = this.repo.update(id, {
+        status: MsgStatus.FAILED,
+        failureReason,
+        ...(pendingReply !== undefined
+          ? {
+            replies: [
+              ...(cur.replies ?? []),
+              {
+                text: pendingReply.text,
+                at: new Date().toISOString(),
+                failed: true,
+                failureReason,
+                ...(pendingReply.attachments && pendingReply.attachments.length > 0
+                  ? { attachments: pendingReply.attachments }
+                  : {}),
+                // 失败时记「这次本来要用哪个身份」，便于用户判断是不是身份选错了
+                ...(identity ? { identity } : {}),
+              },
+            ],
+          }
+          : {}),
+      })!;
       writeTrace(this.repo, m, 'failed', reason);
       this.repo.pushDlq({ platform: cur.platform, payload: outgoing, reason, at: new Date().toISOString() });
       this.broadcast({ type: 'message.failed', data: m });
@@ -611,9 +904,10 @@ export class MessageService {
     }
   }
 
-  async markDone(id: string): Promise<void> {
+  async markDone(id: string, viewer?: Viewer): Promise<void> {
+    this.requireVisible(id, viewer);
     const m = this.repo.update(id, { done: true });
-    if (!m) throw new Error('message not found');
+    if (!m) throw new Error(NOT_FOUND);
     writeTrace(this.repo, m, 'done');
     this.broadcast({ type: 'message.updated', data: m });
   }
@@ -622,9 +916,10 @@ export class MessageService {
    * 把任意消息手动加入待办：只改消息类型与完成态，不改闭环状态、不触发平台回写。
    * 已完成的待办再次加入时重新打开（done=false），便于用户继续跟进。
    */
-  async markTodo(id: string): Promise<UnifiedMessage> {
+  async markTodo(id: string, viewer?: Viewer): Promise<UnifiedMessage> {
+    this.requireVisible(id, viewer);
     const m = this.repo.update(id, { type: 'todo', done: false });
-    if (!m) throw new Error('message not found');
+    if (!m) throw new Error(NOT_FOUND);
     writeTrace(this.repo, m, 'todo_added', '用户手动加入待办');
     this.broadcast({ type: 'message.updated', data: m });
     return m;
@@ -636,13 +931,12 @@ export class MessageService {
    * 阅读状态独立于业务状态（status）：收到不等于看过，回写成功也不等于看过。
    * 首次已读写入时间戳（而不是布尔），既方便「最近已读」排序，也能在回放里看清时序。
    */
-  async markRead(id: string, read = true): Promise<UnifiedMessage> {
-    const cur = this.repo.get(id);
-    if (!cur) throw new Error('message not found');
+  async markRead(id: string, read = true, viewer?: Viewer): Promise<UnifiedMessage> {
+    const cur = this.requireVisible(id, viewer);
     // 已读时间只记第一次：重复标记不刷新时间戳
     const readAt = read ? (cur.readAt ?? new Date().toISOString()) : undefined;
     const m = this.repo.update(id, { readAt });
-    if (!m) throw new Error('message not found');
+    if (!m) throw new Error(NOT_FOUND);
     // 阅读是高频轻操作，不写闭环日志；只在状态真正变化时广播
     if (cur.readAt !== readAt) this.broadcast({ type: 'message.updated', data: m });
     return m;
@@ -667,13 +961,13 @@ export class MessageService {
    * 一键全部已读：返回实际改动的条数（已读的跳过，避免无意义广播）。
    * `ids` 用于「只标记当前筛选范围」，不传则全量。
    */
-  async markAllRead(ids?: string[]): Promise<number> {
+  async markAllRead(ids?: string[], viewer?: Viewer): Promise<number> {
     const now = new Date().toISOString();
-    const pool = ids
-      ? this.repo.list().filter((m) => ids.includes(m.traceId))
-      : this.repo.list();
+    // 归属过滤必须在这里做：`ids` 是客户端传来的，不校验就是「传谁的 id 就能改谁的消息」
+    const pool = this.repo.list().filter((m) => visibleTo(m, viewer));
+    const targets = ids ? pool.filter((m) => ids.includes(m.traceId)) : pool;
     let changed = 0;
-    for (const cur of pool) {
+    for (const cur of targets) {
       if (cur.readAt) continue;
       const m = this.repo.update(cur.traceId, { readAt: now });
       if (m) {
@@ -737,12 +1031,14 @@ export class MessageService {
   }
 
   // ---------- 回放 ----------
-  getTrace(traceId: string): UnifiedMessage[] {
-    const m = this.repo.get(traceId);
+  getTrace(traceId: string, viewer?: Viewer): UnifiedMessage[] {
+    const m = this.get(traceId, viewer);
     return m ? [m] : [];
   }
 
-  getLoopLog(traceId: string) {
+  getLoopLog(traceId: string, viewer?: Viewer) {
+    // 回放日志里带正文与发送结果，同样要过归属校验（否则"看不了消息但能看日志"）
+    if (!this.get(traceId, viewer)) return [];
     return this.repo.getLoopLog(traceId);
   }
 

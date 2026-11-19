@@ -5,20 +5,20 @@ import { test, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import express from 'express';
 import { config } from '../config';
 import type { MailAccount } from '../config/runtime';
 import { MailAccountsStore, resetMailAccountsForTests } from '../services/mailAccounts';
 import { mailAccountsRouter, type MailAccountsRouterDeps } from './mailAccounts';
+import { makeTempDir } from '../utils/tempDir';
 
 const dirs: string[] = [];
 const original = { accounts: [...config.mail.accounts], issues: [...config.mail.issues] };
 
 function tempDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'linkhub-mail-api-'));
+  const dir = makeTempDir('linkhub-mail-api-');
   dirs.push(dir);
   return dir;
 }

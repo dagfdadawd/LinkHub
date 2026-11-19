@@ -79,10 +79,21 @@ async function buildStatus(): Promise<DingtalkPersonalStatusData> {
   const loginExpiresInSec = login?.expiresAt
     ? Math.max(0, Math.round((new Date(login.expiresAt).getTime() - Date.now()) / 1000))
     : undefined;
+  const tokenExpiresInSec = auth.expiresAt
+    ? Math.max(0, Math.round((new Date(auth.expiresAt).getTime() - Date.now()) / 1000))
+    : undefined;
   return {
     available: auth.available,
     ...(auth.version ? { version: auth.version } : {}),
     authenticated: auth.authenticated,
+    // 登录有效期：前端据此显示「剩余 1 小时 58 分」，到期前提醒重新授权
+    ...(auth.expiresAt ? { tokenExpiresAt: auth.expiresAt } : {}),
+    ...(auth.refreshExpiresAt ? { refreshExpiresAt: auth.refreshExpiresAt } : {}),
+    ...(tokenExpiresInSec !== undefined ? { tokenExpiresInSec } : {}),
+    ...(auth.userName ? { userName: auth.userName } : {}),
+    ...(auth.corpName ? { corpName: auth.corpName } : {}),
+    ...(auth.tokenValid !== undefined ? { tokenValid: auth.tokenValid } : {}),
+    ...(auth.refreshTokenValid !== undefined ? { refreshTokenValid: auth.refreshTokenValid } : {}),
     state: view.state,
     ...(profile?.displayName ? { displayName: profile.displayName } : {}),
     ...(view.detail ? { detail: view.detail } : {}),

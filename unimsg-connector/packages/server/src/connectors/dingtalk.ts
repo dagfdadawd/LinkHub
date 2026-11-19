@@ -12,7 +12,6 @@
  */
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { basename, extname, join } from 'node:path';
 import {
   Platform, MsgStatus, UnifiedMessage, PlatformConnector,
@@ -24,6 +23,7 @@ import { dingtalkDecrypt, dingtalkSign, safeEqual } from './crypto';
 import { dingtalkAccessToken, postJson, postMultipart } from './real';
 import { DingtalkPersonalError, dingtalkPersonalClient, type DwsSendTarget } from './dingtalkPersonal';
 import { identityChannelsReal, resolveIdentity } from '../services/identity';
+import { makeTempDir } from '../utils/tempDir';
 import { decodeAttachment, describeAttachments, isOutboundComposed } from '../services/outbound';
 
 /** 媒体上传固定在 oapi 老域名（新域名只有机器人发消息/下载，没有 upload） */
@@ -301,8 +301,7 @@ async function sendViaPersonal(
    * 原样写进正文（`[文件] linkhub-dws-…docx fileId: …`），用户看到的就是一串 uuid。
    * 目录唯一已经足够，文件名不必再带随机串——回推里就是真实文件名。
    */
-  const tempDir = join(tmpdir(), `linkhub-dws-${randomUUID()}`);
-  mkdirSync(tempDir, { recursive: true });
+  const tempDir = makeTempDir(`linkhub-dws-${randomUUID()}-`);
   const usedNames = new Set<string>();
   /**
    * 落盘文件名分两种：
@@ -336,15 +335,20 @@ async function sendViaPersonal(
        * 若把 `![..](..)` 当纯文本原样回显，手机上会看到一串路径，比丢引用条更糟。
        * 纯文字回复仍用 reply，保留引用关系。
        */
+      /**
+       * 默认是**普通消息**（`chat message send`），只有用户显式「回复某条消息」时才引用。
+       * 旧实现条件里没有"显式"这一项，导致每条回复都挂引用条，手机上看起来像在回某一句话。
+       */
+      const explicitQuote = msg.quoteRef;
       const useReply = inlineImages.length === 0
         && canReply
-        && Boolean(refMessageId)
+        && Boolean(explicitQuote?.messageId)
         && Boolean(msg.conversation?.id);
-      const outcome = useReply && refMessageId && msg.conversation?.id
+      const outcome = useReply && explicitQuote && msg.conversation?.id
         ? await client.reply({
           conversationId: msg.conversation.id,
-          refMessageId,
-          refSenderOpenDingtalkId: msg.sender.id,
+          refMessageId: explicitQuote.messageId,
+          refSenderOpenDingtalkId: explicitQuote.senderId || msg.sender.id,
           text: content,
           idempotencyKey,
         })

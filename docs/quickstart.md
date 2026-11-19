@@ -100,6 +100,8 @@ pnpm --filter @unimsg/server start
 
 > `API_TOKEN` 不要留空：演示保持默认 `dev-token`，对外部署必须改成强随机值。**留空会回退 dev-token 并打印告警，仍强制 Bearer 鉴权**（不会出现"空令牌 = 不鉴权"）；`NODE_ENV=production` 且仍是默认/空令牌时服务会拒绝启动。
 
+> **账号体系默认收紧**：`AUTH_REGISTRATION` 默认 `auto`——本机第一个账号可以自助注册，**之后注册入口自动关闭**（页面会说明原因），避免同一台机器连着真实飞书/钉钉/邮箱时，陌生人注册一个号就能用主人的连接发消息。需要多人时设置 `AUTH_SIGNUP_CODE=<邀请码>` 并重启，注册页会出现「邀请码」输入框；始终开放用 `AUTH_REGISTRATION=open`，始终关闭用 `closed`。机器级操作（改平台凭据、导入邮箱、拉起本人授权、主动发送）只有机器主人（首个注册的账号）能做，其他成员只读。
+
 **成功信号（分两层看，别混）**：
 
 - **变量层（不代表连通）**：后端启动日志出现 `运行模式: ...=real(auto) 收✓ 发✓`；`curl .../api/health` 的 `modes` 中该平台为 `real`；`/api/accounts` 中该平台 `configured=true / mode=real`。这些只说明 **env 变量填齐了**——**填假的 App ID 也会显示 `real` / 卡片 Tag「已配置（未验证）」**，不能当成"已连上"。

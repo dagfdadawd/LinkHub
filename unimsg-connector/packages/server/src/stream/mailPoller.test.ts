@@ -9,7 +9,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
@@ -29,6 +29,7 @@ import {
 } from './mailPoller';
 import type { MailAccount } from '../config';
 import type { MailRaw } from '../connectors/mail/mail';
+import { makeTempDir } from '../utils/tempDir';
 
 const ACCOUNT: MailAccount = {
   key: 'qq', label: 'QQ邮箱', address: 'me@qq.com', authCode: 'auth-code', provider: 'qq',
@@ -93,7 +94,7 @@ function makeIngest(duplicates: number[] = []): IngestSpy {
 
 /** 每个用例独立临时目录，结束即删 */
 function withTempDir<T>(fn: (dir: string) => T): T {
-  const dir = mkdtempSync(join(tmpdir(), 'linkhub-mail-state-'));
+  const dir = makeTempDir('linkhub-mail-state-');
   try {
     return fn(dir);
   } finally {

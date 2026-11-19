@@ -27,6 +27,12 @@ export interface MessageRepository {
   findByExternal(platform: Platform, externalId: string): UnifiedMessage | undefined;
   list(filter?: { platform?: Platform; status?: MsgStatus }): UnifiedMessage[];
   update(id: string, patch: Partial<UnifiedMessage>): UnifiedMessage | undefined;
+  /**
+   * 批量改（一次落盘）：归属认领、孤儿归零这类「一次动很多条」的操作必须用它。
+   * 逐条 update 会每条都全量重写一次快照，N 条消息就是 O(N²) 的同步 IO。
+   * 返回实际改动的条数。
+   */
+  updateMany(entries: Array<{ id: string; patch: Partial<UnifiedMessage> }>): number;
   appendTrace(e: TraceEntry): void;
   getLoopLog(traceId: string): TraceEntry[];
   pushDlq(e: DlqEntry): void;
@@ -123,6 +129,20 @@ export class InMemoryRepository implements MessageRepository {
     this.byId.set(id, next);
     this.persist();
     return next;
+  }
+
+  updateMany(entries: Array<{ id: string; patch: Partial<UnifiedMessage> }>): number {
+    const at = new Date().toISOString();
+    let changed = 0;
+    for (const { id, patch } of entries) {
+      const cur = this.byId.get(id);
+      if (!cur) continue;
+      // 显式 undefined 也要能覆盖（`ownerId: undefined` = 恢复成无主），所以用展开而不是过滤
+      this.byId.set(id, { ...cur, ...patch, updatedAt: at });
+      changed += 1;
+    }
+    if (changed > 0) this.persist();
+    return changed;
   }
 
   appendTrace(e: TraceEntry): void {

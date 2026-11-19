@@ -6,7 +6,7 @@
  */
 import { MsgStatus } from '../types';
 import type {
-  ComposeRequest, MsgType, OutboundAttachment, Platform, UnifiedMessage,
+  ComposeRequest, IdentityRole, MsgType, OutboundAttachment, Platform, UnifiedMessage,
 } from '../types';
 import type {
   AccountInfo, AppConfigSaveResult, AppConfigUpdate, AppConfigView,
@@ -15,6 +15,7 @@ import type {
   ReanalyzeResult,
 } from '../services/api';
 import { isDemoApi } from '../services/api';
+import { getSession } from '../services/session';
 import type { RealtimeClient, RealtimeStatus } from '../services/realtime';
 import { sortMessages } from '../utils/format';
 
@@ -175,8 +176,17 @@ export class AppStore {
     if (this.state.sendFailure) this.set({ sendFailure: null });
   }
 
-  async reply(id: string, text: string, attachments?: OutboundAttachment[]): Promise<void> {
-    const ack = await this.api.reply(id, text, attachments);
+  async reply(
+    id: string,
+    text: string,
+    attachments?: OutboundAttachment[],
+    identity?: IdentityRole,
+    quoteTraceId?: string,
+  ): Promise<void> {
+    // 不传引用时保持 4 参调用：老测试/老实现都兼容（多传一个 undefined 会改变调用形态）
+    const ack = quoteTraceId
+      ? await this.api.reply(id, text, attachments, identity, quoteTraceId)
+      : await this.api.reply(id, text, attachments, identity);
     // 202 回执兜底：WS 丢包时也能把回复内容与 replied 状态落地。
     // 只补字段、不把状态往回拽（HTTP 202 可能晚于 WS 的 sent/synced 推送）。
     this.upsertReply(ack.message);
@@ -366,7 +376,7 @@ export class AppStore {
         this.api.accounts(),
         this.api.health(),
       ]);
-      this.set({ messages, accounts, health });
+      this.set({ messages, accounts, health, error: null });
       void this.refreshOnboarding();
       void this.refreshAppConfig();
     } catch {
@@ -375,7 +385,16 @@ export class AppStore {
   }
 
   private onRealtime(event: { type: string; data?: UnifiedMessage }): void {
+    // 认领历史消息后由服务端广播：直接重拉，避免手动刷新
+    if (event.type === 'messages.changed') {
+      void this.reload();
+      return;
+    }
     if (!event.data) return;
+    // 数据隔离：别人的消息不推进来的收件箱（部署令牌 / 未登录时不过滤）
+    const ownerId = (event.data as { ownerId?: string }).ownerId;
+    const me = getSession()?.user.id;
+    if (ownerId && me && ownerId !== me) return;
     if (event.type === 'message.received' || event.type === 'message.updated' || event.type === 'message.failed') {
       // 实时失败才提示：失败原因直接写进消息，详情页不必再让用户去回放里翻
       if (event.type === 'message.failed' || event.data.status === MsgStatus.FAILED) {
@@ -403,6 +422,14 @@ export class AppStore {
     this.upsert({
       ...cur,
       reply: incoming.reply ?? cur.reply,
+      /**
+       * 回复历史必须一起合并：202 回执里的 message 是「当前这条」，如果只挑几个字段，
+       * `replies` 会被丢掉 —— 界面上表现为"刚发的气泡和之前的回复都消失"。
+       * 取更长的那个，避免回执比 WS 推送旧时把历史截短。
+       */
+      replies: (incoming.replies?.length ?? 0) >= (cur.replies?.length ?? 0)
+        ? (incoming.replies ?? cur.replies)
+        : cur.replies,
       intent: incoming.intent ?? cur.intent,
       replyDraft: incoming.replyDraft ?? cur.replyDraft,
       updatedAt: incoming.updatedAt ?? cur.updatedAt,

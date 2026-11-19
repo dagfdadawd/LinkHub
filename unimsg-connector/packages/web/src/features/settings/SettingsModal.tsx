@@ -5,12 +5,16 @@ import {
   BgColorsOutlined,
   DeleteOutlined,
   InfoCircleOutlined,
+  LockOutlined,
+  LogoutOutlined,
   MessageOutlined,
   PictureOutlined,
   UserOutlined,
 } from '@ant-design/icons';
 import type { ReactNode } from 'react';
 import { useAppState } from '../../hooks/useAppState';
+import { services, store } from '../../store';
+import { clearSession, useSession } from '../../services/session';
 import { resetOnboardingTips } from '../../utils/onboarding';
 import { useTheme, type ThemePreference } from '../../app/ThemeProvider';
 import {
@@ -32,6 +36,19 @@ import {
 
 const MAX_AVATAR_BYTES = 300 * 1024;
 const APP_VERSION = '1.0.0';
+
+/**
+ * 构建时间（vite define 注入）。看「设置 → 关于」这里就能判断浏览器里跑的是不是最新代码：
+ * 之前因为浏览器一直用 7 天前的旧产物，排查了大量"改了没生效"的假问题。
+ */
+const BUILD_TIME = (() => {
+  try {
+    const raw = typeof __BUILD_TIME__ === 'string' ? __BUILD_TIME__ : '';
+    return raw ? new Date(raw).toLocaleString('zh-CN') : '开发模式（未构建）';
+  } catch {
+    return '开发模式（未构建）';
+  }
+})();
 const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? '';
 
 /** 一行设置：左侧标题 + 说明，右侧控件 */
@@ -58,6 +75,66 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
   const [name, setName] = useState(profile.name);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(profile.avatarUrl);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  /** 账号分区：当前登录用户 + 改口令 / 退出所有设备 */
+  const session = useSession();
+  const [oldPassword, setOldPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [changingPassword, setChangingPassword] = useState(false);
+
+  async function handleChangePassword(): Promise<void> {
+    if (newPassword !== confirmPassword) {
+      message.error('两次输入的新口令不一致');
+      return;
+    }
+    setChangingPassword(true);
+    try {
+      const { revoked } = await services.api.changePassword({ oldPassword, newPassword });
+      // 后端已作废全部会话：本地必须同步清掉，否则会拿着废令牌继续请求
+      clearSession();
+      services.realtime.reconnectNow?.();
+      setOldPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      onClose();
+      message.success(`口令已修改，${revoked} 个登录已失效，请用新口令重新登录`);
+      navigate('/login', { replace: true });
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : '修改口令失败');
+    } finally {
+      setChangingPassword(false);
+    }
+  }
+
+  async function handleLogoutAll(): Promise<void> {
+    try {
+      const { revoked } = await services.api.logoutAll();
+      clearSession();
+      services.realtime.reconnectNow?.();
+      onClose();
+      message.success(`已退出所有设备（${revoked} 个登录失效）`);
+      navigate('/login', { replace: true });
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : '退出失败');
+    }
+  }
+
+  const [claiming, setClaiming] = useState(false);
+
+  /** 把「无主」的历史消息认领到当前账号（数据隔离的入口） */
+  async function handleClaim(): Promise<void> {
+    setClaiming(true);
+    try {
+      const { claimed } = await services.api.claimMessages();
+      await store.refresh();
+      message.success(claimed > 0 ? `已认领 ${claimed} 条历史消息` : '没有可认领的历史消息');
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : '认领失败');
+    } finally {
+      setClaiming(false);
+    }
+  }
 
   // 每次打开都同步为已保存的值，避免上次未提交的编辑残留
   useEffect(() => {
@@ -279,6 +356,113 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
             ),
           },
           {
+            key: 'account',
+            label: (
+              <span>
+                <LockOutlined /> 账号
+              </span>
+            ),
+            children: (
+              <div className="set-pane">
+                {session ? (
+                  <>
+                    <div className="set-kv">
+                      <div>
+                        <span>当前账号</span>
+                        <b>{session.user.displayName}</b>
+                      </div>
+                      <div>
+                        <span>用户名</span>
+                        <b className="mono">{session.user.username}</b>
+                      </div>
+                      <div>
+                        <span>注册时间</span>
+                        <b>{new Date(session.user.createdAt).toLocaleString('zh-CN')}</b>
+                      </div>
+                      <div>
+                        <span>最近登录</span>
+                        <b>
+                          {session.user.lastLoginAt
+                            ? new Date(session.user.lastLoginAt).toLocaleString('zh-CN')
+                            : '本次为首次登录'}
+                        </b>
+                      </div>
+                    </div>
+
+                    <div className="set-section__title">数据归属</div>
+                    <p className="set-hint">
+                      登录后只看到归属你账号的消息。接入平台后新收的消息默认无主，
+                      点下方按钮可把历史/无主消息收进你的收件箱（别人的不会被抢走）。
+                    </p>
+                    <Button loading={claiming} onClick={() => void handleClaim()} data-testid="account-claim">
+                      认领无主的历史消息
+                    </Button>
+
+                    <div className="set-section__title">修改口令</div>
+                    <p className="set-hint">
+                      修改成功后，该账号的所有登录（含本机）都会失效，需要用新口令重新登录。
+                    </p>
+                    <div className="account-pwd">
+                      <Input.Password
+                        placeholder="原口令"
+                        aria-label="原口令"
+                        value={oldPassword}
+                        onChange={(e) => setOldPassword(e.target.value)}
+                        size="large"
+                      />
+                      <Input.Password
+                        placeholder="新口令（至少 6 位）"
+                        aria-label="新口令"
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        size="large"
+                      />
+                      <Input.Password
+                        placeholder="确认新口令"
+                        aria-label="确认新口令"
+                        value={confirmPassword}
+                        onChange={(e) => setConfirmPassword(e.target.value)}
+                        size="large"
+                      />
+                      <Button
+                        type="primary"
+                        loading={changingPassword}
+                        disabled={!oldPassword || !newPassword || !confirmPassword}
+                        onClick={() => void handleChangePassword()}
+                        data-testid="account-change-password"
+                      >
+                        修改口令
+                      </Button>
+                    </div>
+
+                    <div className="set-section__title">登录设备</div>
+                    <Popconfirm
+                      title="退出所有设备？"
+                      description="该账号的全部登录都会失效，需要重新登录。"
+                      okText="退出全部"
+                      cancelText="取消"
+                      onConfirm={() => void handleLogoutAll()}
+                    >
+                      <Button danger icon={<LogoutOutlined />} data-testid="account-logout-all">
+                        退出所有设备
+                      </Button>
+                    </Popconfirm>
+                  </>
+                ) : (
+                  <>
+                    <p className="set-hint">
+                      当前未登录（正在使用部署令牌，适合本机演示）。
+                      登录后所有消息与发送记录都会归属到你的账号。
+                    </p>
+                    <Button type="primary" onClick={() => navigate('/login')}>
+                      去登录 / 注册
+                    </Button>
+                  </>
+                )}
+              </div>
+            ),
+          },
+          {
             key: 'about',
             label: (
               <span>
@@ -291,6 +475,10 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
                   <div>
                     <span>版本</span>
                     <b>v{APP_VERSION}</b>
+                  </div>
+                  <div>
+                    <span>前端构建</span>
+                    <b className="mono">{BUILD_TIME}</b>
                   </div>
                   <div>
                     <span>接口地址</span>

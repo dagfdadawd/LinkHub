@@ -4,8 +4,7 @@
  */
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { UnifiedMessage } from '@unimsg/shared';
 import {
@@ -22,10 +21,11 @@ import {
   type FeishuUserMessageRaw,
 } from '../connectors/feishuUserReceive';
 import { getFeishuReceiveError, resetIdentityCaches } from '../services/identity';
+import { makeTempDir } from '../utils/tempDir';
 
 const dirs: string[] = [];
 function tempFile(name = 'state.json'): string {
-  const dir = mkdtempSync(join(tmpdir(), 'linkhub-feishu-user-'));
+  const dir = makeTempDir('linkhub-feishu-user-');
   dirs.push(dir);
   return join(dir, name);
 }

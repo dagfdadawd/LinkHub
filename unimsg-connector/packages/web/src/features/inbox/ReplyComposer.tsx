@@ -18,6 +18,8 @@ export function ReplyComposer({
   value,
   sending,
   sendDisabled = false,
+  quote,
+  onClearQuote,
   onChange,
   onSend,
 }: {
@@ -26,6 +28,10 @@ export function ReplyComposer({
   sending: boolean;
   /** 发送成功后的短暂冷却（防止手滑重复发送同一条回复） */
   sendDisabled?: boolean;
+  /** 当前正在引用的消息（用户右键/长按某条消息选了「回复」才有） */
+  quote?: { text: string; senderName: string };
+  /** 取消引用 */
+  onClearQuote?: () => void;
   onChange: (text: string) => void;
   /** 带上本次选中的附件一起回写；没有附件时传空数组 */
   onSend: (attachments: OutboundAttachment[]) => void;
@@ -77,6 +83,22 @@ export function ReplyComposer({
 
   return (
     <section className="composer" aria-label="回复编辑器">
+      {quote && (
+        <div className="composer__quote" data-testid="quote-chip">
+          <div className="composer__quote-body">
+            <span className="composer__quote-name">{quote.senderName || '对方'}</span>
+            <span className="composer__quote-text">{quote.text || '（原消息为空）'}</span>
+          </div>
+          <button
+            type="button"
+            className="composer__quote-close"
+            aria-label="取消引用"
+            onClick={() => onClearQuote?.()}
+          >
+            ×
+          </button>
+        </div>
+      )}
       <TextArea
         value={value}
         onChange={(e) => onChange(e.target.value)}

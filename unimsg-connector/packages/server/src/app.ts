@@ -18,7 +18,8 @@ import { onboardingRouter } from './routes/onboarding';
 import { mailAccountsRouter } from './routes/mailAccounts';
 import { appConfigRouter } from './routes/appConfig';
 import { contactsRouter } from './routes/contacts';
-import { apiAuth } from './middlewares/auth';
+import { authRouter } from './routes/auth';
+import { apiAuth, ownerOnly } from './middlewares/auth';
 import { config } from './config';
 
 /**
@@ -94,12 +95,15 @@ export function createApp(svc: MessageService, options: CreateAppOptions = {}) {
   app.use('/api', healthRouter(svc)); // 公共
   app.use('/api', webhookRouter(svc)); // 平台验签
   app.use('/api', feishuOAuthCallbackRouter()); // 公共 OAuth 回调（浏览器跳转，无 Bearer）
+  // 必须挂在任何 apiAuth 之前：否则「先有令牌才能登录」成死循环
+  app.use('/api', authRouter(svc)); // 公共：注册/登录/当前用户/登出
   app.use('/api', apiAuth, messagesRouter(svc)); // Bearer 鉴权
-  app.use('/api', apiAuth, feishuOAuthRouter()); // Bearer 鉴权：发起飞书用户授权
-  app.use('/api', apiAuth, dingtalkPersonalRouter()); // Bearer 鉴权：钉钉本人身份（dws 登录/状态/注销）
+  // 机器级连接（凭据/账号/本人授权）只允许机器主人改；GET 读接口仍对所有登录用户开放
+  app.use('/api', apiAuth, ownerOnly(svc), feishuOAuthRouter()); // Bearer 鉴权：发起飞书用户授权
+  app.use('/api', apiAuth, ownerOnly(svc), dingtalkPersonalRouter()); // Bearer 鉴权：钉钉本人身份（dws 登录/状态/注销）
   app.use('/api', apiAuth, onboardingRouter()); // Bearer 鉴权：授权中心/首次使用向导聚合视图
-  app.use('/api', apiAuth, mailAccountsRouter()); // Bearer 鉴权：邮箱账号运行时导入（个人版）
-  app.use('/api', apiAuth, appConfigRouter()); // Bearer 鉴权：本地应用配置（白号：GUI 填凭据/切模式）
+  app.use('/api', apiAuth, ownerOnly(svc), mailAccountsRouter()); // Bearer 鉴权：邮箱账号运行时导入（个人版）
+  app.use('/api', apiAuth, ownerOnly(svc), appConfigRouter()); // Bearer 鉴权：本地应用配置（白号：GUI 填凭据/切模式）
   app.use('/api', apiAuth, contactsRouter()); // Bearer 鉴权：发送目标名录（会话名，只读）
 
   // 同源部署（Docker 单容器）：server 直接托管前端构建产物 + SPA 回退。

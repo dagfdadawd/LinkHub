@@ -7,8 +7,7 @@
  */
 import { test, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Platform } from '@unimsg/shared';
 import { config } from '../config';
@@ -22,6 +21,7 @@ import {
   maskMailAddress,
   saveMailAccountsFile,
 } from './mailAccounts';
+import { makeTempDir } from '../utils/tempDir';
 
 const dirs: string[] = [];
 const original = {
@@ -33,7 +33,7 @@ const original = {
 };
 
 function tempDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'linkhub-mail-accounts-'));
+  const dir = makeTempDir('linkhub-mail-accounts-');
   dirs.push(dir);
   return dir;
 }

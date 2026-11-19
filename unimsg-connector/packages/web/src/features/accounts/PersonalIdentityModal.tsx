@@ -952,6 +952,9 @@ export function PersonalIdentityModal({
       title="连接钉钉本人账号"
       width={600}
       destroyOnHidden
+      /** 内容较高：贴顶部摆放而不是垂直居中，避免上下留白不均、底部按钮被裁 */
+      style={{ top: 48 }}
+      styles={{ body: { maxHeight: 'calc(100vh - 200px)', overflowY: 'auto' } }}
       footer={
         <Button onClick={onClose}>
           关闭

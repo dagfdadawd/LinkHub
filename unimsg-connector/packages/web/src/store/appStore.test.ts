@@ -13,6 +13,21 @@ function makeStore() {
   return { store: new AppStore(api, realtime), api, realtime };
 }
 
+describe('回复身份：选了就要一路传到服务端', () => {
+  it('store.reply 把 identity 透传给 api.reply（前端不吞掉「本人/机器人」）', async () => {
+    const api = { reply: vi.fn(async () => ({ message: {} as never, taskId: 't1' })) };
+    const store = new AppStore(api as unknown as MessageApi, new EmitterRealtime());
+    vi.spyOn(store, 'refreshHealth').mockResolvedValue(undefined);
+
+    await store.reply('t1', '收到', undefined, 'user');
+    expect(api.reply).toHaveBeenCalledWith('t1', '收到', undefined, 'user');
+
+    // 不传 = 跟随后端平台策略（参数必须是 undefined，而不是被塞成默认值）
+    await store.reply('t1', '收到');
+    expect(api.reply).toHaveBeenLastCalledWith('t1', '收到', undefined, undefined);
+  });
+});
+
 describe('AppStore', () => {
   it('初始化后加载消息、账号与健康指标', async () => {
     const { store } = makeStore();
@@ -78,6 +93,15 @@ describe('AppStore', () => {
       compose: async () => Promise.reject(new Error('unused')),
       reanalyze: async () => Promise.reject(new Error('unused')),
       contacts: async (platform) => ({ platform, available: false, items: [] }),
+      register: async () => Promise.reject(new Error('unused')),
+      login: async () => Promise.reject(new Error('unused')),
+      logout: async () => undefined,
+      me: async () => undefined,
+      authStatus: async () => ({ requireLogin: false, hasUsers: false, machineOwner: null, user: null }),
+      changePassword: async () => ({ revoked: 0 }),
+      logoutAll: async () => ({ revoked: 0 }),
+      claimMessages: async () => ({ claimed: 0 }),
+      resetPassword: async () => ({ revoked: 0 }),
       capabilities: async () => [],
       feishuOAuthStart: async () => ({ url: '' }),
       dingtalkPersonalLogin: async () => Promise.reject(new Error('unused')),
@@ -133,6 +157,35 @@ markTodo: async () => Promise.reject(new Error('unused')),
     await wait(10);
 
     expect(listSpy).toHaveBeenCalled();
+  });
+
+  it('202 回执合并不丢回复历史（否则刚发的气泡会消失）', async () => {
+    const { store, api, realtime } = makeStore();
+    await store.init();
+    const target = store.getSnapshot().messages.find((m) => m.status === MsgStatus.RECEIVED)!;
+
+    // WS 先推来一条带历史的消息
+    realtime.emit({
+      type: 'message.updated',
+      data: {
+        ...target,
+        reply: '第二条',
+        replies: [
+          { text: '第一条', at: '2026-11-19T01:00:00.000Z' },
+          { text: '第二条', at: '2026-11-19T01:00:30.000Z' },
+        ],
+      },
+    });
+
+    // 202 回执只带当前回复、不带历史
+    vi.spyOn(api, 'reply').mockResolvedValueOnce({
+      message: { ...target, status: MsgStatus.REPLIED, reply: '第二条' },
+      taskId: target.traceId,
+    });
+    await store.reply(target.traceId, '第二条');
+
+    const cur = store.getSnapshot().messages.find((m) => m.traceId === target.traceId);
+    expect(cur?.replies?.map((r) => r.text)).toEqual(['第一条', '第二条']);
   });
 
   it('202 回执晚于 WS 推送时不会把 synced 状态回退', async () => {
