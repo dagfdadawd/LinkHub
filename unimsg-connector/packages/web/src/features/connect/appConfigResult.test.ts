@@ -66,7 +66,7 @@ describe('interpretAppConfigSave（二轮审计 P1-2：不静默假成功）', (
 
   it('静态键保存但 hotApplied:false 且无需重启 → ignored（不声称已生效）', () => {
     const outcome = interpretAppConfigSave(
-      result({ hotApplied: false, changedKeys: ['platforms.wecom.corpId'] }),
+      result({ hotApplied: false, changedKeys: ['platforms.wechat.bridgeUrl'] }),
     );
     expect(outcome.status).toBe('ignored');
   });

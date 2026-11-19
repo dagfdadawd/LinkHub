@@ -58,8 +58,8 @@ export interface PlatformTone extends TagTone {
 export const PLATFORM_META: Record<Platform, PlatformTone> = {
   [Platform.FEISHU]: { name: '飞书', short: '飞', ...tone('#3370ff') },
   [Platform.DINGTALK]: { name: '钉钉', short: '钉', ...tone('#0089ff') },
-  [Platform.WECOM]: { name: '企业微信', short: '企', ...tone('#07c160') },
   [Platform.MAIL]: { name: '邮箱', short: '邮', ...tone('#ff9500') },
+  [Platform.WECHAT]: { name: '微信', short: '微', ...tone('#09bb07') },
 };
 
 /** 状态机展示元信息（color 给色点，ink 给文字） */
@@ -114,7 +114,11 @@ export function deliveryLabel(delivery?: DeliveryInfo): DeliveryLabel {
   if (delivery.mode === 'mock') return { text: '模拟发送（未调用真实平台）', kind: 'mock' };
   const platformReply = delivery.platformReply?.trim();
   const identity = delivery.identity ? `${IDENTITY_ROLE_LABEL[delivery.identity]}发送` : '';
-  const channel = platformReply ? `真实接口（${platformReply}）` : '真实接口';
+  // RPA 没有平台回执：verified=false 表示「已提交给桥，但没核对目标会话/是否送达」，
+  // 不能只写「真实接口」让人以为平台已确认。
+  const unverified = delivery.verified === false;
+  const detail = [platformReply, ...(unverified ? ['已提交未核对'] : [])].filter(Boolean).join('，');
+  const channel = detail ? `真实接口（${detail}）` : '真实接口';
   return { text: identity ? `${identity} · ${channel}` : channel, kind: 'real' };
 }
 

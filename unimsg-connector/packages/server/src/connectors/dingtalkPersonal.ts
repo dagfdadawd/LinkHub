@@ -109,6 +109,9 @@ export interface DwsRunOptions {
   signal?: AbortSignal;
 }
 
+/** 文件下载可能比发消息慢（分片/大文件），给足时间但仍有上限 */
+const DOWNLOAD_TIMEOUT_MS = 120_000;
+
 /** 可注入的执行器：生产默认走 child_process.spawn，单测直接给假实现 */
 export type DwsRunner = (args: string[], opts?: DwsRunOptions) => Promise<DwsRunResult>;
 
@@ -788,6 +791,7 @@ export function parseMediaContent(content: string): { type: 'file' | 'image'; bo
         mimeType: isImage ? 'image/*' : 'application/octet-stream',
         size: 0,
         mediaId: placeholder[2].trim(),
+        resourceType: isImage ? 'image' : 'file',
       },
     };
   }
@@ -803,13 +807,20 @@ export function parseMediaContent(content: string): { type: 'file' | 'image'; bo
   if (taggedFile) {
     const kind = taggedFile[1];
     const name = taggedFile[2].trim();
+    const fileId = taggedFile[3].trim();
     const isImage = kind === '图片';
     return {
       type: isImage ? 'image' : 'file',
       body: `[${kind}]${name ? ` ${name}` : ''}`,
-      ...(name
-        ? { attachment: { name, mimeType: isImage ? 'image/*' : 'application/octet-stream', size: 0 } }
-        : {}),
+      // 关键：fileId 是真正的下载凭据（dws drive download --node）；
+      // 之前只保留文件名，导致「本人发来的文件」在界面里只能看、不能下载。
+      attachment: {
+        name: name || kind,
+        mimeType: isImage ? 'image/*' : 'application/octet-stream',
+        size: 0,
+        fileId,
+        resourceType: isImage ? 'image' : 'file',
+      },
     };
   }
 
@@ -819,16 +830,22 @@ export function parseMediaContent(content: string): { type: 'file' | 'image'; bo
   const r = json as Record<string, any>;
   const name = typeof r.fileName === 'string' ? r.fileName : typeof r.name === 'string' ? r.name : '';
   const mediaId = typeof r.mediaId === 'string' ? r.mediaId : typeof r.media_id === 'string' ? r.media_id : '';
+  const fileId = typeof r.fileId === 'string' ? r.fileId : typeof r.file_id === 'string' ? r.file_id : '';
   const size = Number(r.fileSize ?? r.size ?? 0);
   const looksImage = /\.(png|jpe?g|gif|webp|bmp)$/i.test(name) || /image/i.test(String(r.msgType ?? r.type ?? ''));
-  if (name || mediaId) {
+  if (name || mediaId || fileId) {
     const label = looksImage ? '图片' : '文件';
     return {
       type: looksImage ? 'image' : 'file',
       body: `[${label}]${name ? ` ${name}` : ''}`,
-      ...(name
-        ? { attachment: { name, mimeType: 'application/octet-stream', size: Number.isFinite(size) && size > 0 ? size : 0 } }
-        : {}),
+      attachment: {
+        name: name || label,
+        mimeType: looksImage ? 'image/*' : 'application/octet-stream',
+        size: Number.isFinite(size) && size > 0 ? size : 0,
+        ...(mediaId ? { mediaId } : {}),
+        ...(fileId ? { fileId } : {}),
+        resourceType: looksImage ? 'image' : 'file',
+      },
     };
   }
   return undefined;
@@ -1709,9 +1726,37 @@ export class DingtalkPersonalClient {
       '--message-id', input.messageId,
       '--open-conversation-id', input.conversationId,
       '--output', input.outputPath,
-    ], { timeoutMs: 45_000 });
+    ], { timeoutMs: DOWNLOAD_TIMEOUT_MS });
     if (r.code !== 0) {
       const info = classifyDwsFailure(r, `${this.commandLabel()} chat message download-media`);
+      throw new DingtalkPersonalError(info.message, info.kind, r.code);
+    }
+  }
+
+  /**
+   * 下载钉钉本人消息里的文件（`fileId`）。
+   *
+   * 与图片的 `mediaId` 是两套资源体系：个人事件回推文件时只给
+   * `[文件] 名称 fileId: … 注意：如需下载使用 dws drive download 命令下载`，
+   * 必须用 `drive download --node <fileId>`。下载到调用方给的临时路径，
+   * 再由上层读成 Buffer 返回浏览器；临时文件由调用方清理。
+   */
+  async downloadDriveFile(input: {
+    fileId: string;
+    outputPath: string;
+    signal?: AbortSignal;
+  }): Promise<void> {
+    const r = await this.run([
+      'drive', 'download',
+      '--node', input.fileId,
+      '--output', input.outputPath,
+      '--format', 'json',
+    ], {
+      timeoutMs: DOWNLOAD_TIMEOUT_MS,
+      ...(input.signal ? { signal: input.signal } : {}),
+    });
+    if (r.code !== 0) {
+      const info = classifyDwsFailure(r, `${this.commandLabel()} drive download`);
       throw new DingtalkPersonalError(info.message, info.kind, r.code);
     }
   }

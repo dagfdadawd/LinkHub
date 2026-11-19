@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Platform, MsgStatus } from '@unimsg/shared';
+import { Platform, MsgStatus, type UnifiedMessage } from '@unimsg/shared';
 import { InMemoryRepository } from '../db/repository';
 import { connectors } from '../connectors/registry';
 import { LlmService, type LlmResult } from './llm';
@@ -53,6 +53,39 @@ test('ingest：同 externalId 重推幂等，不重复入库', async () => {
   assert.equal(b.duplicate, true);
   assert.equal(repo.list().length, 1);
   assert.equal(a.message.traceId, b.message.traceId);
+});
+
+test('ingestUnified：重启后飞书本人文件回推按 delivery.platformReply 去重', async () => {
+  const { svc, repo } = makeSvc();
+  const now = new Date().toISOString();
+  const sent: UnifiedMessage = {
+    traceId: 'trace-compose-file',
+    platform: Platform.FEISHU,
+    externalId: 'compose:file-1',
+    sender: { id: 'linkhub', name: 'LinkHub 统一入口' },
+    conversation: { id: 'oc_1', type: 'p2p' },
+    type: 'text',
+    body: '[附件] 周报.pdf',
+    direction: 'out',
+    status: MsgStatus.SENT,
+    delivery: { mode: 'real', platformReply: 'om_sent_file', at: now },
+    createdAt: now,
+    updatedAt: now,
+  };
+  repo.save(sent);
+
+  const echo: UnifiedMessage = {
+    ...sent,
+    traceId: 'trace-echo-file',
+    externalId: 'om_sent_file',
+    body: '[文件] 周报.pdf',
+    attachments: [{ name: '周报.pdf', mimeType: 'application/pdf', size: 10, fileKey: 'fk_1' }],
+    delivery: undefined,
+  };
+  const r = await svc.ingestUnified(Platform.FEISHU, echo);
+  assert.equal(r.duplicate, true);
+  assert.equal(r.message.traceId, sent.traceId);
+  assert.equal(repo.list().length, 1, '重启窗口内也不能多出一条重复出站');
 });
 
 test('reply：走完状态机并真实回写（Mock）', async () => {
@@ -159,7 +192,7 @@ test('ingest：解析后缺 externalId（三平台均兜底 unknown）→ 400 �
   };
   await assert.rejects(() => svc.ingest(Platform.FEISHU, feishuNoId), /externalId/);
   await assert.rejects(() => svc.ingest(Platform.DINGTALK, { msgtype: 'text', text: { content: '没有消息 ID' } }), /externalId/);
-  await assert.rejects(() => svc.ingest(Platform.WECOM, { MsgType: 'text', Content: '没有消息 ID' }), /externalId/);
+  await assert.rejects(() => svc.ingest(Platform.WECHAT, { from: '某人', text: '没有消息 ID' }), /externalId|唯一 ID/);
   assert.equal(repo.list().length, 0, '畸形事件不得写入任何记录');
 
   const ok = await svc.ingest(Platform.FEISHU, feishuSample);
@@ -353,6 +386,32 @@ test('reply 指定 identity：写入 sendIdentity 并在 processing trace 里如
   assert.ok(!(processing?.detail ?? '').endsWith('，'), '不得有尾逗号');
 });
 
+
+test('processSend：real 但 verified=false → 保持 sent，不伪造成 synced', async () => {
+  const repo = new InMemoryRepository();
+  const unverifiedConnectors = {
+    ...connectors,
+    [Platform.FEISHU]: {
+      ...connectors[Platform.FEISHU],
+      send: async () => ({ ok: true, mode: 'real', platformReply: 'om_unverified', verified: false }),
+    },
+  } as typeof connectors;
+  const svc = new MessageService(
+    repo, unverifiedConnectors, new LlmService(), new OcrService(), new RateLimiter(1, 5), () => {},
+  );
+  const { message } = await svc.ingest(Platform.FEISHU, feishuSample);
+  await svc.reply(message.traceId, '4.x 未核对发送');
+  const started = Date.now();
+  while (repo.get(message.traceId)!.status !== MsgStatus.SENT) {
+    if (Date.now() - started > 3000) throw new Error('waitFor sent failed');
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  const saved = repo.get(message.traceId)!;
+  assert.equal(saved.delivery?.mode, 'real');
+  assert.equal(saved.delivery?.verified, false, '必须如实保留未核对');
+  assert.notEqual(saved.status, MsgStatus.SYNCED, '未核对不能写 synced');
+  assert.ok(repo.getLoopLog(message.traceId).some((e) => e.event === 'sent_unverified'));
+});
 
 test('processSend 失败：failureReason 上浮到消息（截断 300 字）、完整原因进 trace/DLQ、广播带原因', async () => {
   const repo = new InMemoryRepository();

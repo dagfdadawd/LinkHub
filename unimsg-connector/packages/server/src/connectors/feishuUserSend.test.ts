@@ -240,6 +240,9 @@ test('自环识别：本进程发出的 message_id 在窗口内重复投递都�
   const event = { event: { message: { message_id: 'om_echo_1' } } };
   assert.equal(feishuConnector.isSelfEcho?.(event), true);
   assert.equal(feishuConnector.isSelfEcho?.(event), true, '平台重投同一事件必须继续命中');
+  // 飞书用户轮询拿到的裸 message 对象（message_id 在顶层）也要能识别
+  assert.equal(feishuConnector.isSelfEcho?.({ message_id: 'om_echo_1' }), true);
+  assert.equal(feishuConnector.isSelfEcho?.({ message_id: 'om_other' }), false);
   assert.equal(feishuConnector.isSelfEcho?.({ event: { message: { message_id: 'om_other' } } }), false);
   assert.equal(feishuConnector.isSelfEcho?.({}), false);
 });

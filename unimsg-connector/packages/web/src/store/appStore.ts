@@ -10,9 +10,10 @@ import type {
 } from '../types';
 import type {
   AccountInfo, AppConfigSaveResult, AppConfigUpdate, AppConfigView,
-  DingtalkLoginOptions, DingtalkLoginStart, DingtalkPersonalStatus, FeishuOAuthStart, HealthInfo,
+  DingtalkLoginOptions, DingtalkLoginStart, DingtalkPersonalStatus, DownloadedFile,
+  FeishuOAuthStart, HealthInfo,
   MailAccountInput, MailAccountTestResult, MailAccountView, MessageApi, OnboardingView,
-  ReanalyzeResult,
+  ReanalyzeResult, WechatBridgeInfo, WechatBridgeStartResult, WechatBridgeStopResult,
 } from '../services/api';
 import { isDemoApi } from '../services/api';
 import type { RealtimeClient, RealtimeStatus } from '../services/realtime';
@@ -230,6 +231,15 @@ export class AppStore {
     return changed;
   }
 
+  /** 下载附件：只把 traceId + 索引交给后端，token / 平台资源都不经过页面 */
+  downloadAttachment(
+    traceId: string,
+    index: number,
+    field: 'attachments' | 'replyAttachments' = 'attachments',
+  ): Promise<DownloadedFile> {
+    return this.api.downloadAttachment(traceId, index, field);
+  }
+
   getTrace(id: string) {
     return this.api.trace(id);
   }
@@ -349,6 +359,21 @@ export class AppStore {
     const appConfig = await this.api.getAppConfig();
     this.set({ appConfig });
     return appConfig;
+  }
+
+  /** A 形态：探测本机 RPA 桥（配置弹窗用） */
+  async wechatBridgeStatus(): Promise<WechatBridgeInfo> {
+    return this.api.wechatBridgeStatus();
+  }
+
+  /** A 形态：由后端拉起本机 RPA 桥 */
+  async startWechatBridge(): Promise<WechatBridgeStartResult> {
+    return this.api.startWechatBridge();
+  }
+
+  /** A 形态：停止由后端拉起的 RPA 桥 */
+  async stopWechatBridge(): Promise<WechatBridgeStopResult> {
+    return this.api.stopWechatBridge();
   }
 
   /** 保存配置（部分更新）：返回是否需重启 / 是否热应用，并刷新本地缓存与健康状态 */

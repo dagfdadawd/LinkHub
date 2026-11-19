@@ -15,10 +15,10 @@ import {
   buildOnboarding,
   dingtalkAdminChecklist,
   feishuAdminChecklist,
-  wecomAdminChecklist,
   type OnboardingDeps,
 } from './onboarding';
 import type { MaskedMailAccount } from './mailAccounts';
+import type { WechatBridgeStatus } from './wechatBridge';
 
 function view(overrides: Partial<PlatformIdentityView> & { user?: Partial<PlatformIdentityView['user']> } = {}): PlatformIdentityView {
   const { user: userOverrides, ...rest } = overrides;
@@ -98,7 +98,7 @@ function deps(overrides: Partial<OnboardingDeps> = {}): OnboardingDeps {
       redirectUri: 'http://127.0.0.1:3001/api/feishu/oauth/callback',
       identityChannelsReal: false,
     },
-    wecom: { runtime: runtime({ platform: Platform.WECOM, label: '企业微信', missing: ['WECOM_CORP_ID'] }) },
+    wechat: { runtime: runtime({ platform: Platform.WECHAT, label: '微信', missing: [] }) },
     port: 3001,
     ...overrides,
   };
@@ -110,7 +110,7 @@ function step(id: string, d = deps()) {
 
 test('白号基线：4 步骤全非 ready → needsAction=4 / firstRun=true；缺凭据给 needs_admin 且配置动作可达', () => {
   const onboarding = buildOnboarding(deps());
-  assert.deepEqual(onboarding.data.steps.map((s) => s.id), ['mail', 'dingtalk', 'feishu', 'wecom']);
+  assert.deepEqual(onboarding.data.steps.map((s) => s.id), ['mail', 'dingtalk', 'feishu', 'wechat']);
   assert.equal(onboarding.data.overall.total, 4);
   assert.equal(onboarding.data.overall.ready, 0);
   assert.equal(onboarding.data.overall.needsAction, 4, '白号不得显示「待处理 0 项」');
@@ -124,10 +124,10 @@ test('白号基线：4 步骤全非 ready → needsAction=4 / firstRun=true；�
   assert.ok(checklist.text?.includes('FEISHU_APP_ID'), '清单必须含 .env 键名');
   assert.ok(checklist.text?.includes('重启'), '清单必须含重启步骤');
 
-  const wecom = onboarding.data.steps.find((s) => s.id === 'wecom')!;
-  assert.equal(wecom.state, 'needs_admin');
-  assert.ok(wecom.actions.some((a) => a.id === 'wecom-configure'));
-  assert.ok(wecom.actions.some((a) => a.kind === 'copy' && a.text?.includes('WECOM_CORP_ID')));
+  // 微信 RPA：默认 mock（不阻断白号），有自检动作
+  const wechat = onboarding.data.steps.find((s) => s.id === 'wechat')!;
+  assert.equal(wechat.state, 'mock');
+  assert.ok(wechat.actions.some((a) => a.id === 'wechat-doctor'));
 
   // 命令动作带 cwd 提示
   const doctor = onboarding.data.steps[0]!.actions.find((a) => a.kind === 'command')!;
@@ -338,9 +338,6 @@ test('P2-5/P3：管理员清单为纯文本（无 Markdown 星号）、按钮名
   assert.match(ding, /tools\\dws\.exe auth login/);
   assert.ok(!/[A-Za-z]:\\\\Users/.test(ding), 'P3：清单里的登录命令不得包含本机盘符绝对路径');
 
-  const wecom = wecomAdminChecklist(3001);
-  assert.ok(!wecom.includes('**'), '企微清单也不能有 Markdown 星号');
-  assert.match(wecom, /重启后端/);
 });
 
 test('P2-6：飞书缺凭据时 missing 只有 App ID/Secret，hint 说明长连接 Verify Token 可不填', () => {
@@ -350,4 +347,113 @@ test('P2-6：飞书缺凭据时 missing 只有 App ID/Secret，hint 说明长连
   assert.ok(!joined.includes('FEISHU_VERIFY_TOKEN'), '默认长连接不应把 Verify Token 列为缺失');
   assert.match(joined, /Verify Token 可不填/);
   assert.match(joined, /FEISHU_STREAM=true/);
+});
+
+// ---------------------------------------------------------------------------
+// 微信 RPA：P0「配了 real 就报 ready」修复后的状态机
+// ---------------------------------------------------------------------------
+
+function wechatRealRuntime(over: Partial<PlatformRuntime> = {}): PlatformRuntime {
+  return runtime({
+    platform: Platform.WECHAT,
+    label: '微信',
+    policy: 'real',
+    mode: 'real',
+    configured: true,
+    canSend: true,
+    canReceive: true,
+    missing: [],
+    warnings: [],
+    ...over,
+  });
+}
+
+function bridge(over: Partial<WechatBridgeStatus> = {}): WechatBridgeStatus {
+  return {
+    state: 'rpa',
+    url: 'http://127.0.0.1:8787',
+    reachable: true,
+    mode: 'rpa',
+    canSend: true,
+    canReceive: true,
+    receiveMode: 'auto',
+    receiveReason: '轮询正常：可读取微信窗口消息',
+    reportedReceive: true,
+    checkedAt: '2024-11-08T02:13:20.000Z',
+    ...over,
+  };
+}
+
+test('微信 P0：WECHAT_MODE=real 但从没探测到桥 → needs_install，绝不 ready', () => {
+  const s = step('wechat', deps({ wechat: { runtime: wechatRealRuntime(), bridge: null } }));
+  assert.equal(s.state, 'needs_install');
+  assert.match(s.summary, /还没有探测到本机 RPA 桥/);
+  assert.ok(s.detail.bridge === null);
+});
+
+test('微信 P0：桥连不上 → needs_install，且给出启动命令', () => {
+  const s = step('wechat', deps({
+    wechat: {
+      runtime: wechatRealRuntime(),
+      bridge: bridge({
+        state: 'unreachable', reachable: false, mode: undefined, canReceive: false,
+        receiveReason: '连不上本机 RPA 桥', error: 'ECONNREFUSED',
+      }),
+    },
+  }));
+  assert.equal(s.state, 'needs_install');
+  assert.match(s.summary, /连不上本机 RPA 桥/);
+  assert.ok(s.hints.join('\n').includes('--mode rpa'));
+});
+
+test('微信 P0：桥在 mock 模式 → needs_install（发送会被拒绝，不写 real）', () => {
+  const s = step('wechat', deps({
+    wechat: { runtime: wechatRealRuntime(), bridge: bridge({ state: 'mock', mode: 'mock', canReceive: false, receiveReason: '桥运行在 mock 模式' }) },
+  }));
+  assert.equal(s.state, 'needs_install');
+  assert.match(s.summary, /mock 模式/);
+});
+
+test('微信 P0：桥 rpa 但接收没就绪 → needs_install，说明"能发不能收"', () => {
+  const s = step('wechat', deps({
+    wechat: {
+      runtime: wechatRealRuntime(),
+      bridge: bridge({ canReceive: false, receiveReason: '未找到微信主窗口：请登录并打开微信桌面端' }),
+    },
+  }));
+  assert.equal(s.state, 'needs_install');
+  assert.match(s.summary, /真实接收还没就绪/);
+  assert.match(s.summary, /未找到微信主窗口/);
+  assert.ok(s.hints.some((h) => h.includes('发送已经可用')));
+});
+
+test('微信：桥 rpa 且接收可用 → 才允许 ready', () => {
+  const s = step('wechat', deps({ wechat: { runtime: wechatRealRuntime(), bridge: bridge() } }));
+  assert.equal(s.state, 'ready');
+  assert.match(s.summary, /发送真实操作微信桌面端/);
+  assert.ok(s.hints[0]!.includes('轮询正常'));
+});
+
+test('微信 4.x：桥报 weixin4 → ready（发送可用 + 按需拉取），但仍说明「自动轮询要 3.9」', () => {
+  const s = step('wechat', deps({
+    wechat: {
+      runtime: wechatRealRuntime(),
+      bridge: bridge({
+        canReceive: false,
+        receiveReason: '检测到微信 4.x（Weixin，Qt 自绘）：不暴露可访问性控件树',
+        client: {
+          kind: 'weixin4',
+          uiaUsable: false,
+          reason: '检测到微信 4.x（Weixin，Qt 自绘）：不暴露可访问性控件树',
+          className: 'Qt51514QWindowIcon',
+        },
+      }),
+    },
+  }));
+  // 4.x 不是"不可用"：不该把用户推去装 3.9，他知道按需拉取就能用
+  assert.equal(s.state, 'ready');
+  assert.match(s.summary, /4\.x/);
+  assert.match(s.summary, /按需拉取/);
+  assert.ok(s.hints.some((h) => h.includes('拉取')), '要说清怎么收');
+  assert.ok(s.hints.some((h) => h.includes('3.9')), '仍要给出「想自动收就换 3.9」的选项');
 });

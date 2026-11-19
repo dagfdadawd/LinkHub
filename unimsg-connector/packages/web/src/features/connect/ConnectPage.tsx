@@ -1,7 +1,7 @@
 /**
  * 「连接账号」授权中心（个人版首启向导）。
  *
- * 目标：把「去各平台后台翻配置」变成一条按推荐顺序的清单（邮箱 → 钉钉 → 飞书 → 企微），
+ * 目标：把「去各平台后台翻配置」变成一条按推荐顺序的清单（邮箱 → 钉钉 → 飞书 → 微信），
  * 每个平台只说三件事：现在什么状态、下一步点哪里、管理员要做什么。
  *
  * 复用边界（不在本页重复实现）：
@@ -64,10 +64,10 @@ const STEP_ICON: Record<string, ReactNode> = {
   mail: <MailOutlined />,
   dingtalk: <DingdingOutlined />,
   feishu: <RocketOutlined />,
-  wecom: <WechatOutlined />,
+  wechat: <WechatOutlined />,
 };
 
-const STEP_ORDER_HINT = '按 邮箱 → 钉钉 → 飞书 → 企业微信 的顺序连接';
+const STEP_ORDER_HINT = '按 邮箱 → 钉钉 → 飞书 → 微信 的顺序连接';
 
 /** 后端 managers 清单里的「管理员项」：前端只展示/复制，不引导普通用户去改企业后台 */
 function stepOwnerNote(step: OnboardingStep): string | undefined {
@@ -388,7 +388,7 @@ export function ConnectPage() {
 
   /** api 类动作：识别后端下发的已知动作，其余引导到平台账号页 */
   async function runApiAction(step: OnboardingStep, action: OnboardingAction): Promise<void> {
-    // `*-configure`：打开「平台应用配置」弹窗对应分组（飞书/钉钉/企微）
+    // `*-configure`：打开「平台应用配置」弹窗对应分组（飞书/钉钉/微信）
     if (action.id.endsWith('-configure')) {
       openAppConfig(step.id as AppConfigGroup);
       return;
@@ -607,7 +607,7 @@ export function ConnectPage() {
   /**
    * 卡片动作：以后端 onboarding.actions 为准，同时保证「白号没有凭据」也有主 CTA：
    *  - 钉钉：主按钮固定为「用钉钉本人账号登录（推荐，无需机器人应用）」（一登即用）；
-   *  - 飞书 / 企微：缺凭据时补「填写应用凭据」；
+   *  - 飞书 / 微信：缺凭据时补「填写应用凭据」；
    *  - 邮箱：补「添加邮箱账号」。
    * 后端已下发的同名动作会去重，不重复出现两个登录/配置按钮。
    */
@@ -665,7 +665,7 @@ export function ConnectPage() {
       actions.unshift({
         id: `${step.id}-configure`,
         kind: 'api',
-        label: step.id === 'feishu' ? '填写飞书应用凭据' : '填写企业微信凭据',
+        label: step.id === 'feishu' ? '填写飞书应用凭据' : '填写微信 RPA 桥地址',
       });
     }
     return actions;

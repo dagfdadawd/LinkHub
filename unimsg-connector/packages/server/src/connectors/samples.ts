@@ -26,11 +26,13 @@ export const dingtalkSample = {
   conversationType: '1',
 };
 
-export const wecomSample = {
-  MsgType: 'text',
-  Content: '周五前交周报',
-  MsgId: 'wx_demo_001',
-  FromUserName: 'user_wecom_demo',
-  ToUserName: 'corp_demo',
-  AgentID: '1000002',
+export const wechatSample = {
+  externalId: 'wx_demo_001',
+  from: '微信好友',
+  senderId: 'wx_demo_user',
+  conversation: '项目群',
+  conversationType: 'group',
+  text: '周五前交周报',
+  type: 'text',
+  at: 1732000000000,
 };

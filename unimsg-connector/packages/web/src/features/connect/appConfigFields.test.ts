@@ -35,7 +35,7 @@ describe('appConfigFields 契约对齐（二轮审计 P3 #6）', () => {
     const keys = Object.fromEntries(APP_CONFIG_GROUPS.map((group) => [group.id, group.fields.map((f) => f.key)]));
     expect(keys.feishu).toEqual(APP_CONFIG_PLATFORM_FIELD_KEYS.feishu);
     expect(keys.dingtalk).toEqual(APP_CONFIG_PLATFORM_FIELD_KEYS.dingtalk);
-    expect(keys.wecom).toEqual(APP_CONFIG_PLATFORM_FIELD_KEYS.wecom);
+    expect(keys.wechat).toEqual(APP_CONFIG_PLATFORM_FIELD_KEYS.wechat);
     expect(keys.llm).toEqual(APP_CONFIG_LLM_FIELD_KEYS);
   });
 });

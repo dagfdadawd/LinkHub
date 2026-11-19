@@ -47,8 +47,8 @@ pnpm run doctor       # 全 PASS 最好；飞书 21001 已于 2026-11-12 复测�
 
 ```bash
 # 终端 1：Git Bash / macOS / Linux
-FEISHU_MODE=mock DINGTALK_MODE=mock WECOM_MODE=mock MAIL_MODE=mock DINGTALK_STREAM=false MAIL_ENABLED=false pnpm --filter @unimsg/server start
-# Windows PowerShell 先逐行执行：$env:FEISHU_MODE="mock"; $env:DINGTALK_MODE="mock"; $env:WECOM_MODE="mock"; $env:MAIL_MODE="mock"; $env:DINGTALK_STREAM="false"; $env:MAIL_ENABLED="false"
+FEISHU_MODE=mock DINGTALK_MODE=mock WECHAT_MODE=mock MAIL_MODE=mock DINGTALK_STREAM=false MAIL_ENABLED=false pnpm --filter @unimsg/server start
+# Windows PowerShell 先逐行执行：$env:FEISHU_MODE="mock"; $env:DINGTALK_MODE="mock"; $env:WECHAT_MODE="mock"; $env:MAIL_MODE="mock"; $env:DINGTALK_STREAM="false"; $env:MAIL_ENABLED="false"
 # 终端 2
 node packages/web/scripts/verify-contract.mjs http://127.0.0.1:3001 dev-token   # 期望 `<N> PASS / 0 FAIL`（N 视是否配置邮箱账号：有邮箱 81、无邮箱 75；以实际输出为准）
 ```
@@ -83,7 +83,7 @@ pnpm e2e                                   # Windows；macOS / Linux / Git Bash�
 ## 4. 演示前检查（若交付后要现场演示）
 
 - [ ] 端口 3001 / 5173 空闲（Windows：`netstat -ano | findstr :3001`；macOS / Linux：`lsof -i :3001`）
-- [ ] 网络 / 代理正常；如演示企微真实发送，先确认当前出口 IP 仍在「企业可信 IP」内（`pnpm run doctor` 会打印出口 IP）
+- [ ] 网络 / 代理正常；如演示微信真实收发，先确认**微信桌面端是 3.9.x** 且已登录（4.x 自绘界面读不到消息，只能发）、RPA 桥以 `--mode rpa` 启动（`curl 127.0.0.1:8787/health` 看 `mode`、`client.kind`、`receive.supported`）、`WECHAT_MODE=real`；三处任一不对，发送会如实报错、连接页不会报 ready
 - [ ] **本人身份（如要演示）**：账号页飞书 / 钉钉身份块显示「接收 / 发送身份」符合预期；飞书需提前完成授权并提前发一条测试消息（轮询 5–30s 才出现）；钉钉优先用 **fake-dws 离线桩**（`DWS_BIN=node scripts/fake-dws.mjs`），不要现场等真人授权；如确要现场登录（本机）：弹窗点「用浏览器登录（推荐）」，设备码只作远程备选（约 15 分钟有效，过期需重新获取）；
 - [ ] **本人身份话术准备**（如实说，不现场承诺）：飞书轮询有 5–30s 延迟、只读本人可见会话；钉钉 dws 是共创阶段、需企业管理员开启 CLI 访问 + 首次真人授权（本机浏览器登录 / 远程设备码，设备码有有效期）、凭据绑定设备；以本人身份发出的钉钉消息带 AI 发送角标（不隐藏）；
 - [ ] `API_TOKEN`：演示保持 `dev-token`；**不要留空**（空值会回退默认 `dev-token` 并告警、**仍强制鉴权**，不会关闭鉴权）；对外暴露必须改成强随机值，`NODE_ENV=production` 且仍为默认/空 token 会拒绝启动
@@ -97,9 +97,9 @@ pnpm e2e                                   # Windows；macOS / Linux / Git Bash�
 | 版本 | commit `<git log -1 --format="%H">`（或 tag） |
 | 运行环境 | Node `<node -v>`、pnpm `<pnpm -v>`（package.json 固定 pnpm 9.15.9，可用 corepack） |
 | 真实可用 | 钉钉 Stream 收 + 机器人回写；邮箱 IMAP 收 + SMTP 发（多账号 / STARTTLS）；**飞书本人身份收发已实测通过（2026-11-12）**：真实 OAuth → 单聊 + 群聊轮询入库 → 以本人身份发送（飞书侧核对 `sender_type=user`）；钉钉**本人身份收发**代码就绪（单测 + fake-dws 桩），真实端到端待平台条件（见下行） |
-| 受限能力 | 飞书 `21001`（**历史：本机租户 2026-11-12 已解除**；换租户 / 换环境仍可能遇到，需企业认证 / 合规租户）；企微 `60020`（需企业可信 IP + 回调 Token/AESKey + 公网）；**飞书本人身份**已实测通过（2026-11-12），仍受平台边界限制：管理员需开用户身份权限（含 `im:chat:read` / `offline_access`）、轮询 5–30s、只读本人可见会话、单聊枚举依赖未公开参数 `types`；**钉钉本人身份**需企业管理员开启 CLI 访问 + 首次真人授权、凭据绑定设备（Windows 不能跨机复制） |
+| 受限能力 | 飞书 `21001`（**历史：本机租户 2026-11-12 已解除**；换租户 / 换环境仍可能遇到，需企业认证 / 合规租户）；微信走 RPA 补充通道（无官方 API；需本机**微信桌面端 3.9.x** + 本地桥 + `WECHAT_MODE=real`，默认 Mock；4.x 为 Qt 自绘、无控件树：自动轮询不可用，接收走「按需拉取」（拖选复制当前会话，原文零误差））；**飞书本人身份**已实测通过（2026-11-12），仍受平台边界限制：管理员需开用户身份权限（含 `im:chat:read` / `offline_access`）、轮询 5–30s、只读本人可见会话、单聊枚举依赖未公开参数 `types`；**钉钉本人身份**需企业管理员开启 CLI 访问 + 首次真人授权、凭据绑定设备（Windows 不能跨机复制） |
 | AI 能力 | 大模型意图 / 摘要 / 回复草稿**已接真实调用**（OpenAI 兼容协议，默认 MiMo `mimo-v2.6-flash`；失败/超时/低置信回退内置规则并标注来源），见 [ai-integration.md](ai-integration.md)；OCR 仍为占位实现 |
-| 未实现 | PostgreSQL/Redis 持久化（当前为单实例内存 + 文件快照）、OCR 真实调用、高可用/水平扩展、多租户 / 多员工共享单实例身份（详见 README「承诺 vs 实现」） |
+| 未实现 | PostgreSQL/Redis 持久化（当前为单实例内存 + 文件快照）、OCR 真实调用、高可用/水平扩展、多租户 / 多员工共享单实例身份（详见 [reference.md](reference.md)「设计文档承诺 vs 当前实现」） |
 | 独立部署包 | `unimsg-connector/Dockerfile` + `docker-compose.yml` + `.dockerignore`；步骤见 [deploy.md](deploy.md)，可 `docker save/load` 离线搬运；**镜像默认不含 dws**，容器内钉钉本人身份需自建 glibc 镜像 |
-| 文档索引 | README / quickstart / personal-identity / demo-script / swap-accounts / deploy / ai-integration / risk-register / delivery-checklist |
+| 文档索引 | README / reference / quickstart / personal-identity / demo-script / swap-accounts / deploy / ai-integration / risk-register / delivery-checklist |
 | 已知风险 | 全部见 [risk-register.md](risk-register.md) |

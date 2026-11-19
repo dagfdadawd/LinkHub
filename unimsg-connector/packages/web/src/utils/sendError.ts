@@ -20,9 +20,7 @@ const TECH_WORD_REPLACEMENTS: Array<[RegExp, string]> = [
   [/FEISHU_APP_SECRET/g, '飞书 App Secret'],
   [/DINGTALK_CLIENT_ID/g, '钉钉 Client ID'],
   [/DINGTALK_CLIENT_SECRET/g, '钉钉 Client Secret'],
-  [/WECOM_CORP_ID/g, '企业微信 Corp ID'],
-  [/WECOM_AGENT_ID/g, '企业微信 Agent ID'],
-  [/WECOM_SECRET/g, '企业微信 Secret'],
+  [/WECHAT_BRIDGE_URL/g, '微信 RPA 桥地址'],
   [/DINGTALK_IDENTITY/g, '钉钉身份策略'],
   [/FEISHU_IDENTITY/g, '飞书身份策略'],
   [/identity\s*=\s*user/gi, '本人身份'],
@@ -53,7 +51,7 @@ const PLATFORM_ERROR_HINTS: Record<string, string> = {
 /** 从原始报文里认出平台 + 错误码 */
 function extractPlatformError(
   message: string,
-): { platform: 'feishu' | 'dingtalk' | 'wecom'; code?: string } | undefined {
+): { platform: 'feishu' | 'dingtalk' | 'wechat'; code?: string } | undefined {
   const isJson = /"code"\s*:\s*\d+/.test(message);
   const feishu = /open\.feishu\.cn|feishu/i.test(message);
   if (feishu && isJson) {
@@ -86,7 +84,7 @@ export function polishSendError(message: string): string {
 
 /**
  * @param message 后端返回的中文错误
- * @param identity 该平台身份视图（可能没有，例如企业微信 / 邮箱 / Mock）
+ * @param identity 该平台身份视图（可能没有，例如微信 / 邮箱 / Mock）
  */
 export function formatSendError(
   message: string,
@@ -95,7 +93,7 @@ export function formatSendError(
   if (!message) return message;
   // 已连接本人身份：后端建议是可执行的，保留其逻辑但把内部键名换成客户语言
   if (identity?.user?.linked) return polishSendError(message);
-  // 没有身份视图（企微 / 邮箱 / 旧后端）：不知道能力，不擅自改逻辑，只做术语替换
+  // 没有身份视图（微信 / 邮箱 / 旧后端）：不知道能力，不擅自改逻辑，只做术语替换
   if (!identity) return polishSendError(message);
   if (!/改用\s*identity\s*=\s*user/i.test(message)) return polishSendError(message);
 

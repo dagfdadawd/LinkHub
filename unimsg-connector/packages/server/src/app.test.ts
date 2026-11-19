@@ -77,6 +77,8 @@ test('CORS 白名单：名单内 Origin 放行并回显该 Origin', async () => 
     assert.equal(res.headers.get('access-control-allow-origin'), 'http://localhost:5173');
     // 预检也必须放行，否则浏览器压根发不出带 Authorization 的请求
     assert.match(res.headers.get('vary') ?? '', /Origin/i);
+    // 附件下载要读中文文件名：跨端口时必须暴露 Content-Disposition
+    assert.match(res.headers.get('access-control-expose-headers') ?? '', /content-disposition/i);
   });
 });
 

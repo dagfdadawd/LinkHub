@@ -11,7 +11,7 @@ import { config } from '../config';
  * 同时让文件内容始终以 Buffer 在内存里走一趟，不落盘（演示环境无需临时目录）。
  */
 export interface MultipartPart {
-  /** 表单字段名（平台各异：飞书 file / 企微 media / 钉钉 media） */
+  /** 表单字段名（平台各异：飞书 file / 钉钉 media） */
   field: string;
   filename: string;
   contentType: string;
@@ -99,7 +99,7 @@ export async function postJson(
   return data;
 }
 
-/** GET 取 JSON（企业微信 gettoken 一类只认 GET 的接口）。 */
+/** GET 取 JSON（部分平台只认 GET 的接口）。 */
 export async function getJson(url: string, timeoutMs = config.platformTimeoutMs): Promise<any> {
   const res = await fetch(url, { method: 'GET', signal: AbortSignal.timeout(timeoutMs) });
   const text = await res.text();
@@ -111,6 +111,92 @@ export async function getJson(url: string, timeoutMs = config.platformTimeoutMs)
   }
   if (!res.ok) throw new Error(`${url} HTTP ${res.status}: ${text.slice(0, 200)}`);
   return data;
+}
+
+/** 附件下载上限：平台单个文件远小于此值；防止异常响应把内存打满 */
+export const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;
+
+export interface BinaryResponse {
+  buffer: Buffer;
+  contentType?: string;
+  contentDisposition?: string;
+}
+
+/** 错误信息里只保留 origin + path，绝不把 access_token 等 query 打进日志/前端 */
+function safeUrlForError(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.origin}${u.pathname}`;
+  } catch {
+    return 'platform';
+  }
+}
+
+/**
+ * GET 二进制资源（飞书消息资源等）。
+ *
+ * 平台在 HTTP 200 里也可能返回 JSON 错误（如飞书 `{code,msg}`），
+ * 这里统一识别并抛可读错误；错误信息不带 query，避免 access_token 泄露到界面或日志。
+ */
+export async function getBinary(
+  url: string,
+  headers: Record<string, string> = {},
+  opts: { timeoutMs?: number; label?: string; maxBytes?: number } = {},
+): Promise<BinaryResponse> {
+  const label = opts.label ?? '平台资源';
+  const maxBytes = opts.maxBytes ?? MAX_ATTACHMENT_BYTES;
+  const res = await fetch(url, {
+    method: 'GET',
+    headers,
+    signal: AbortSignal.timeout(opts.timeoutMs ?? config.platformTimeoutMs),
+  });
+  const contentType = (res.headers.get('content-type') ?? '').toLowerCase();
+  const contentDisposition = res.headers.get('content-disposition') ?? undefined;
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`${label}下载失败（HTTP ${res.status}）：${text.replace(/\s+/g, ' ').slice(0, 200)}`);
+  }
+
+  const declared = Number(res.headers.get('content-length') ?? 0);
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    throw new Error(`${label}文件过大（${Math.round(declared / 1024 / 1024)}MB），超过 ${Math.round(maxBytes / 1024 / 1024)}MB 上限`);
+  }
+
+  // 平台把错误包在 200 JSON 里：先按文本判断，再决定是否当文件读。
+  // 注意：用户也可能真的发一个 .json 文件，所以只有「带非 0 错误码」才当失败；
+  // 没有错误码的 JSON 按文件字节原样返回，不能把正常附件误判成接口错误。
+  if (contentType.includes('application/json')) {
+    const text = await res.text().catch(() => '');
+    let json: any = {};
+    try {
+      json = text ? JSON.parse(text) : {};
+    } catch {
+      throw new Error(`${label}返回了无法解析的 JSON（${safeUrlForError(url)}）`);
+    }
+    const code = json?.code ?? json?.errcode ?? json?.error?.code;
+    if (code !== undefined && Number(code) !== 0) {
+      const message = json?.msg ?? json?.errmsg ?? json?.message ?? json?.error?.message ?? '';
+      throw new Error(`${label}返回错误 ${String(code)}${message ? `：${String(message).slice(0, 160)}` : ''}`);
+    }
+    if (typeof json?.error === 'string' && json.error) {
+      throw new Error(`${label}返回错误：${json.error.slice(0, 160)}`);
+    }
+    const buffer = Buffer.from(text);
+    if (buffer.byteLength === 0) throw new Error(`${label}返回了空文件`);
+    if (buffer.byteLength > maxBytes) {
+      throw new Error(`${label}文件过大（${Math.round(buffer.byteLength / 1024 / 1024)}MB），超过 ${Math.round(maxBytes / 1024 / 1024)}MB 上限`);
+    }
+    return { buffer, contentType: contentType || undefined, contentDisposition };
+  }
+
+  const buffer = Buffer.from(await res.arrayBuffer());
+  if (buffer.byteLength > maxBytes) {
+    throw new Error(`${label}文件过大（${Math.round(buffer.byteLength / 1024 / 1024)}MB），超过 ${Math.round(maxBytes / 1024 / 1024)}MB 上限`);
+  }
+  if (buffer.byteLength === 0) throw new Error(`${label}返回了空文件`);
+
+  return { buffer, contentType: contentType || undefined, contentDisposition };
 }
 
 export async function feishuTenantToken(): Promise<string> {
@@ -148,27 +234,5 @@ export async function dingtalkAccessToken(): Promise<string> {
   const ttl = Math.max(60, Number(data.expireIn ?? 7200) - 120);
   tokens.set(cacheKey, { token: data.accessToken, exp: Date.now() + ttl * 1000 });
   return data.accessToken;
-}
-
-/**
- * 企业微信 access_token：GET /cgi-bin/gettoken?corpid=&corpsecret=（应用 Secret）。
- * 与飞书/钉钉共用同一份缓存，提前 120s 过期，避免边界失效。
- */
-export async function wecomAccessToken(): Promise<string> {
-  const { corpId, secret } = config.platforms.wecom;
-  if (!corpId || !secret) throw new Error('WECOM_CORP_ID / WECOM_SECRET 未配置');
-
-  const cacheKey = `wecom:${corpId}:${secret}`;
-  const hit = tokens.get(cacheKey);
-  if (hit && hit.exp > Date.now()) return hit.token;
-
-  const qs = new URLSearchParams({ corpid: corpId, corpsecret: secret });
-  const data = await getJson(`${config.platforms.wecom.baseUrl}/cgi-bin/gettoken?${qs.toString()}`);
-  if (data.errcode !== 0 || !data.access_token) {
-    throw new Error(`企业微信 access_token 获取失败: ${data.errcode ?? 'unknown'} ${data.errmsg ?? ''}`);
-  }
-  const ttl = Math.max(60, Number(data.expires_in ?? 7200) - 120);
-  tokens.set(cacheKey, { token: data.access_token, exp: Date.now() + ttl * 1000 });
-  return data.access_token;
 }
 

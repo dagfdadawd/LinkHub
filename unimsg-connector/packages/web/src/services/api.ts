@@ -12,6 +12,61 @@ import type {
 import type { MsgType, TraceEntry, UnifiedMessage } from '../types';
 import type { Platform, MsgStatus } from '../types';
 
+/** 微信 4.x「按需拉取」请求：拉的是「当前在微信里打开的那个会话」 */
+export interface WechatPullRequest {
+  /** 会话名，要和微信里显示的一致（4.x 没有控件树，外部读不到真实标题，只能由人确认） */
+  conversation: string;
+  conversationType?: 'p2p' | 'group';
+  /** 你自己的微信昵称：用来过滤掉自己发的消息，避免被当成入站 */
+  selfName?: string;
+}
+
+/** 拉取结果：字段与桥的 /pull 响应同构，错误原因原样透出 */
+export interface WechatPullResult {
+  ok: boolean;
+  conversation: string;
+  parsed: number;
+  forwarded: number;
+  duplicates: number;
+  failed: { sender: string; error: string }[];
+  /** 4.x 读不到当前会话标题，conversation 由人填写；false = 桥无法核对，界面要提示 */
+  conversationVerified?: boolean;
+  /** 能力边界说明（只覆盖当前会话/可视区、会抢前台），界面直接展示 */
+  scope?: string[];
+  warning?: string;
+  error?: string;
+}
+
+/** A 形态：本机 RPA 桥状态/启停（后端 spawn，前端不接触 Python 命令） */
+export interface WechatBridgeInfo {
+  managed: boolean;
+  pid?: number;
+  url: string;
+  logPath: string;
+  bridge: {
+    state: 'unknown' | 'unreachable' | 'mock' | 'rpa';
+    reachable: boolean;
+    mode?: 'mock' | 'rpa';
+    canSend: boolean;
+    canReceive: boolean;
+    receiveMode: 'auto' | 'pull' | 'none';
+    receiveReason: string;
+    client?: { kind: 'wechat3' | 'weixin4' | 'none' | 'unknown'; reason: string };
+    error?: string;
+  };
+}
+
+export interface WechatBridgeStartResult extends WechatBridgeInfo {
+  started: boolean;
+  alreadyRunning?: boolean;
+  error?: string;
+}
+
+export interface WechatBridgeStopResult extends WechatBridgeInfo {
+  stopped: boolean;
+  error?: string;
+}
+
 export interface MessageFilter {
   platform?: Platform;
   status?: MsgStatus;
@@ -175,7 +230,7 @@ export interface AccountInfo {
   canSend?: boolean;
   /** 缺失的环境变量名（只有变量名，绝不含密钥值） */
   missing?: string[];
-  /** 能力缺口 / 风险提示（如「只能发不能收」「企微需可信 IP」），逐条展示 */
+  /** 能力缺口 / 风险提示（如「只能发不能收」），逐条展示 */
   warnings?: string[];
   /** 配置问题（邮箱缺授权码、host 未填等），error 红 / warn 橙 */
   issues?: AccountIssue[];
@@ -217,6 +272,12 @@ export interface TraceResult {
   log: TraceEntry[];
 }
 
+/** 附件下载结果：二进制 + 服务端 Content-Disposition 里的文件名 */
+export interface DownloadedFile {
+  blob: Blob;
+  filename: string;
+}
+
 // ---------------------------------------------------------------------------
 // 平台应用凭据 / 运行配置（GET/PUT /api/app-config）
 // 白号首次使用 P0：客户必须能在界面填写 App 凭据，而不是只能改 .env。
@@ -239,7 +300,7 @@ export interface AppConfigField {
 
 export type AppConfigFieldMap = Record<string, AppConfigField>;
 
-export type AppConfigPlatformId = 'feishu' | 'dingtalk' | 'wecom';
+export type AppConfigPlatformId = 'feishu' | 'dingtalk' | 'wechat';
 
 export interface AppConfigPlatformView {
   fields: AppConfigFieldMap;
@@ -291,7 +352,7 @@ export interface AppConfigSaveResult {
 export const APP_CONFIG_PLATFORM_FIELD_KEYS: Record<AppConfigPlatformId, string[]> = {
   feishu: ['appId', 'appSecret', 'verifyToken', 'encryptKey', 'stream'],
   dingtalk: ['clientId', 'clientSecret', 'robotCode', 'aesToken', 'aesKey', 'stream'],
-  wecom: ['corpId', 'agentId', 'secret', 'token', 'aesKey'],
+  wechat: ['bridgeUrl'],
 };
 
 /** AI 模型（可选）字段 */
@@ -334,7 +395,7 @@ export interface OnboardingAction {
 }
 
 export interface OnboardingStep {
-  id: 'mail' | 'dingtalk' | 'feishu' | 'wecom';
+  id: 'mail' | 'dingtalk' | 'feishu' | 'wechat';
   label: string;
   state: OnboardingState;
   summary: string;
@@ -362,7 +423,7 @@ export interface OnboardingView {
   envFile?: { path: string; mtime: string | null } | null;
   dws: OnboardingDwsInfo;
   overall: { ready: number; total: number; needsAction: number };
-  /** 平台卡片；前端按邮箱 → 钉钉 → 飞书 → 企微 排序 */
+  /** 平台卡片；前端按邮箱 → 钉钉 → 飞书 → 微信 排序 */
   steps: OnboardingStep[];
 }
 
@@ -441,6 +502,17 @@ export interface MessageApi {
   dingtalkPersonalLogout(): Promise<void>;
   /** 授权中心聚合状态（个人版首启向导；均不含 token / 授权码） */
   onboarding(): Promise<OnboardingView>;
+  /**
+   * 从本机 RPA 桥「按需拉取」当前微信会话（微信 4.x 唯一可用的接收方式：
+   * 拖选复制拿原文）。只覆盖当前打开的会话与可视区，会短暂抢前台。
+   */
+  wechatPull(req: WechatPullRequest): Promise<WechatPullResult>;
+  /** A 形态：探测本机 RPA 桥 */
+  wechatBridgeStatus(): Promise<WechatBridgeInfo>;
+  /** A 形态：让后端拉起本机 RPA 桥（参数由后端固定） */
+  startWechatBridge(): Promise<WechatBridgeStartResult>;
+  /** A 形态：停止由 LinkHub 拉起的桥 */
+  stopWechatBridge(): Promise<WechatBridgeStopResult>;
   /** 运行时邮箱账号（脱敏列表，含 env / file 来源） */
   mailAccounts(): Promise<MailAccountView[]>;
   /** 测试邮箱 IMAP / SMTP 登录（只读自检，不落盘） */
@@ -462,6 +534,15 @@ export interface MessageApi {
   markRead(id: string, read: boolean): Promise<UnifiedMessage>;
   /** 全部标为已读（可只标当前筛选范围），返回实际改动条数 */
   markAllRead(ids?: string[]): Promise<number>;
+  /**
+   * 下载消息附件。`field` 区分原消息附件与回复附件；
+   * 服务端按 traceId + 索引取平台资源，前端不接触任何平台 token。
+   */
+  downloadAttachment(
+    traceId: string,
+    index: number,
+    field?: 'attachments' | 'replyAttachments',
+  ): Promise<DownloadedFile>;
   trace(id: string): Promise<TraceResult>;
   accounts(): Promise<AccountInfo[]>;
   health(): Promise<HealthInfo>;

@@ -138,7 +138,7 @@ test('pollFeishuUserOnce：首轮只立基线，不拉历史消息', async () =>
   assert.equal(state.selfOpenId, 'ou_self');
 });
 
-test('pollFeishuUserOnce：增量入库 + 水位推进 + 自己消息/重复/空格跳过', async () => {
+test('pollFeishuUserOnce：增量入库 + 水位推进 + 自己的文本/重复/空格跳过', async () => {
   const state = emptyState();
   state.chats.oc_a = 1_000_000;
   const ingested: UnifiedMessage[] = [];

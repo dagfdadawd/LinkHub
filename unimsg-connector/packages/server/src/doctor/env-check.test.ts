@@ -35,7 +35,7 @@ test('suggestEnvKey：常见拼写错误能给出正确建议', () => {
   assert.equal(suggestEnvKey('DINGTALK_CLIENTID'), 'DINGTALK_CLIENT_ID');
   assert.equal(suggestEnvKey('MAIL_QQ_ADRESS'), 'MAIL_QQ_ADDRESS');
   assert.equal(suggestEnvKey('MAIL_QQ_AUTHCODE'), 'MAIL_QQ_AUTH_CODE');
-  assert.equal(suggestEnvKey('WECOM_CORP_ID_TYPO_TOTALLY_DIFFERENT'), undefined);
+  assert.equal(suggestEnvKey('WECHAT_BRIDGE_ULR'), 'WECHAT_BRIDGE_URL');
 });
 
 test('findSuspiciousEnvVars：只报本项目的、非空的、未知变量', () => {
@@ -44,12 +44,12 @@ test('findSuspiciousEnvVars：只报本项目的、非空的、未知变量', ()
     HOME: '/root',
     FEISHU_APPID: 'cli_xxx',
     MAIL_QQ_ADRESS: 'me@qq.com',
-    WECOM_AGENT_IDD: '1000002',
+    WECHAT_BRIDGE_ULR: 'http://127.0.0.1:8787',
     LLM_API_KEY: 'sk-real', // 合法，不该报
     MAIL_WORK_EMAIL: '', // 空值，跳过
     UNRELATED_VAR: 'x',
   });
-  assert.deepEqual(found.map((f) => f.name), ['FEISHU_APPID', 'MAIL_QQ_ADRESS', 'WECOM_AGENT_IDD']);
+  assert.deepEqual(found.map((f) => f.name), ['FEISHU_APPID', 'MAIL_QQ_ADRESS', 'WECHAT_BRIDGE_ULR']);
   assert.equal(found.find((f) => f.name === 'FEISHU_APPID')?.suggestion, 'FEISHU_APP_ID');
   assert.equal(found.find((f) => f.name === 'MAIL_QQ_ADRESS')?.suggestion, 'MAIL_QQ_ADDRESS');
   assert.ok(found.every((f) => f.reason.includes('不被读取') || f.reason.includes('未在文档中定义')));
@@ -62,7 +62,7 @@ test('findSuspiciousEnvVars：正常配置零误报', () => {
     FEISHU_APP_SECRET: 'secret',
     DINGTALK_CLIENT_ID: 'ding',
     DINGTALK_STREAM: 'true',
-    WECOM_CORP_ID: 'ww1',
+    WECHAT_BRIDGE_URL: 'http://127.0.0.1:8787',
     MAIL_ACCOUNTS: 'qq',
     MAIL_QQ_ADDRESS: 'me@qq.com',
     MAIL_QQ_AUTH_CODE: 'code',

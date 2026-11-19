@@ -12,6 +12,7 @@ import type {
   AppConfigView,
   ContactDirectory,
   DemoApi,
+  DownloadedFile,
   DingtalkLoginOptions,
   DingtalkLoginStart,
   DingtalkPersonalStatus,
@@ -22,6 +23,11 @@ import type {
   MailAccountView,
   MessageFilter,
   OnboardingView,
+  WechatPullRequest,
+  WechatPullResult,
+  WechatBridgeInfo,
+  WechatBridgeStartResult,
+  WechatBridgeStopResult,
   ReanalyzeResult,
   ReplyAck,
   TraceResult,
@@ -38,14 +44,14 @@ export function demoAppConfig(): AppConfigView {
   const noneFields = (keys: string[]): AppConfigFieldMap =>
     Object.fromEntries(keys.map((key) => [key, { configured: false, source: 'none' as const, key }]));
   const platforms = {} as AppConfigView['platforms'];
-  for (const id of ['feishu', 'dingtalk', 'wecom'] as AppConfigPlatformId[]) {
+  for (const id of ['feishu', 'dingtalk', 'wechat'] as AppConfigPlatformId[]) {
     platforms[id] = { fields: noneFields(APP_CONFIG_PLATFORM_FIELD_KEYS[id]), missing: [] };
   }
   return {
     identity: { feishu: 'auto', dingtalk: 'auto' },
     platforms,
     llm: noneFields(APP_CONFIG_LLM_FIELD_KEYS),
-    modes: { feishu: 'mock', dingtalk: 'mock', wecom: 'mock', mail: 'mock' },
+    modes: { feishu: 'mock', dingtalk: 'mock', wechat: 'mock', mail: 'mock' },
     restartRequired: false,
     envFile: null,
     settingsFile: null,
@@ -87,11 +93,11 @@ export function demoOnboarding(): OnboardingView {
         actions: [],
       },
       {
-        id: 'wecom',
-        label: '企业微信',
+        id: 'wechat',
+        label: '微信（RPA）',
         state: 'mock',
-        summary: '演示模式：不会连接真实企业微信。',
-        hints: ['企业微信需要管理员配置应用与可信 IP。'],
+        summary: '演示模式：不会操作真实微信。',
+        hints: ['微信走 RPA 通道，需本机微信桌面端 + 本地 RPA 桥。'],
         actions: [],
       },
     ],
@@ -244,9 +250,13 @@ export class MockApi implements DemoApi {
       externalId: mailKey ? `${mailKey}:compose:${traceId}` : `compose:${traceId}`,
       sender: { id: 'linkhub', name: 'LinkHub 统一入口' },
       conversation: { id: req.conversationId || 'mock-conversation', type: req.conversationType ?? 'group' },
-      type: 'text',
+      // 与后端一致：勾选「同时加为待办」时，这条消息本身就是待办（不另造幽灵消息）
+      type: req.todo ? 'todo' : 'text',
       body: display,
       reply: req.text,
+      ...(req.todo ? { done: false } : {}),
+      ...(req.todo?.title ? { todoTitle: req.todo.title } : {}),
+      ...(req.todo?.dueAt ? { dueAt: req.todo.dueAt } : {}),
       ...(info.length > 0 ? { attachments: info } : {}),
       ...(mailKey
         ? { mailMeta: { account: mailKey, inReplyTo: '', subject: req.text.slice(0, 60) || 'LinkHub 文件' } }
@@ -257,6 +267,20 @@ export class MockApi implements DemoApi {
     };
     this.messages.set(traceId, message);
     this.traces.set(traceId, []);
+    // 回放里能分清「自动识别成待办」与「新建发送时用户手动加的」
+    if (req.todo) {
+      const todoParts = ['新建发送时手动加入待办'];
+      if (req.todo.title) todoParts.push(`标题：${req.todo.title}`);
+      if (req.todo.dueAt) todoParts.push(`截止：${req.todo.dueAt}`);
+      this.traces.get(traceId)!.push({
+        traceId,
+        platform: message.platform,
+        status: message.status,
+        event: 'todo_added',
+        detail: todoParts.join(' · '),
+        at: now,
+      });
+    }
     this.metrics.received += 1;
     this.realtime.emit({ type: 'message.received', data: message });
     this.patch(traceId, { status: MsgStatus.PROCESSING }, 'processing');
@@ -327,6 +351,35 @@ export class MockApi implements DemoApi {
 
   async onboarding(): Promise<OnboardingView> {
     return demoOnboarding();
+  }
+
+  async wechatPull(_req: WechatPullRequest): Promise<WechatPullResult> {
+    // 纯前端演示不可能操作微信桌面端：直接说清楚，不返回假成功
+    throw new Error('演示模式不会操作真实微信：拉取需要本机 RPA 桥（启动真实后端 + python rpa_bridge.py --mode rpa）');
+  }
+
+  async wechatBridgeStatus(): Promise<WechatBridgeInfo> {
+    return {
+      managed: false,
+      url: 'http://127.0.0.1:8787',
+      logPath: '',
+      bridge: {
+        state: 'unknown',
+        reachable: false,
+        canSend: false,
+        canReceive: false,
+        receiveMode: 'none',
+        receiveReason: '演示模式不会启动本机 RPA 桥',
+      },
+    };
+  }
+
+  async startWechatBridge(): Promise<WechatBridgeStartResult> {
+    throw new Error('演示模式不会启动本机 RPA 桥：请启动真实后端并在本机运行 Python 桥');
+  }
+
+  async stopWechatBridge(): Promise<WechatBridgeStopResult> {
+    throw new Error('演示模式没有由 LinkHub 启动的 RPA 桥');
   }
 
   async mailAccounts(): Promise<MailAccountView[]> {
@@ -424,6 +477,28 @@ export class MockApi implements DemoApi {
     return changed;
   }
 
+  /**
+   * 演示模式没有真实平台资源：
+   * - 有 data URL 预览的图片可以真的下载（预览串本身就是文件内容）；
+   * - 纯文件卡片没有内容，明确报错，不生成一个假文件骗人。
+   */
+  async downloadAttachment(
+    traceId: string,
+    index: number,
+    field: 'attachments' | 'replyAttachments' = 'attachments',
+  ): Promise<DownloadedFile> {
+    await this.wait();
+    const message = this.messages.get(traceId);
+    const list = field === 'replyAttachments' ? message?.replyAttachments : message?.attachments;
+    const attachment = list?.[index];
+    if (!attachment) throw new Error('附件不存在');
+    if (attachment.preview) {
+      const res = await fetch(attachment.preview);
+      return { blob: await res.blob(), filename: attachment.name };
+    }
+    throw new Error('演示模式只有附件元数据，没有真实文件内容；接入真实后端后可下载平台上的原文件');
+  }
+
   async trace(id: string): Promise<TraceResult> {
     await this.wait();
     const message = this.messages.get(id);
@@ -481,7 +556,7 @@ export class MockApi implements DemoApi {
         {
           intent: template.intent ?? '未分类',
           replyDraft: template.replyDraft,
-          needsReview: template.platform === 'wecom' && template.type === 'image' ? true : cur.needsReview,
+          needsReview: cur.needsReview,
         },
         'intent',
         `${template.intent ?? '未分类'}(${template.confidence ?? 0.6})`,

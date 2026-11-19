@@ -358,10 +358,10 @@ export function AppShell() {
 
   const platformNav = useMemo(
     () =>
-      [Platform.FEISHU, Platform.DINGTALK, Platform.WECOM, Platform.MAIL].map((platform) => ({
+      [Platform.FEISHU, Platform.DINGTALK, Platform.WECHAT, Platform.MAIL].map((platform) => ({
         platform,
         name:
-          platform === Platform.WECOM ? '企微' : PLATFORM_META[platform].name,
+          PLATFORM_META[platform].name,
         count: counts.perPlatform.get(platform) ?? 0,
       })),
     [counts.perPlatform],

@@ -11,12 +11,12 @@
 import { Platform } from '../types';
 
 /** 可注入的平台（邮箱是 IMAP 轮询拉取，没有 webhook，不在其中） */
-export type InjectPlatform = Platform.FEISHU | Platform.DINGTALK | Platform.WECOM;
+export type InjectPlatform = Platform.FEISHU | Platform.DINGTALK | Platform.WECHAT;
 
 export const INJECT_PLATFORMS: InjectPlatform[] = [
   Platform.FEISHU,
   Platform.DINGTALK,
-  Platform.WECOM,
+  Platform.WECHAT,
 ];
 
 /** 每个平台的样例消息（轮转使用，多点几次不会重复同一条） */
@@ -29,7 +29,7 @@ const SAMPLES: Record<InjectPlatform, Array<{ from: string; name: string; text: 
     { from: 'zhaoliu', name: '赵六', text: '明天上午 10:00 评审会，会议室 A301，请提前准备演示材料。' },
     { from: 'sunqi', name: '孙七', text: '本周五 18:00 前把预算确认单发我，财务要归档。' },
   ],
-  [Platform.WECOM]: [
+  [Platform.WECHAT]: [
     { from: 'wangwu', name: '王五', text: '客户反馈登录偶发失败，方便拉个群一起看下日志吗？' },
     { from: 'chenba', name: '陈八', text: '下周一 9点 灰度上线，今晚需要把回滚方案发出来确认。' },
   ],
@@ -39,7 +39,7 @@ const SAMPLES: Record<InjectPlatform, Array<{ from: string; name: string; text: 
 const WEBHOOK_PATH: Record<InjectPlatform, string> = {
   [Platform.FEISHU]: '/api/webhook/feishu',
   [Platform.DINGTALK]: '/api/webhook/dingtalk',
-  [Platform.WECOM]: '/api/webhook/wecom',
+  [Platform.WECHAT]: '/api/webhook/wechat',
 };
 
 /** 生成一次注入的请求（path + body），`seq` 用于保证 messageId 唯一、避免被幂等去重吃掉 */
@@ -83,13 +83,17 @@ export function buildSample(
     };
   }
 
+  // 微信（RPA 桥）上报格式：见 connectors/wechat.ts 的 WechatRawEvent
   return {
     path: WEBHOOK_PATH[platform],
     body: {
-      MsgType: 'text',
-      Content: text,
-      MsgId: messageId,
-      FromUserName: sample.from,
+      externalId: messageId,
+      from: sample.name,
+      senderId: sample.from,
+      conversation: sample.name,
+      conversationType: 'p2p',
+      text,
+      type: 'text',
     },
   };
 }
@@ -108,9 +112,12 @@ export async function injectSample(
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), timeoutMs);
   try {
+    // 微信连接器 verify() 只认 dev* 前缀签名（等同本机 RPA 桥）；其它平台用各自报文验签
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (platform === Platform.WECHAT) headers['x-signature'] = 'dev-demo';
     const res = await fetch(`${base.replace(/\/+$/, '')}${path}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(body),
       signal: controller.signal,
     });

@@ -36,7 +36,7 @@ describe('formatSendError（按身份能力分支的失败提示）', () => {
     expect(text).toContain('本人身份发送');
   });
 
-  it('没有身份视图（企微 / 邮箱 / 旧后端）：不擅自改写逻辑，只做术语替换', () => {
+  it('没有身份视图（微信 / 邮箱 / 旧后端）：不擅自改写逻辑，只做术语替换', () => {
     expect(formatSendError(backendText, undefined)).not.toContain('FEISHU_APP_ID');
     expect(formatSendError(backendText, null)).toContain('飞书 App ID');
   });

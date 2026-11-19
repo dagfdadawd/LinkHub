@@ -42,7 +42,7 @@ $env:FEISHU_USER_STATE_FILE = Join-Path $e2eData "feishu-user-receive.json"
 # e2e 必须完全离线可复现：强制四个平台 mock，不连真实平台/邮箱，也不受 .env 真实凭据影响
 $env:FEISHU_MODE = "mock"
 $env:DINGTALK_MODE = "mock"
-$env:WECOM_MODE = "mock"
+$env:WECHAT_MODE = "mock"
 $env:MAIL_MODE = "mock"
 $env:DINGTALK_STREAM = "false"
 $env:MAIL_ENABLED = "false"

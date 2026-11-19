@@ -4,7 +4,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Platform, MsgStatus, FILE_LIMITS } from '@unimsg/shared';
+import { Platform, MsgStatus, FILE_LIMITS, TODO_TITLE_MAX } from '@unimsg/shared';
 import {
   InvalidOutboundRequest,
   decodeAttachment,
@@ -68,7 +68,7 @@ test('normalizeCompose：文本 / 纯文件 / 文本+文件都合法，双空拒
   const a = pdf();
   assert.equal(normalizeCompose({ platform: 'feishu', text: 'hi' }).text, 'hi');
   assert.equal(normalizeCompose({ platform: 'feishu', text: '', attachments: [a] }).attachments?.length, 1);
-  const both = normalizeCompose({ platform: 'wecom', conversationId: 'zhangsan', text: 'hi', attachments: [a] });
+  const both = normalizeCompose({ platform: 'wechat', conversationId: 'zhangsan', text: 'hi', attachments: [a] });
   assert.equal(both.conversationId, 'zhangsan');
   assert.throws(() => normalizeCompose({ platform: 'feishu', text: '' }), InvalidOutboundRequest);
   assert.throws(() => normalizeCompose({ platform: 'unknown', text: 'hi' }), InvalidOutboundRequest);
@@ -125,5 +125,32 @@ test('normalizeCompose 身份字段：只有飞书/钉钉可用 bot|user，其�
   assert.equal(normalizeCompose({ platform: 'feishu', text: 'hi', identity: '' }).identity, undefined);
   // 非法取值
   assert.throws(() => normalizeCompose({ platform: 'feishu', text: 'hi', identity: 'robot' }), /identity 只能是 bot/);
-  assert.throws(() => normalizeCompose({ platform: 'wecom', text: 'hi', identity: 'user' }), /仅适用于飞书/);
+  assert.throws(() => normalizeCompose({ platform: 'wechat', text: 'hi', identity: 'user' }), /仅适用于飞书/);
+});
+
+test('normalizeCompose todo 字段：选填；标题去空格限长，截止时间必须可解析并统一成 ISO', () => {
+  // 不传 = 普通发送，不加待办
+  assert.equal(normalizeCompose({ platform: 'feishu', text: 'hi' }).todo, undefined);
+  // 传空对象 = 加待办但用默认标题（前端勾选后什么都没填）
+  assert.deepEqual(normalizeCompose({ platform: 'feishu', text: 'hi', todo: {} }).todo, {});
+  // 标题去空格；截止时间统一为 ISO（时区按本地偏移换算，前后端只认一种格式）
+  const todo = normalizeCompose({
+    platform: 'feishu',
+    text: 'hi',
+    todo: { title: '  跟进周报  ', dueAt: '2026-11-20T10:00:00+08:00' },
+  }).todo;
+  assert.equal(todo?.title, '跟进周报');
+  assert.equal(todo?.dueAt, '2026-11-20T02:00:00.000Z');
+  // 非法结构 / 超长标题 / 无法解析的时间 → 可修复的 400 类错误
+  assert.throws(() => normalizeCompose({ platform: 'feishu', text: 'hi', todo: 'x' }), InvalidOutboundRequest);
+  assert.throws(() => normalizeCompose({ platform: 'feishu', text: 'hi', todo: [1] }), InvalidOutboundRequest);
+  assert.throws(() => normalizeCompose({ platform: 'feishu', text: 'hi', todo: { title: 12 } }), InvalidOutboundRequest);
+  assert.throws(
+    () => normalizeCompose({ platform: 'feishu', text: 'hi', todo: { title: 'x'.repeat(TODO_TITLE_MAX + 1) } }),
+    InvalidOutboundRequest,
+  );
+  assert.throws(
+    () => normalizeCompose({ platform: 'feishu', text: 'hi', todo: { dueAt: '明天下午三点' } }),
+    /todo\.dueAt 不是合法时间/,
+  );
 });

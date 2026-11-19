@@ -1,7 +1,7 @@
 /**
  * Webhook HTTP 级加固测试（node:http + 127.0.0.1 回环，绝不触网）：
  *  1. 空 body / 空 XML 壳 / 缺消息 ID → 400，且不写 trace、不占幂等键（P0）；
- *  2. 正常三平台样例仍 200，返回体形状保持 `{ok:true,duplicate}` / 企微明文 `success`；
+ *  2. 正常三平台样例仍 200，返回体形状保持 `{ok:true,duplicate}`；
  *  3. 状态回流前进 → 200 更新；倒退 → 仍 200 但状态不动并写 `sync_ignored`。
  */
 import { test } from 'node:test';
@@ -10,14 +10,15 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { Platform, MsgStatus } from '@unimsg/shared';
 import { createApp } from '../app';
-import { config } from '../config';
+import { isLoopbackAddress } from './webhook';
+import { config, forceMode } from '../config';
 import { InMemoryRepository } from '../db/repository';
 import { connectors } from '../connectors/registry';
 import { LlmService } from '../services/llm';
 import { OcrService } from '../services/ocr';
 import { RateLimiter } from '../services/rateLimiter';
 import { MessageService } from '../services/message';
-import { feishuSample, dingtalkSample, wecomSample } from '../connectors/samples';
+import { feishuSample, dingtalkSample, wechatSample } from '../connectors/samples';
 
 // 富化阶段锁死本地 Mock，保证 HTTP 用例不外呼
 config.llm.provider = 'mock';
@@ -52,9 +53,12 @@ async function withApp(fn: (ctx: Ctx) => Promise<void>): Promise<void> {
   }
 }
 
-async function post(base: string, path: string, body: string | undefined, contentType = 'application/json'): Promise<Reply> {
+async function post(base: string, path: string, body: string | undefined, contentType = 'application/json', signature?: string): Promise<Reply> {
   const init: RequestInit = { method: 'POST' };
-  if (contentType) init.headers = { 'content-type': contentType };
+  const headers: Record<string, string> = {};
+  if (contentType) headers['content-type'] = contentType;
+  if (signature) headers['x-signature'] = signature;
+  if (Object.keys(headers).length > 0) init.headers = headers;
   if (body !== undefined) init.body = body;
   const res = await fetch(`${base}${path}`, init);
   const text = await res.text();
@@ -73,7 +77,7 @@ const json = (value: unknown): string => JSON.stringify(value);
 
 test('空 body / 空对象：三平台一律 400，且不写任何消息、不占 unknown 幂等键', async () => {
   await withApp(async ({ base, repo }) => {
-    for (const platform of ['feishu', 'dingtalk', 'wecom']) {
+    for (const platform of ['feishu', 'dingtalk']) {
       const noBody = await post(base, `/api/webhook/${platform}`, undefined);
       assert.equal(noBody.status, 400, `${platform} 无 body 必须 400`);
       assert.equal(noBody.json?.ok, false, `${platform} 空 body 应回 JSON {ok:false}`);
@@ -83,26 +87,14 @@ test('空 body / 空对象：三平台一律 400，且不写任何消息、不�
       assert.equal(emptyObject.json?.ok, false);
     }
     assert.equal(repo.list().length, 0, '空事件绝不能入库');
-    for (const platform of [Platform.FEISHU, Platform.DINGTALK, Platform.WECOM]) {
+    for (const platform of [Platform.FEISHU, Platform.DINGTALK]) {
       assert.equal(repo.findByExternal(platform, 'unknown'), undefined, `${platform} unknown 去重键必须空闲`);
     }
   });
 });
 
-test('企业微信 XML 空壳：400 且绝不返回 success（mock 验签也不能放行进库）', async () => {
-  await withApp(async ({ base, repo }) => {
-    const emptyShell = await post(base, '/api/webhook/wecom', '<xml></xml>', 'text/xml');
-    assert.equal(emptyShell.status, 400);
-    assert.notEqual(emptyShell.text, 'success', '空壳不能回 success，否则企微认为已处理');
-    assert.equal(emptyShell.json?.ok, false);
 
-    const blank = await post(base, '/api/webhook/wecom', '   ', 'text/plain');
-    assert.equal(blank.status, 400);
-    assert.equal(repo.list().length, 0);
-  });
-});
-
-test('缺消息唯一 ID：飞书/钉钉/企微 400 且不写 trace；随后正常消息仍能入库', async () => {
+test('缺消息唯一 ID：飞书/钉钉/微信 400 且不写 trace；随后正常消息仍能入库', async () => {
   await withApp(async ({ base, repo }) => {
     const feishuNoId = {
       schema: '2.0',
@@ -123,8 +115,8 @@ test('缺消息唯一 ID：飞书/钉钉/企微 400 且不写 trace；随后正�
     }));
     assert.equal(dingtalk.status, 400);
 
-    const wecom = await post(base, '/api/webhook/wecom', json({ MsgType: 'text', Content: '没有消息 ID' }));
-    assert.equal(wecom.status, 400);
+    const wechat = await post(base, '/api/webhook/wechat', json({ from: '某人', text: '没有消息 ID' }), 'application/json', 'dev-test');
+    assert.equal(wechat.status, 400);
 
     assert.equal(repo.list().length, 0, '畸形事件不得写消息/幂等表');
     assert.equal(repo.findByExternal(Platform.FEISHU, 'unknown'), undefined);
@@ -198,15 +190,53 @@ test('钉钉群消息（conversationType=2）：入库保留群会话与群名�
   });
 });
 
-test('正常企微明文样例：200 且回明文 success', async () => {
+test('正常微信样例（带 dev 签名）：200 {ok:true} 且入库', async () => {
   await withApp(async ({ base, repo }) => {
-    const res = await post(base, '/api/webhook/wecom', json(wecomSample));
+    const res = await post(base, '/api/webhook/wechat', json(wechatSample), 'application/json', 'dev-test');
     assert.equal(res.status, 200);
-    assert.equal(res.text, 'success', '企微要求回调返回明文 success');
-    const saved = repo.findByExternal(Platform.WECOM, 'wx_demo_001');
+    assert.equal(res.json?.ok, true);
+    const saved = repo.findByExternal(Platform.WECHAT, 'wx_demo_001');
     assert.ok(saved);
-    assert.equal(saved!.sender.id, 'user_wecom_demo');
+    assert.equal(saved!.sender.id, 'wx_demo_user');
   });
+});
+
+test('微信伪造签名：401 拒绝（只认 dev* 本机桥签名，不认外部任意来源）', async () => {
+  await withApp(async ({ base, repo }) => {
+    const res = await post(base, '/api/webhook/wechat', json(wechatSample), 'application/json', 'forged-signature');
+    assert.equal(res.status, 401);
+    assert.equal(repo.list().length, 0);
+  });
+});
+
+test('isLoopbackAddress：只认本机回环，LAN / 公网一律 false', () => {
+  assert.equal(isLoopbackAddress('127.0.0.1'), true);
+  assert.equal(isLoopbackAddress('::1'), true);
+  assert.equal(isLoopbackAddress('::ffff:127.0.0.1'), true);
+  assert.equal(isLoopbackAddress('192.168.1.10'), false);
+  assert.equal(isLoopbackAddress('10.0.0.2'), false);
+  assert.equal(isLoopbackAddress(undefined), false);
+});
+
+test('微信 real 模式：只接受 dev-rpa，无签名 / mock / 其它 dev 前缀都 401', async () => {
+  forceMode(Platform.WECHAT, 'real');
+  try {
+    await withApp(async ({ base, repo }) => {
+      const noSig = await post(base, '/api/webhook/wechat', json(wechatSample));
+      assert.equal(noSig.status, 401, '无签名不能靠默认 mock 混进来');
+      const mock = await post(base, '/api/webhook/wechat', json(wechatSample), 'application/json', 'mock');
+      assert.equal(mock.status, 401);
+      const devTest = await post(base, '/api/webhook/wechat', json(wechatSample), 'application/json', 'dev-test');
+      assert.equal(devTest.status, 401, 'real 模式只认桥的固定签名，不认任意 dev*');
+      assert.equal(repo.list().length, 0);
+
+      const ok = await post(base, '/api/webhook/wechat', json(wechatSample), 'application/json', 'dev-rpa');
+      assert.equal(ok.status, 200);
+      assert.ok(repo.findByExternal(Platform.WECHAT, 'wx_demo_001'));
+    });
+  } finally {
+    forceMode(Platform.WECHAT, 'mock');
+  }
 });
 
 // ---------- 状态回流 ----------

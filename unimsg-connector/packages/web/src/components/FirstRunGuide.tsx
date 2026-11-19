@@ -32,7 +32,7 @@ export const DEFAULT_SMOKE_BASE = 'http://127.0.0.1:3001';
 export type FirstRunStorage = Pick<Storage, 'getItem' | 'setItem'>;
 
 /** 四类数据源的展示顺序（与侧边栏 / 账号页一致） */
-const PLATFORM_ORDER: Platform[] = [Platform.FEISHU, Platform.DINGTALK, Platform.WECOM, Platform.MAIL];
+const PLATFORM_ORDER: Platform[] = [Platform.FEISHU, Platform.DINGTALK, Platform.WECHAT, Platform.MAIL];
 
 /** 本次实际通道：real=真实接口，mock=本地模拟（Mock 绝不伪装成真实成功） */
 const MODE_META: Record<string, { label: string; color: string }> = {
@@ -165,9 +165,9 @@ export function FirstRunGuide({
     const missing = account?.missing ?? [];
     return { platform, count: missing.length, names: humanizeMissingKeys(missing) };
   }).filter((item) => item.count > 0);
-  // 只有飞书/企业微信需要企业管理员开通；邮箱/钉钉可自助（添加账号 / 本人扫码登录）。
+  // 只有飞书需要企业管理员开通；邮箱/钉钉/微信可自助（添加账号 / 本人扫码 / 本地 RPA 桥）。
   // 与首启横幅统一口径：管理员数量优先用 onboarding steps 的 needs_admin 计数。
-  const adminPlatforms = platformsMissingConfig.filter((item) => item.platform === 'feishu' || item.platform === 'wecom');
+  const adminPlatforms = platformsMissingConfig.filter((item) => item.platform === 'feishu');
   const selfServicePlatforms = platformsMissingConfig.filter((item) => item.platform === 'mail' || item.platform === 'dingtalk');
   const adminPlatformCount = needsAdminCount ?? adminPlatforms.length;
 
@@ -288,7 +288,7 @@ export function FirstRunGuide({
                 )}
               </div>
               <div className="first-run-guide__step-desc">
-                在「连接账号」页按 邮箱 → 钉钉 → 飞书 → 企业微信 逐项连接。
+                在「连接账号」页按 邮箱 → 钉钉 → 飞书 → 微信 逐项连接。
                 钉钉可以只用本人账号（无需机器人应用）；管理员项可复制清单给管理员。
               </div>
             </div>

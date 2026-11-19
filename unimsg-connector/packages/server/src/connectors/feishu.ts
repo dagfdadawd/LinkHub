@@ -9,7 +9,7 @@
  */
 import {
   Platform, MsgStatus, UnifiedMessage, PlatformConnector,
-  type SendResult, type OutboundAttachment,
+  type AttachmentInfo, type SendResult, type OutboundAttachment,
 } from '@unimsg/shared';
 import { config } from '../config';
 import { genTraceId, mockSend, verifyMock, inferType, inferDueAt, isMock, assertRealSendable } from './base';
@@ -52,7 +52,9 @@ export function resetFeishuEchoRegistry(): void {
 export function isSelfEcho(raw: unknown): boolean {
   const r = raw as any;
   const event = r?.event ?? r;
-  const id = event?.message?.message_id;
+  // 机器人事件是 event.message.message_id；飞书用户轮询拿到的是裸 message 对象
+  // （message_id 在顶层），两种形态都要能认出「本进程刚发出的消息」。
+  const id = event?.message?.message_id ?? event?.message_id ?? r?.message_id;
   if (typeof id !== 'string' || !id) return false;
   const at = recentOutbound.get(id);
   if (!at) return false;
@@ -126,9 +128,59 @@ export function receive(raw: unknown): UnifiedMessage {
   const senderId = sender?.sender_id?.open_id ?? sender?.sender_id?.user_id ?? 'unknown';
   const now = new Date().toISOString();
   const kind = m.message_type;
-  const type = kind === 'image' ? 'image' : kind === 'file' ? 'file' : inferType(text);
+  const type = kind === 'image' || kind === 'sticker'
+    ? 'image'
+    : kind === 'file' || kind === 'audio' || kind === 'media'
+      ? 'file'
+      : inferType(text);
   const chatId = m.chat_id ?? e?.chat_id;
   const chatType = m.chat_type ?? e?.chat_type;
+
+  /**
+   * 机器人通道也要保留资源 key：以前只认 `text`，文件/图片进库时
+   * attachments 为空，消息只能看到一条空正文，更谈不上下载。
+   * key 与 resourceType 交给下载服务，按 tenant_access_token 调
+   * `im/v1/messages/:message_id/resources/:key`。
+   */
+  const attachments: AttachmentInfo[] = [];
+  let body = text;
+  if (kind === 'file') {
+    const fileKey = typeof content?.file_key === 'string' ? content.file_key : '';
+    const fileName = typeof content?.file_name === 'string' ? content.file_name : '飞书文件';
+    body = fileName ? `[文件] ${fileName}` : '[文件]';
+    attachments.push({
+      name: fileName,
+      mimeType: 'application/octet-stream',
+      size: 0,
+      ...(fileKey ? { fileKey, resourceType: 'file' as const } : {}),
+    });
+  } else if (kind === 'image') {
+    const imageKey = typeof content?.image_key === 'string' ? content.image_key : '';
+    // 图片事件的 content 可能有说明文字（测试/部分富媒体也会带）；没有才用占位符。
+    body = text || '[图片]';
+    attachments.push({
+      name: '图片',
+      mimeType: 'image/*',
+      size: 0,
+      ...(imageKey ? { fileKey: imageKey, resourceType: 'image' as const } : {}),
+    });
+  } else if (kind === 'audio' || kind === 'media') {
+    const fileKey = typeof content?.file_key === 'string' ? content.file_key : '';
+    const fileName = typeof content?.file_name === 'string' ? content.file_name : '';
+    body = kind === 'audio' ? '[语音]' : `[视频]${fileName ? ` ${fileName}` : ''}`;
+    attachments.push({
+      name: fileName || (kind === 'audio' ? '语音' : '视频'),
+      mimeType: kind === 'audio' ? 'audio/*' : 'video/*',
+      size: 0,
+      ...(fileKey ? { fileKey, resourceType: 'file' as const } : {}),
+    });
+  } else if (kind === 'sticker') {
+    const imageKey = typeof content?.file_key === 'string' ? content.file_key : '';
+    body = '[表情]';
+    if (imageKey) {
+      attachments.push({ name: '表情', mimeType: 'image/*', size: 0, fileKey: imageKey, resourceType: 'image' });
+    }
+  }
 
   return {
     traceId: genTraceId(),
@@ -139,7 +191,8 @@ export function receive(raw: unknown): UnifiedMessage {
       ? { id: String(chatId), type: chatType === 'p2p' ? 'p2p' : 'group' }
       : undefined,
     type,
-    body: text,
+    body,
+    ...(attachments.length > 0 ? { attachments } : {}),
     dueAt: type === 'todo' ? inferDueAt(text) : undefined,
     // 机器人 webhook / 长连接收到的消息：如实标注来源身份（Mock 演示不写）
     ...(isMock(Platform.FEISHU) ? {} : { receivedAs: 'bot' as const }),

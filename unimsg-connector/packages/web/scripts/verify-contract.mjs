@@ -106,7 +106,7 @@ async function main() {
   // 本次实际通道必须公开可见：评审 curl 一下就知道哪些平台是真接口、哪些是 Mock
   const modes = health.data?.modes ?? {};
   check('health 含 modes（各平台实际通道）', Object.keys(modes).length > 0);
-  for (const platform of ['feishu', 'dingtalk', 'wecom', 'mail']) {
+  for (const platform of ['feishu', 'dingtalk', 'wechat', 'mail']) {
     check(
       `health.modes.${platform} ∈ real|mock`,
       modes[platform] === 'real' || modes[platform] === 'mock',
@@ -171,7 +171,7 @@ async function main() {
   check('accounts 每项 missing 为数组', accountList.every((a) => Array.isArray(a.missing)));
   check(
     'accounts 四平台齐全',
-    ['feishu', 'dingtalk', 'wecom', 'mail'].every((p) => accountList.some((a) => a.platform === p)),
+    ['feishu', 'dingtalk', 'wechat', 'mail'].every((p) => accountList.some((a) => a.platform === p)),
     accountList.map((a) => a.platform).join(','),
   );
   // 邮箱是多账号数据源：mail 项必须带 accounts 数组，前端账号页展示每个邮箱明细

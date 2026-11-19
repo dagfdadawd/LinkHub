@@ -272,7 +272,7 @@ function isIdentityPlatform(platform: Platform): platform is Platform.FEISHU | P
   return platform === Platform.FEISHU || platform === Platform.DINGTALK;
 }
 
-/** 「不适用」视图：企业微信 / 邮箱没有本人身份通道，前端显示「不适用」 */
+/** 「不适用」视图：微信 / 邮箱没有本人身份通道，前端显示「不适用」 */
 function inapplicableView(platform: Platform): PlatformIdentityView {
   const mode = modeOf(platform);
   const rt = runtimeOf(platform);
@@ -406,8 +406,8 @@ function sendHint(
 const SEND_IDENTITY_LABEL: Record<Platform, string> = {
   [Platform.FEISHU]: '飞书',
   [Platform.DINGTALK]: '钉钉',
-  [Platform.WECOM]: '企业微信',
   [Platform.MAIL]: '邮箱',
+  [Platform.WECHAT]: '微信',
 };
 
 /**
@@ -505,6 +505,9 @@ export interface IdentityHealthSummary {
 export function identitySummary(): Record<string, IdentityHealthSummary> {
   const out: Record<string, IdentityHealthSummary> = {};
   for (const platform of Object.values(Platform)) {
+    // 只给「有本人/机器人概念」的平台。微信个人版与企业邮箱没有机器人身份，
+    // 以前统一填 bot/bot 会被读成"微信也在用机器人"，评审时是误读源（P1）。
+    if (!isIdentityPlatform(platform)) continue;
     const view = resolveIdentity(platform);
     out[platform] = { send: view.effectiveSend, receive: view.effectiveReceive };
   }
@@ -575,7 +578,7 @@ export async function warmIdentityProbes(): Promise<void> {
 
 /**
  * 启动日志里的身份行（契约 §6），返回多行字符串数组：
- * `[unimsg] 身份: 飞书=本人(收:用户轮询/发:本人) | 钉钉=机器人(收:机器人/发:机器人) | 企业微信=不适用 | 邮箱=不适用`
+ * `[unimsg] 身份: 飞书=本人(收:用户轮询/发:本人) | 钉钉=机器人(收:机器人/发:机器人) | 微信=不适用 | 邮箱=不适用`
  * 不可用/固定本人但未连接时追加中文原因与修复命令。
  */
 export function identityStartupLines(): string[] {

@@ -4,11 +4,15 @@
  * 与「回复」的区别：不依赖先收到某条消息，可直接选平台 + 填目标会话 +
  * 输入文本 + 挂附件。后端把这次发送纳入同一条闭环状态机（含 traceId），
  * 因此发送后在收件箱与「全链路回放」里都能逐步看到状态回流。
+ *
+ * 另外支持勾选「同时加为待办」：手填标题 / 截止时间，待办就是这条发出的
+ * 消息本身（不再造一条额外消息），发送完成即出现在「待办」清单里可持续跟进。
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { App as AntApp, Button, Input, Modal, Radio, Select, Space, Tag } from 'antd';
-import { PaperClipOutlined, SendOutlined, UploadOutlined } from '@ant-design/icons';
-import { FILE_LIMITS, Platform } from '../../types';
+import type { Dayjs } from 'dayjs';
+import { Alert, App as AntApp, Button, Checkbox, DatePicker, Input, Modal, Radio, Select, Space, Tag } from 'antd';
+import { CheckSquareOutlined, PaperClipOutlined, SendOutlined, UploadOutlined } from '@ant-design/icons';
+import { FILE_LIMITS, Platform, TODO_TITLE_MAX } from '../../types';
 import type { ComposeRequest, IdentityRole, SendCapabilities } from '../../types';
 import type { AccountInfo, ContactDirectory, MailAccountInfo } from '../../services/api';
 import { PLATFORM_META, formatRelative } from '../../utils/format';
@@ -31,8 +35,8 @@ const PLATFORM_OPTIONS = Object.values(Platform).map((p) => ({
 const CONVERSATION_HINT: Record<Platform, string> = {
   [Platform.FEISHU]: '飞书 chat_id（oc_…）或单聊 open_id',
   [Platform.DINGTALK]: '钉钉 openConversationId（cid…）或单聊 userId',
-  [Platform.WECOM]: '企业微信成员 userid',
   [Platform.MAIL]: '收件邮箱地址',
+  [Platform.WECHAT]: '微信好友昵称 / 群名（RPA 按名称定位）',
 };
 
 export function ComposeModal({
@@ -57,6 +61,10 @@ export function ComposeModal({
   const [sendIdentity, setSendIdentity] = useState<IdentityRole>();
   const [text, setText] = useState('');
   const [files, setFiles] = useState<File[]>([]);
+  /** 同时手动加一条待办：勾选后这条发出的消息本身进入待办清单（同一条记录，不另造消息） */
+  const [todoEnabled, setTodoEnabled] = useState(false);
+  const [todoTitle, setTodoTitle] = useState('');
+  const [todoDue, setTodoDue] = useState<Dayjs>();
   const [caps, setCaps] = useState<SendCapabilities[]>([]);
   const [sending, setSending] = useState(false);
   /** 平台会话名录（飞书可用）：补齐「还没聊过的人 / 群」 */
@@ -221,12 +229,24 @@ export function ComposeModal({
         ...(sendIdentity ? { identity: sendIdentity } : {}),
         text: text.trim(),
         ...(attachments.length > 0 ? { attachments } : {}),
+        // 勾选「同时加为待办」才带 todo：传 {} 也代表建待办（标题回退消息内容）
+        ...(todoEnabled
+          ? {
+              todo: {
+                ...(todoTitle.trim() ? { title: todoTitle.trim() } : {}),
+                ...(todoDue ? { dueAt: todoDue.toISOString() } : {}),
+              },
+            }
+          : {}),
       };
       const taskId = await store.compose(req);
       // 成功不再弹 toast：弹窗关闭 + 新消息出现在会话里，本身就是反馈；
       // 失败才提示，避免每次发送都被一层浮层挡一下。
       setText('');
       setFiles([]);
+      setTodoEnabled(false);
+      setTodoTitle('');
+      setTodoDue(undefined);
       onSent?.(taskId);
       onClose();
     } catch (e) {
@@ -452,6 +472,57 @@ export function ComposeModal({
             </div>
           )}
         </div>
+
+        {/* 手动加待办：待办就是这条发出的消息本身（同一条记录），发送完成即进入待办清单 */}
+        <div className="compose-todo">
+          <Checkbox
+            checked={todoEnabled}
+            onChange={(e) => setTodoEnabled(e.target.checked)}
+            data-testid="compose-todo-toggle"
+          >
+            <CheckSquareOutlined aria-hidden="true" /> 同时加为待办
+          </Checkbox>
+          <div className="compose-field__hint">
+            勾选后这条发出的消息会同时出现在「待办」清单里，可随时勾选完成；标题与截止时间都可以不填。
+          </div>
+          {todoEnabled && (
+            <div className="compose-todo__fields">
+              <div>
+                <div className="compose-field__label">待办标题（选填）</div>
+                <Input
+                  value={todoTitle}
+                  onChange={(e) => setTodoTitle(e.target.value)}
+                  placeholder="默认用消息内容作为标题"
+                  maxLength={TODO_TITLE_MAX}
+                  showCount
+                  aria-label="待办标题"
+                  data-testid="compose-todo-title"
+                />
+              </div>
+              <div>
+                <div className="compose-field__label">截止时间（选填）</div>
+                <DatePicker
+                  value={todoDue ?? null}
+                  onChange={(value) => setTodoDue(value ?? undefined)}
+                  showTime={{ format: 'HH:mm' }}
+                  format="YYYY-MM-DD HH:mm"
+                  placeholder="不设置则不显示截止提醒"
+                  style={{ width: '100%' }}
+                  aria-label="待办截止时间"
+                />
+              </div>
+            </div>
+          )}
+        </div>
+
+        {cap && (
+          <Alert
+            type={cap.mode === 'mock' ? 'info' : 'success'}
+            showIcon
+            message={`当前 ${PLATFORM_META[platform].name} 通道：${cap.mode === 'mock' ? '演示模式（模拟发送，不会真的调用平台）' : '真实平台接口'}`}
+            description={cap.note ?? '文本与文件都按统一消息格式转换后发送，状态会回流到全链路回放'}
+          />
+        )}
       </Space>
     </Modal>
   );

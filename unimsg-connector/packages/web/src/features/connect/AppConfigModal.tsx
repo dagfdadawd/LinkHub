@@ -2,7 +2,7 @@
  * 「平台应用配置」弹窗（白号 P0-1）：
  *
  * 零凭据客户第一次使用时，唯一能走通的路是「在界面填应用凭据」——
- * 本弹窗把飞书 / 钉钉 / 企微 / AI 的凭据收在一处：
+ * 本弹窗把飞书 / 钉钉 / 微信 / AI 的凭据收在一处：
  *  - 已有值只显示脱敏信息 + 来源（.env / 本地配置），.env 显式配置不可覆盖；
  *  - secret 用 password 输入，保存后不回显；
  *  - 保存应用凭据 → 明确提示「需要重启」+ 重载命令 +「我已重启，重新检测」；
@@ -16,6 +16,7 @@ import {
   Button,
   Input,
   Modal,
+  Select,
   Spin,
   Switch,
   Tabs,
@@ -28,6 +29,7 @@ import type {
   AppConfigSaveResult,
   AppConfigUpdate,
   AppConfigView,
+  WechatBridgeInfo,
 } from '../../services/api';
 import { useAppState } from '../../hooks/useAppState';
 import { store } from '../../store';
@@ -73,6 +75,9 @@ export function AppConfigModal({
   const [saveResult, setSaveResult] = useState<AppConfigSaveResult | null>(null);
   const [applied, setApplied] = useState(false);
   const [rechecking, setRechecking] = useState(false);
+  const [wechatMode, setWechatMode] = useState<'auto' | 'real' | 'mock'>('auto');
+  const [wechatBridge, setWechatBridge] = useState<WechatBridgeInfo | null>(null);
+  const [bridgeBusy, setBridgeBusy] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -87,12 +92,60 @@ export function AppConfigModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, initialGroup]);
 
+  useEffect(() => {
+    if (open && activeGroup === 'wechat') void loadWechatBridge();
+    // 只在切到微信分组/重新打开时探测；Status 按钮可手动刷新
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, activeGroup]);
+
+  async function loadWechatBridge(): Promise<void> {
+    try {
+      setWechatBridge(await store.wechatBridgeStatus());
+    } catch (e) {
+      setWechatBridge(null);
+      toast.warning(e instanceof Error ? e.message : '检测 RPA 桥失败');
+    }
+  }
+
+  async function startWechatBridge(): Promise<void> {
+    setBridgeBusy(true);
+    try {
+      const result = await store.startWechatBridge();
+      setWechatBridge(result);
+      if (result.error) toast.error(result.error);
+      else if (result.alreadyRunning) toast.info('RPA 桥已在运行');
+      else toast.success('RPA 桥已启动；请确认微信桌面端已登录');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '启动 RPA 桥失败');
+      await loadWechatBridge();
+    } finally {
+      setBridgeBusy(false);
+    }
+  }
+
+  async function stopWechatBridge(): Promise<void> {
+    setBridgeBusy(true);
+    try {
+      const result = await store.stopWechatBridge();
+      setWechatBridge(result);
+      if (result.error) toast.error(result.error);
+      else toast.success('RPA 桥已停止');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '停止 RPA 桥失败');
+      await loadWechatBridge();
+    } finally {
+      setBridgeBusy(false);
+    }
+  }
+
   async function loadConfig(): Promise<void> {
     setLoading(true);
     try {
       const view = await store.loadAppConfig();
       setConfig(view);
       setPersonalOnly(view.identity?.dingtalk === 'user');
+      const mode = String(view.modes?.wechat ?? 'auto');
+      setWechatMode(mode === 'real' || mode === 'mock' ? mode : 'auto');
       setError('');
     } catch (e) {
       setError(e instanceof Error ? e.message : '读取平台应用配置失败，请确认后端已启动');
@@ -179,12 +232,6 @@ export function AppConfigModal({
           errors.push('钉钉 Client ID 与 Client Secret 需要成对填写（已配置的一项可留空保持不变）。');
         }
       }
-      if (group.id === 'wecom') {
-        const touched = Boolean(typed.corpId || typed.agentId || typed.secret);
-        if (touched && !(configured('corpId') && configured('agentId') && configured('secret'))) {
-          errors.push('企业微信需要同时填写 Corp ID、Agent ID 与 Secret（已配置的项可留空保持不变）。');
-        }
-      }
       platforms[group.id] = typed;
     }
 
@@ -195,14 +242,24 @@ export function AppConfigModal({
       identity.dingtalk = 'auto';
     }
 
-    if (Object.keys(platforms).length === 0 && Object.keys(identity).length === 0 && !llmConfig) {
-      errors.push('还没有填写任何配置：请至少填写一个平台的凭据，或切换钉钉「仅用本人身份」。');
+    const modes: Record<string, string> = {};
+    const currentWechatMode = String(config?.modes?.wechat ?? 'auto');
+    if (wechatMode !== currentWechatMode) modes.wechat = wechatMode;
+
+    if (
+      Object.keys(platforms).length === 0
+      && Object.keys(identity).length === 0
+      && Object.keys(modes).length === 0
+      && !llmConfig
+    ) {
+      errors.push('还没有填写任何配置：请至少填写一个平台的凭据，或切换微信运行模式 / 钉钉「仅用本人身份」。');
     }
     return {
       patch: {
         ...(Object.keys(platforms).length > 0 ? { platforms } : {}),
         ...(llmConfig ? { llm: llmConfig } : {}),
         ...(Object.keys(identity).length > 0 ? { identity } : {}),
+        ...(Object.keys(modes).length > 0 ? { modes } : {}),
       },
       errors,
     };
@@ -371,6 +428,73 @@ export function AppConfigModal({
     );
   }
 
+  function renderWechatRpa(): ReactNode {
+    const b = wechatBridge?.bridge;
+    const online = Boolean(b?.reachable && b?.mode === 'rpa');
+    const stateText = !wechatBridge
+      ? '尚未检测'
+      : !b?.reachable
+        ? '未连接'
+        : b.mode === 'rpa'
+          ? '在线（真实 RPA）'
+          : b.mode === 'mock'
+            ? '在线但为 mock 模式'
+            : '在线，模式未知';
+    return (
+      <div className="app-config-wechat-rpa" data-testid="app-config-wechat-rpa">
+        <div className="app-config-wechat-rpa__head">
+          <strong>本机 RPA 桥</strong>
+          <Tag color={online ? 'success' : b?.reachable ? 'warning' : 'default'}>{stateText}</Tag>
+        </div>
+        <div className="app-config-wechat-rpa__row">
+          <label htmlFor="app-config-wechat-mode">运行模式</label>
+          <Select
+            id="app-config-wechat-mode"
+            value={wechatMode}
+            style={{ width: 210 }}
+            onChange={(v) => setWechatMode(v)}
+            options={[
+              { value: 'auto', label: '自动（微信默认模拟）' },
+              { value: 'mock', label: '强制模拟（mock）' },
+              { value: 'real', label: '真实 RPA（real）' },
+            ]}
+          />
+          <span className="app-config-field__note">
+            真实模式保存后需重启 LinkHub；桥本身可以现在先启动。
+          </span>
+        </div>
+        <div className="app-config-wechat-rpa__row">
+          <span className="app-config-field__note">
+            桥地址默认 <code>http://127.0.0.1:8787</code>；如果改了端口，请在上面的「RPA 桥地址」同步。
+          </span>
+          <Button size="small" onClick={() => void loadWechatBridge()} disabled={bridgeBusy}>
+            检测桥
+          </Button>
+          <Button
+            size="small"
+            type="primary"
+            onClick={() => void startWechatBridge()}
+            loading={bridgeBusy}
+            disabled={online}
+          >
+            启动桥
+          </Button>
+          <Button size="small" danger onClick={() => void stopWechatBridge()} disabled={bridgeBusy || !wechatBridge?.managed}>
+            停止桥
+          </Button>
+        </div>
+        {b && (
+          <div className="app-config-wechat-rpa__status">
+            {b.reachable
+              ? `${b.mode === 'rpa' ? 'RPA 已连接' : '桥可达'} · ${b.receiveMode === 'auto' ? '自动接收' : b.receiveMode === 'pull' ? '按需拉取' : '接收未就绪'} · ${b.receiveReason}`
+              : `未连接：${b.error ?? b.receiveReason}`}
+            {b.client?.kind === 'weixin4' && '（微信 4.x：自动轮询不可用，接收用按需拉取）'}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   function renderGroup(group: AppConfigGroupDef): ReactNode {
     const missing = group.id === 'llm' ? [] : humanizeMissingKeys(config?.platforms[group.id]?.missing);
     return (
@@ -385,6 +509,7 @@ export function AppConfigModal({
         <div className="app-config-fields">
           {group.fields.map((def) => renderField(group, def))}
         </div>
+        {group.id === 'wechat' && renderWechatRpa()}
       </div>
     );
   }

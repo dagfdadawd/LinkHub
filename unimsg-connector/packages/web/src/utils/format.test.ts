@@ -63,6 +63,11 @@ describe('format utils', () => {
       kind: 'real',
     });
     expect(deliveryLabel({ mode: 'real', at })).toEqual({ text: '真实接口', kind: 'real' });
+    // RPA 无平台回执：桥没核对时必须明确写「未核对」，不能和真实同步混为一谈
+    expect(deliveryLabel({ mode: 'real', verified: false, platformReply: 'rpa:1', at })).toEqual({
+      text: '真实接口（rpa:1，已提交未核对）',
+      kind: 'real',
+    });
     // 真实回写：必须写清是本人还是机器人发的，不能含糊
     expect(deliveryLabel({ mode: 'real', identity: 'user', platformReply: 'om_123', at })).toEqual({
       text: '本人发送 · 真实接口（om_123）',

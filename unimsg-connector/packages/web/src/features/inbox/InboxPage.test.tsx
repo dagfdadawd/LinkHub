@@ -6,6 +6,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ACCOUNTS } from '../../services/mock/fixtures';
 import { MsgStatus, Platform } from '../../types';
@@ -16,7 +17,7 @@ const hoisted = vi.hoisted(() => {
     messages: [] as unknown[],
     loading: false,
     error: null as string | null,
-    filters: { keyword: '', onlyReview: false },
+    filters: { keyword: '', onlyReview: false, platform: undefined as Platform | undefined },
     accounts: [] as unknown[],
     health: null as null | { received: number },
     connection: 'connected' as 'connected' | 'reconnecting' | 'offline',
@@ -37,6 +38,15 @@ vi.mock('../../store', () => ({
   services: {
     api: {
       contacts: vi.fn(async (platform: string) => ({ platform, available: false, items: [] })),
+      wechatPull: vi.fn(async () => ({
+        ok: true,
+        conversation: '项目群',
+        parsed: 1,
+        forwarded: 1,
+        duplicates: 0,
+        failed: [],
+        conversationVerified: false,
+      })),
     },
   },
   store: {
@@ -48,12 +58,27 @@ vi.mock('../../store', () => ({
     markRead: vi.fn(),
     markAllRead: vi.fn(async () => 0),
     getTrace: vi.fn(),
+    refresh: vi.fn(async () => {}),
     refreshHealth: vi.fn(),
     simulateIncoming: vi.fn(),
     armFailure: vi.fn(),
     refreshOnboarding: vi.fn(async () => null),
   },
 }));
+
+vi.mock('antd', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('antd')>();
+  return {
+    ...actual,
+    // InboxPage 只用到 App.useApp().message；测试里没有 <App> provider，
+    // 给一个最小实现，避免拉取成功/失败分支因 toast 方法缺失变成 unhandled rejection。
+    App: {
+      useApp: () => ({
+        message: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
+      }),
+    },
+  };
+});
 
 import { InboxPage } from './InboxPage';
 
@@ -74,7 +99,7 @@ function mockState(patch: Partial<typeof hoisted.state> = {}) {
     messages: [],
     loading: false,
     error: null,
-    filters: { keyword: '', onlyReview: false },
+    filters: { keyword: '', onlyReview: false, platform: undefined as Platform | undefined },
     accounts: [],
     health: null,
     connection: 'connected',
@@ -210,6 +235,34 @@ describe('首启入口（连接账号横幅）', () => {
     });
     renderInboxPage();
     expect(screen.queryByTestId('onboarding-banner')).toBeNull();
+  });
+});
+
+describe('微信按需拉取（4.x）', () => {
+  it('群聊拉取会带 conversationType=group，不能默认按单聊入库', async () => {
+    const { services } = await import('../../store');
+    const user = userEvent.setup();
+    mockState({
+      messages: [],
+      accounts: ACCOUNTS,
+      filters: { keyword: '', onlyReview: false, platform: Platform.WECHAT },
+    });
+    renderInboxPage();
+
+    await user.click(screen.getByRole('button', { name: /从微信拉取当前会话/ }));
+    await user.type(screen.getByLabelText(/会话名/), '项目群');
+    await user.type(screen.getByLabelText(/你的微信昵称/), '阿彬');
+    await user.click(screen.getByRole('combobox'));
+    await user.click(await screen.findByText('群聊'));
+    await user.click(screen.getByRole('button', { name: '开始拉取' }));
+
+    await vi.waitFor(() => {
+      expect(services.api.wechatPull).toHaveBeenCalledWith({
+        conversation: '项目群',
+        conversationType: 'group',
+        selfName: '阿彬',
+      });
+    });
   });
 });
 

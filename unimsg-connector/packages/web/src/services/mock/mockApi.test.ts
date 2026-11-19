@@ -29,9 +29,9 @@ describe('MockApi', () => {
     expect(feishu.length).toBeGreaterThan(0);
     expect(feishu.every((m) => m.platform === Platform.FEISHU)).toBe(true);
 
-    const wecom = await api.list({ platform: Platform.WECOM });
-    expect(wecom.length).toBeGreaterThan(0);
-    expect(wecom.every((m) => m.platform === Platform.WECOM)).toBe(true);
+    const wechat = await api.list({ platform: Platform.WECHAT });
+    expect(wechat.length).toBeGreaterThan(0);
+    expect(wechat.every((m) => m.platform === Platform.WECHAT)).toBe(true);
   });
 
   it('关键字与「需人工确认」筛选', async () => {
@@ -87,7 +87,7 @@ describe('MockApi', () => {
     expect(accounts.map((a) => a.platform)).toEqual([
       Platform.FEISHU,
       Platform.DINGTALK,
-      Platform.WECOM,
+      Platform.WECHAT,
       Platform.MAIL,
     ]);
 
@@ -167,7 +167,7 @@ describe('MockApi 授权中心（纯前端演示）', () => {
     expect(view.firstRun).toBe(true);
     expect(view.dws).toMatchObject({ available: false, source: 'missing' });
     expect(view.overall).toEqual({ ready: 0, total: 4, needsAction: 0 });
-    expect(view.steps.map((s) => s.id)).toEqual(['mail', 'dingtalk', 'feishu', 'wecom']);
+    expect(view.steps.map((s) => s.id)).toEqual(['mail', 'dingtalk', 'feishu', 'wechat']);
     expect(view.steps.every((s) => s.state === 'mock')).toBe(true);
     expect(view.steps.every((s) => s.actions.length === 0)).toBe(true);
   });

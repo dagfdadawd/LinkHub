@@ -7,7 +7,7 @@
  *    contact:user.base:readonly，当前应用没开。
  *  - 钉钉：dws `contact user search` 可搜人（走本人登录态，不需要应用凭据）；
  *    会话名在个人事件里自带。
- *  - 企微：当前是 mock，不提供名录。
+ *  - 微信：按好友昵称/群名定位，不提供名录。
  *
  * 所以这里只做「会话名录」：飞书真实可用；其它平台返回 available=false + 原因，
  * 前端据此说明「为什么只能选已有会话」，而不是假装有通讯录。
@@ -81,8 +81,8 @@ export async function listDirectory(platform: Platform): Promise<DirectoryResult
       Platform.DINGTALK,
       '钉钉目前只能发给「已有会话」：会话名来自收到的消息。按钉钉号给人发新会话需要额外授权。',
     );
-  } else if (platform === Platform.WECOM) {
-    result = unavailable(Platform.WECOM, '企业微信当前是演示模式，没有可用名录。');
+  } else if (platform === Platform.WECHAT) {
+    result = unavailable(Platform.WECHAT, '微信走 RPA 通道，按好友昵称/群名定位，无通讯录名录。');
   } else {
     result = unavailable(Platform.MAIL, '邮箱按地址发送，不使用会话名录。');
   }

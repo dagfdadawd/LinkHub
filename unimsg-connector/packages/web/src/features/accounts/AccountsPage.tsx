@@ -83,7 +83,7 @@ export function capabilityWarning(
   // 当前生效身份就是本人：机器人通道不可用不影响收发，身份块已经写清「接收/发送 本人」，
   // 再挂一个「不可接收」只会自相矛盾（NEW-P2-1）。
   if (effective === 'user') return undefined;
-  // Mock 平台 / 企业微信 / 邮箱 / 本人未连接且机器人不可用：保持原来的能力缺口提示，
+  // Mock 平台 / 微信 / 邮箱 / 本人未连接且机器人不可用：保持原来的能力缺口提示，
   // 「模拟」口径由身份块/通道 Tag 表达，不在能力 chip 里重复。
   return action === 'receive' ? '不可接收' : '不可发送';
 }

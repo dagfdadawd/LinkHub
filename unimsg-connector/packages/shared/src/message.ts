@@ -9,9 +9,15 @@
 export enum Platform {
   FEISHU = 'feishu',
   DINGTALK = 'dingtalk',
-  WECOM = 'wecom',
   /** 邮箱（QQ / 163 …）：IMAP 轮询收、SMTP 发，可挂多个账号 */
   MAIL = 'mail',
+  /**
+   * 微信个人版：官方不开放收发 API，采用 RPA 方式接入。
+   * - 收：本地 RPA 桥读微信桌面端消息 → 复用 webhook 入库链路；
+   * - 发：connector.send() 把内容交给本地 RPA 桥模拟键鼠发送。
+   * 通道是否真实由 WECHAT_MODE 决定（mock / real），real 即 RPA 真实操作。
+   */
+  WECHAT = 'wechat',
 }
 
 /** 闭环状态机（文档 1.3）：received→processing→replied→sent→synced，失败进 failed */
@@ -43,11 +49,16 @@ export type DeliveryMode = 'real' | 'mock';
 /** 回写投递信息（成功发送后写入消息，前端与回放可见） */
 export interface DeliveryInfo {
   mode: DeliveryMode;
-  /** 真实平台返回的凭证（飞书 message_id / 钉钉 processQueryKey / 企微 msgid / SMTP 回执） */
+  /** 真实平台返回的凭证（飞书 message_id / 钉钉 processQueryKey / SMTP 回执） */
   platformReply?: string;
   at: string;
   /** 本次真实发送实际使用的身份（本人 / 机器人）；Mock 模式不写（如实标注） */
   identity?: IdentityRole;
+  /**
+   * RPA 等无平台回执的通道：是否已核对发到目标会话。
+   * 缺省 = 该平台没有这个语义；false = 已提交但未核对，不能显示为已同步。
+   */
+  verified?: boolean;
 }
 
 /** 连接器发送结果：mode 必须如实反映本次是真实接口还是本地模拟 */
@@ -57,6 +68,11 @@ export interface SendResult {
   mode: DeliveryMode;
   /** 真实发送时实际使用的身份（机器人 / 用户本人）；Mock 不填 */
   identity?: IdentityRole;
+  /**
+   * RPA 等无法从平台拿到回执的通道：是否已核对「发到了目标会话」。
+   * 只有桥确认过才是 true；false 表示已提交但未核对，界面不能写成已同步。
+   */
+  verified?: boolean;
 }
 
 /**
@@ -105,6 +121,38 @@ export interface AttachmentInfo {
    */
   mediaId?: string;
   /**
+   * 平台侧文件 ID（钉钉本人文件回推的 `fileId`）。
+   *
+   * 钉钉个人事件回推文件时，正文里只有 `[文件] 名称 fileId: …`；
+   * 要真正下载必须保留这个 ID（`dws drive download --node <fileId>`）。
+   * 与 `mediaId` 是两套资源体系，不能互相替代。
+   */
+  fileId?: string;
+  /**
+   * 飞书资源 key（`file_key` / `image_key`）。
+   * 下载走 `GET /open-apis/im/v1/messages/:message_id/resources/:file_key?type=file|image`，
+   * 由附件所属消息的 `receivedAs` / `delivery.identity` 决定用本人 token 还是机器人 token。
+   */
+  fileKey?: string;
+  /** 飞书资源类型：资源接口必须区分图片与文件（缺省按 MIME 推断） */
+  resourceType?: 'file' | 'image';
+  /**
+   * 微信 RPA 桥签发的不透明文件 token（新版桥；推荐）。
+   *
+   * 不再把本机绝对路径写进消息：桥维护 token → 真实路径的内存映射，
+   * 后端只拿 token 调 `GET /file?token=…`。桥重启后旧 token 失效，
+   * 需要重新拉取该会话才能生成新 token。
+   */
+  fileToken?: string;
+  /**
+   * 微信 RPA 桥读到的「本机已落盘文件」绝对路径（仅旧版桥兼容）。
+   *
+   * 微信没有媒体下载 API，文件是微信客户端自己存到本机的，所以只能记路径。
+   * 下载时后端**不直接读盘**，而是拿这个路径向本机 RPA 桥的 `GET /file` 要字节，
+   * 由桥做目录白名单校验，信任边界留在桥这一侧。
+   */
+  localPath?: string;
+  /**
    * 图片的缩略预览（data URL）。仅对图片、且体积在阈值内生成。
    *
    * 为什么不走「按需下载接口」：演示环境没有对象存储，图片本身就要经请求体传上来，
@@ -128,12 +176,31 @@ export interface SendCapabilities {
 }
 
 /**
+ * 手动待办标题长度上限（前后端同一份常量，避免两层阈值漂移）。
+ * 待办标题是清单里的一行字，不替代正文，因此不需要消息正文那么长。
+ */
+export const TODO_TITLE_MAX = 120;
+
+/**
+ * 手动待办草稿（新建发送时「同时加为待办」填写，也可用于对已有消息手动加待办）。
+ *
+ * 设计：待办就是一条消息记录本身（不另造一条幽灵消息），所以这里只带
+ * 用户手填的补充信息——标题默认用消息内容，截止时间不填 = 未设置截止。
+ */
+export interface TodoDraft {
+  /** 待办标题（选填，最长 120 字符）；不填时展示消息内容 */
+  title?: string;
+  /** 截止时间（ISO 8601，选填）；不填 = 未设置截止，前端不伪造时间 */
+  dueAt?: string;
+}
+
+/**
  * 从统一入口「主动」向指定平台发送请求（赛题 A 功能需求 3）。
  * 与 reply 的区别：不依赖先收到某条消息，可指定平台 + 目标会话 + 文本 + 文件。
  */
 export interface ComposeRequest {
   platform: Platform;
-  /** 目标会话：飞书 chat_id / 钉钉 openConversationId / 企微 userid / 邮箱收件地址 */
+  /** 目标会话：飞书 chat_id / 钉钉 openConversationId / 微信会话名 / 邮箱收件地址 */
   conversationId?: string;
   conversationType?: 'group' | 'p2p';
   /** 邮箱平台专用：从哪个邮箱账号发出（MAIL_<KEY> 的 key）；不填则用首个已配置账号 */
@@ -145,6 +212,12 @@ export interface ComposeRequest {
   identity?: IdentityRole;
   text: string;
   attachments?: OutboundAttachment[];
+  /**
+   * 手动加一条待办（选填）：发送的这条消息同时进入待办清单。
+   * 不传 = 普通发送；传 `{}` = 只加待办、标题与截止都用默认（标题回退消息内容）。
+   * 服务端在同一条消息记录上原子写入，不额外发一次「加入待办」请求，避免并发竞态。
+   */
+  todo?: TodoDraft;
 }
 
 /** 主动发送回执：与 reply 的 202 响应同构，便于前端复用同一套状态推进 */
@@ -292,6 +365,12 @@ export interface UnifiedMessage {
    * 解析不出就是 undefined —— 前端归入"未设置截止"，不伪造时间。
    */
   dueAt?: string;
+  /**
+   * 手动添加待办时用户自己填的标题。
+   * 待办本身仍是一条消息（`type='todo'`），正文保留原消息内容；
+   * 前端待办清单优先展示 todoTitle，没有时回退 body —— 不覆盖正文，回放仍看得到原话。
+   */
+  todoTitle?: string;
   needsReview?: boolean; // OCR 低置信/失败时标记“待人工确认”
   status: MsgStatus;
   createdAt: string;

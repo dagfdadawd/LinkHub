@@ -3,7 +3,6 @@
  *
  *  - token 类探针不复用 connectors/real.ts 的 token 获取（它的错误只有 code），
  *    而是自己用 fetch 发结构化请求，把 errcode 映射成中文原因 + 修复建议；
- *  - 企微 60020 时自动探测出口公网 IP，直接告诉用户要往「企业可信IP」里加哪个 IP；
  *  - 邮箱探针复用生产客户端：IMAP 只做 登录 + SELECT + UID SEARCH 立基线（不取正文），
  *    SMTP 用 verifySmtpAuth 只登录 + QUIT（不投递）；地址一律 maskAddress 脱敏；
  *  - 单测通过 stub globalThis.fetch / 注入假实现，绝不联网。
@@ -13,7 +12,6 @@ import type { MailAccount } from '../config';
 import {
   DEFAULT_DINGTALK_BASE_URL,
   DEFAULT_FEISHU_BASE_URL,
-  DEFAULT_WECOM_BASE_URL,
   MODE_ENV_KEYS,
   PLATFORM_LABELS,
   type ModePolicy,
@@ -31,6 +29,7 @@ import {
 } from '../connectors/dingtalkPersonal';
 import { maskAddress } from '../services/account';
 import { LlmService } from '../services/llm';
+import { probeWechatBridge } from '../services/wechatBridge';
 import { MsgStatus } from '@unimsg/shared';
 import type { CheckResult } from './report';
 
@@ -42,7 +41,6 @@ export const PROBE_TIMEOUT_MS = 8_000;
  */
 export const MAIL_PROBE_TIMEOUT_MS = 25_000;
 /** 出口 IP 探测的默认超时（附加信息，失败不影响主结论） */
-export const EGRESS_TIMEOUT_MS = 5_000;
 /** 大模型探针超时：真实 flash 实测 P100 约 9.3s，不能用 8s 的通用值 */
 export const LLM_PROBE_TIMEOUT_MS = 20_000;
 
@@ -68,13 +66,6 @@ export interface DingtalkProbeInput {
   stream: boolean;
   /** 固定本人身份且本人接收已启用：此时机器人收信通道是有意关闭，不是故障 */
   personalReceive?: boolean;
-  baseUrl: string;
-}
-
-export interface WecomProbeInput {
-  corpId: string;
-  secret: string;
-  agentId: string;
   baseUrl: string;
 }
 
@@ -108,10 +99,11 @@ export interface PlatformProbeRuntime {
 export interface ProbeInput {
   feishu: FeishuProbeInput;
   dingtalk: DingtalkProbeInput;
-  wecom: WecomProbeInput;
   mail: MailProbeInput;
   llm: LlmProbeInput;
   runtime: Record<Platform, PlatformProbeRuntime>;
+  /** 微信 RPA 桥地址（不传则用 config 里的 bridgeUrl） */
+  wechat?: { bridgeUrl?: string };
   /** 本人身份策略（不传则不跑身份探针，保持旧调用方兼容） */
   identity?: IdentityProbeInput;
 }
@@ -146,13 +138,6 @@ export interface RunProbesOptions {
   mailTimeoutMs?: number;
   /** 大模型探针超时（默认 20s，真实 flash P100 实测 9.3s） */
   llmTimeoutMs?: number;
-  /**
-   * 无论是否有 60020，都额外采集一次本机出口公网 IP 放进报告：
-   * 企业微信「可信 IP」绑定的是出口 IP，电脑重启/换网/开代理后可能变化，
-   * 让用户每次跑 doctor 都能一眼看到"现在该加哪个 IP"。
-   * 失败只是少一条附加信息，不影响自检结论。
-   */
-  alwaysFetchEgressIp?: boolean;
   /** 邮箱探针的注入点：单测传假实现，生产不传（走真实客户端，只读） */
   deps?: MailProbeDeps;
   /** 本人身份探针注入点（单测用） */
@@ -161,8 +146,6 @@ export interface RunProbesOptions {
 
 export interface RunProbesResult {
   checks: CheckResult[];
-  /** 探测到的出口公网 IP（仅企微 60020 场景会采集） */
-  egressIp?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -233,9 +216,6 @@ function httpHint(name: string, baseUrl: string): string {
   return `检查本机网络/代理能否访问 ${baseUrl}；如果企业网络有网关或代理，确认 HTTPS_PROXY 配置正确，或为 ${name} 域名放行。`;
 }
 
-function isIpLike(value: string): boolean {
-  return /^[0-9a-fA-F:.]+$/.test(value) && (value.includes('.') || value.includes(':'));
-}
 
 // ---------------------------------------------------------------------------
 // HTTP 小工具
@@ -582,160 +562,6 @@ export function dingtalkConfigChecks(input: DingtalkProbeInput): CheckResult[] {
   }
 
   return checks;
-}
-
-// ---------------------------------------------------------------------------
-// 企业微信 + 出口 IP
-// ---------------------------------------------------------------------------
-
-/** 企业微信 errcode → 中文原因 + 修复建议（纯函数；60020 会带上出口公网 IP） */
-export function explainWecomError(
-  errcode: number | undefined,
-  errmsg?: string,
-  opts: { egressIp?: string | null } = {},
-): ErrorAdvice {
-  const m = (errmsg ?? '').trim();
-  const suffix = m ? `（${m}）` : '';
-  const ipLine = opts.egressIp
-    ? `当前出口公网 IP：${opts.egressIp}`
-    : '未能自动探测到出口公网 IP（可手动访问 https://ifconfig.me/ip 查看）';
-
-  switch (errcode) {
-    case 60020: {
-      const ip = opts.egressIp || '你的公网出口 IP';
-      return {
-        detail: `企业微信返回 60020${suffix}：调用来源 IP 不在「企业可信IP」内；${ipLine}`,
-        hint: `60020 = 出口 IP 不在白名单。修复步骤：① 登录企业微信管理后台（work.weixin.qq.com）→ 应用管理 → 自建应用（AgentId 对应 WECOM_AGENT_ID）→ 企业可信IP → 配置；② 把 ${ip} 加入可信 IP 并保存（必须使用稳定公网出口：云服务器弹性 IP / 固定专线；家用宽带 IP 会变，可先临时加白验证，正式部署建议上云）；③ 保存后等待约 1 分钟，重跑 doctor 确认变 PASS。`,
-      };
-    }
-    case 40013:
-      return {
-        detail: `企业微信返回 40013${suffix}：WECOM_CORP_ID 不正确（invalid corpid）`,
-        hint: '企业微信管理后台 → 我的企业 → 企业信息，复制「企业ID」写入 .env 的 WECOM_CORP_ID（别和 AppID / AgentId 搞混）。',
-      };
-    case 40001:
-      return {
-        detail: `企业微信返回 40001${suffix}：WECOM_SECRET 不正确（invalid credential）`,
-        hint: '企业微信管理后台 → 应用管理 → 自建 → 应用详情页，点 Secret 的「眼睛」图标复制（不要点重置，重置后旧 Secret 立即失效），写入 .env 的 WECOM_SECRET。',
-      };
-    case 40014:
-      return {
-        detail: `企业微信返回 40014${suffix}：access_token 无效`,
-        hint: 'doctor 是直接换新 token，出现 40014 通常说明 baseUrl 配置错误或代理改写了响应；核对 WECOM_BASE_URL（默认 https://qyapi.weixin.qq.com），并确认 Secret 没有被重置。',
-      };
-    case 41001:
-      return {
-        detail: `企业微信返回 41001${suffix}：缺少 access_token`,
-        hint: '通常是 baseUrl/代理问题；核对 WECOM_BASE_URL 后重跑 doctor。',
-      };
-    case 60011:
-      return {
-        detail: `企业微信返回 60011${suffix}：应用无权限/不在可见范围`,
-        hint: '企业微信管理后台 → 应用管理 → 自建应用 → 可见范围，把需要收发的成员/部门加进去，然后重跑 doctor。',
-      };
-    default:
-      return {
-        detail: `企业微信返回错误 ${errcode ?? '未知'}${suffix}`,
-        hint: '核对 .env 的 WECOM_CORP_ID / WECOM_SECRET / WECOM_AGENT_ID / WECOM_BASE_URL；若与发信有关，重点检查「企业可信IP」（60020 可先看 doctor 展示的出口公网 IP）。',
-      };
-  }
-}
-
-/**
- * 探测本机出口公网 IP（企微 60020 用）：
- * 先试 api.ipify.org，失败再试 ifconfig.me；都失败返回 null（不阻断主流程）。
- */
-export async function fetchEgressIp(timeoutMs = EGRESS_TIMEOUT_MS): Promise<string | null> {
-  const endpoints: { url: string; parse: (res: Response) => Promise<string> }[] = [
-    {
-      url: 'https://api.ipify.org?format=json',
-      parse: async (res) => {
-        const data = (await res.json()) as { ip?: unknown };
-        return typeof data?.ip === 'string' ? data.ip : '';
-      },
-    },
-    {
-      url: 'https://ifconfig.me/ip',
-      parse: async (res) => (await res.text()).trim(),
-    },
-  ];
-  for (const ep of endpoints) {
-    try {
-      const res = await fetch(ep.url, { signal: AbortSignal.timeout(timeoutMs) });
-      if (!res.ok) continue;
-      const ip = (await ep.parse(res)).trim();
-      if (isIpLike(ip)) return ip;
-    } catch {
-      // 这个接口失败就换下一个，出口 IP 只是附加信息
-    }
-  }
-  return null;
-}
-
-export interface WecomProbeOutcome {
-  check: CheckResult;
-  egressIp?: string;
-}
-
-/** 企业微信探针：GET /cgi-bin/gettoken（只换 token，不发消息；60020 时附带出口 IP） */
-export async function probeWecomToken(input: WecomProbeInput, timeoutMs = PROBE_TIMEOUT_MS): Promise<WecomProbeOutcome> {
-  const id = 'wecom:token';
-  const title = '企业微信 access_token（应用凭据校验）';
-  if (!input.corpId || !input.secret) {
-    return {
-      check: {
-        group: Platform.WECOM,
-        id,
-        title,
-        status: 'FAIL',
-        detail: '缺少 WECOM_CORP_ID / WECOM_SECRET，无法获取 access_token',
-        hint: '企业微信管理后台：我的企业 → 企业信息 取企业ID；应用管理 → 自建应用 → 应用详情 取 Secret，分别填入 .env 的 WECOM_CORP_ID / WECOM_SECRET。',
-      },
-    };
-  }
-  const baseUrl = trimBaseUrl(input.baseUrl, DEFAULT_WECOM_BASE_URL);
-  const qs = new URLSearchParams({ corpid: input.corpId, corpsecret: input.secret }).toString();
-  const url = `${baseUrl}/cgi-bin/gettoken?${qs}`;
-  try {
-    const r = await requestJson('GET', url, undefined, timeoutMs);
-    const errcode = r.data?.errcode;
-    if (Number(errcode) === 0 && r.data?.access_token) {
-      const expire = Number(r.data?.expires_in ?? 0) || '未知';
-      return {
-        check: {
-          group: Platform.WECOM,
-          id,
-          title,
-          status: 'PASS',
-          detail: `access_token 获取成功（有效期 ${expire}s；只换取 token，未发送任何消息）。`,
-        },
-      };
-    }
-
-    let egressIp: string | undefined;
-    if (Number(errcode) === 60020) {
-      const ip = await fetchEgressIp(Math.min(timeoutMs, EGRESS_TIMEOUT_MS));
-      if (ip) egressIp = ip;
-    }
-
-    if (Number.isFinite(Number(errcode))) {
-      const advice = explainWecomError(Number(errcode), r.data?.errmsg, { egressIp });
-      return { check: { group: Platform.WECOM, id, title, status: 'FAIL', ...advice }, ...(egressIp ? { egressIp } : {}) };
-    }
-    return {
-      check: {
-        group: Platform.WECOM,
-        id,
-        title,
-        status: 'FAIL',
-        detail: `企业微信接口返回 HTTP ${r.status}：${previewBody(r.text)}`,
-        hint: httpHint('企业微信', baseUrl),
-      },
-    };
-  } catch (e) {
-    const advice = explainProbeError(e, `企业微信接口 ${hostOf(baseUrl)}`, timeoutMs);
-    return { check: { group: Platform.WECOM, id, title, status: 'FAIL', ...advice } };
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1287,7 +1113,6 @@ export async function probeDingtalkIdentity(
 
 export async function runProbes(input: ProbeInput, options: RunProbesOptions = {}): Promise<RunProbesResult> {
   const checks: CheckResult[] = [];
-  let egressIp: string | undefined;
   const timeoutMs = options.timeoutMs ?? PROBE_TIMEOUT_MS;
   const filter = options.platformFilter && options.platformFilter.length > 0 ? new Set(options.platformFilter) : undefined;
   const want = (platform: Platform): boolean => !filter || filter.has(platform);
@@ -1344,14 +1169,61 @@ export async function runProbes(input: ProbeInput, options: RunProbesOptions = {
     }
   }
 
-  if (want(Platform.WECOM)) {
-    const runtime = runtimeOf(Platform.WECOM);
-    if (shouldProbe(runtime)) {
-      const outcome = await probeWecomToken(input.wecom, timeoutMs);
-      checks.push(outcome.check);
-      if (outcome.egressIp) egressIp = outcome.egressIp;
+  if (want(Platform.WECHAT)) {
+    // 微信走本地 RPA 桥：不探测任何官方接口，只问本机桥"你是谁、能不能收"（GET /health，只读）。
+    // 这一步必须真做：WECHAT_MODE=real 只说明配置允许真实操作，不代表桥起来了或在 rpa 模式。
+    const runtime = runtimeOf(Platform.WECHAT);
+    if (runtime.mode === 'real') {
+      const bridge = await probeWechatBridge({ timeoutMs, url: input.wechat?.bridgeUrl });
+      if (!bridge.reachable) {
+        checks.push({
+          group: Platform.WECHAT,
+          id: 'wechat:bridge',
+          title: '微信 RPA 桥',
+          status: 'FAIL',
+          detail: `连不上本机 RPA 桥（${bridge.url}）：${bridge.error ?? '未知原因'}`,
+          hint: '先启动桥：python scripts/wechat-rpa/rpa_bridge.py --mode rpa；若后端在 Docker 里，桥必须监听在后端可访问的地址（127.0.0.1 在容器内指向容器自身）。',
+        });
+      } else if (bridge.mode !== 'rpa') {
+        checks.push({
+          group: Platform.WECHAT,
+          id: 'wechat:bridge',
+          title: '微信 RPA 桥',
+          status: 'FAIL',
+          detail: `桥可达，但运行在 ${bridge.mode ?? '未知'} 模式：发送不会真的操作微信（后端会如实拒绝，不会标成 real）。`,
+          hint: '用 --mode rpa 重启桥；缺 pyautogui/pyperclip/pywin32/uiautomation 时桥会以退出码 2 报出缺失项。',
+        });
+      } else {
+        checks.push({
+          group: Platform.WECHAT,
+          id: 'wechat:bridge',
+          title: '微信 RPA 桥（发送）',
+          status: 'PASS',
+          detail: '桥以 rpa 模式运行，发送会真实操作本机微信桌面端（RPA 键鼠）。',
+          hint: '保持微信桌面端登录并置于可操作状态；鼠标移到屏幕左上角可紧急停止 RPA。',
+        });
+        // 4.x 没有控件树：自动轮询这条路"不适用"，不是"没配好"。
+        // 报 FAIL 会让人以为整条通道坏了，而它其实可以用按需拉取。
+        const isWeixin4 = bridge.client?.kind === 'weixin4';
+        checks.push({
+          group: Platform.WECHAT,
+          id: 'wechat:receive',
+          title: '微信 RPA 桥（接收）',
+          status: bridge.canReceive ? 'PASS' : isWeixin4 ? 'SKIP' : 'FAIL',
+          detail: bridge.canReceive
+            ? bridge.receiveReason
+            : isWeixin4
+              ? '微信 4.x 不暴露可访问性控件树，自动轮询不适用；接收请用「按需拉取」（POST /api/wechat/pull，拖选复制原文）。发送不受影响。'
+              : bridge.receiveReason,
+          hint: bridge.canReceive
+            ? '入站由桥轮询窗口消息并转发 /api/webhook/wechat；会切换会话，属于 RPA 的固有限制。'
+            : isWeixin4
+              ? '收件箱 → 渠道选微信 →「从微信拉取当前会话」；或 POST /api/wechat/pull。只想自动收就换装微信 3.9.x。'
+              : '接收依赖 Windows UI Automation：安装 uiautomation、登录并打开微信桌面端；只看当前会话可加 --no-switch。',
+        });
+      }
     } else {
-      checks.push(skipProbe(Platform.WECOM, runtime));
+      checks.push(skipProbe(Platform.WECHAT, runtime));
     }
   }
 
@@ -1380,14 +1252,5 @@ export async function runProbes(input: ProbeInput, options: RunProbesOptions = {
     }
   }
 
-  if (options.alwaysFetchEgressIp && !egressIp) {
-    try {
-      const ip = await fetchEgressIp();
-      if (ip) egressIp = ip;
-    } catch {
-      // 出口 IP 只是附加信息，采集失败不影响主结论
-    }
-  }
-
-  return { checks, ...(egressIp ? { egressIp } : {}) };
+  return { checks };
 }

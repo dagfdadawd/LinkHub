@@ -20,7 +20,7 @@ describe('AppStore', () => {
     const state = store.getSnapshot();
     expect(state.loading).toBe(false);
     expect(state.messages.length).toBeGreaterThanOrEqual(12);
-    // 四类数据源：飞书 / 钉钉 / 企业微信 / 邮箱
+    // 四类数据源：飞书 / 钉钉 / 微信 / 邮箱
     expect(state.accounts).toHaveLength(4);
     expect(state.accounts.find((a) => a.platform === Platform.MAIL)?.accounts?.length).toBeGreaterThan(0);
     expect(state.health?.received).toBeGreaterThan(0);
@@ -77,6 +77,10 @@ describe('AppStore', () => {
       reply: async () => Promise.reject(new Error('unused')),
       compose: async () => Promise.reject(new Error('unused')),
       reanalyze: async () => Promise.reject(new Error('unused')),
+      wechatPull: async () => Promise.reject(new Error('unused')),
+      wechatBridgeStatus: async () => Promise.reject(new Error('unused')),
+      startWechatBridge: async () => Promise.reject(new Error('unused')),
+      stopWechatBridge: async () => Promise.reject(new Error('unused')),
       contacts: async (platform) => ({ platform, available: false, items: [] }),
       capabilities: async () => [],
       feishuOAuthStart: async () => ({ url: '' }),
@@ -91,6 +95,7 @@ describe('AppStore', () => {
 markTodo: async () => Promise.reject(new Error('unused')),
       markRead: async () => Promise.reject(new Error('unused')),
       markAllRead: async () => 0,
+      downloadAttachment: async () => Promise.reject(new Error('unused')),
       trace: async () => ({ data: [], log: [] }),
       accounts: async () => [],
       health: async () => ({ received: 0, deduped: 0, sent: 0, failed: 0, dlq: 0 }),
@@ -110,7 +115,7 @@ markTodo: async () => Promise.reject(new Error('unused')),
         platforms: {
           feishu: { fields: {}, missing: [] },
           dingtalk: { fields: {}, missing: [] },
-          wecom: { fields: {}, missing: [] },
+          wechat: { fields: {}, missing: [] },
         },
         llm: {},
         restartRequired: false,

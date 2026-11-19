@@ -1,6 +1,6 @@
 # @unimsg/web · LinkHub 统一消息中心（前端）
 
-赛题 A 的展示层与处理层：把飞书 / 钉钉 / 企业微信的消息收敛到一个收件箱，支持筛选、AI 建议、回复回写、待办完成与全链路回放。
+赛题 A 的展示层与处理层：把飞书 / 钉钉 / 微信的消息收敛到一个收件箱，支持筛选、AI 建议、回复回写、待办完成与全链路回放。
 
 页面与状态层只依赖 `MessageApi` / `RealtimeClient` 两个接口，**数据源可切换**：
 
@@ -9,7 +9,7 @@
 | Mock 演示 | 未设置 `VITE_API_BASE` | `MockApi` + 内存事件总线，无需后端即可完整演示闭环 |
 | 真实后端 | 设置了 `VITE_API_BASE` | `HttpApi`（REST）+ `WsRealtime`（WebSocket），对接 `packages/server` |
 
-> 前端只负责展示与交互，**不接触任何平台密钥**。接真实后端后，每个平台本次实际走真实接口还是本地 Mock 由服务端环境变量决定（`FEISHU_MODE` / `DINGTALK_MODE` / `WECOM_MODE` / `MAIL_MODE=auto|real|mock`，默认 `auto`）；账号页会如实显示 `mode`（真实接口 / Mock 模拟）与「模拟发送」计数，绝不把 Mock 结果伪装成真实平台已收到。
+> 前端只负责展示与交互，**不接触任何平台密钥**。接真实后端后，每个平台本次实际走真实接口还是本地 Mock 由服务端环境变量决定（`FEISHU_MODE` / `DINGTALK_MODE` / `WECHAT_MODE` / `MAIL_MODE=auto|real|mock`，默认 `auto`）；账号页会如实显示 `mode`（真实接口 / Mock 模拟）与「模拟发送」计数，绝不把 Mock 结果伪装成真实平台已收到。
 
 ---
 
@@ -58,7 +58,7 @@ pnpm --filter @unimsg/web dev
 | `/inbox`、`/inbox/:traceId` | 统一收件箱 | 三栏布局：导航 + 消息列表 + 详情（AI 建议、状态流转、回复） |
 | `/todos` | 待办 | `type=todo` 的消息，可直接标记完成 |
 | `/trace`、`/trace/:traceId` | 全链路回放 | 按 traceId 展示接收 → AI → 处理 → 回写 → 回流的每一步 |
-| `/accounts` | 平台账号 | 四类数据源（飞书 / 钉钉 / 企业微信 / 邮箱）的接入状态与实际通道：`mode` Tag（真实接口 / Mock 模拟）、`policy`、缺失变量名、警告、「模拟发送」计数；只展示变量名与脱敏地址，不接触密钥 |
+| `/accounts` | 平台账号 | 四类数据源（飞书 / 钉钉 / 微信 / 邮箱）的接入状态与实际通道：`mode` Tag（真实接口 / Mock 模拟）、`policy`、缺失变量名、警告、「模拟发送」计数；只展示变量名与脱敏地址，不接触密钥 |
 
 ---
 
@@ -140,7 +140,7 @@ packages/web/
 - 让下一次回复失败（演示 `failed` + 死信队列提示）
 - 重置筛选条件
 
-种子数据覆盖 4 平台（飞书 / 钉钉 / 企业微信 / 邮箱）、6 种状态、4 种消息类型，以及 OCR 低置信、意图回退「未分类」、发送失败等边界分支。
+种子数据覆盖 4 平台（飞书 / 钉钉 / 微信 / 邮箱）、6 种状态、4 种消息类型，以及 OCR 低置信、意图回退「未分类」、发送失败等边界分支。
 
 > 注意区分两种「Mock」：本节说的是**前端内置数据**（不启动后端）；接真实后端后，后端每个平台的真实 / Mock 由 `*_MODE` 决定，前端账号页会通过 `mode` 字段如实显示「真实接口 / Mock 模拟」，并在回写结果上标注「模拟发送」。
 
@@ -171,7 +171,7 @@ pnpm --filter @unimsg/web test     # 8 个文件 / 48 条用例
 
 > ⚠️ **安全红线**：`VITE_` 前缀的变量会被打进前端构建产物，任何人都可从 bundle 中读到。
 > 这里只允许放**业务入口令牌**（性质类似公开 API Token），
-> 飞书 / 钉钉 / 企微 / LLM / OCR 的真实 `*_SECRET` / `*_KEY` **绝不能**加 `VITE_` 前缀或写进前端。
+> 飞书 / 钉钉 / 微信 / LLM / OCR 的真实 `*_SECRET` / `*_KEY` **绝不能**加 `VITE_` 前缀或写进前端。
 
 ---
 
@@ -181,7 +181,7 @@ pnpm --filter @unimsg/web test     # 8 个文件 / 48 条用例
 2. 前端 `.env` 配好 `VITE_API_BASE` 与 `VITE_API_TOKEN`，重启 dev server。
 3. 顶栏连接点显示「实时连接」，左下角显示「真实后端」，「演示」菜单消失。
 4. 收件箱能列出后端消息；点回复 → 状态 `replied → sent → synced` 由 WS 实时推进，无需刷新。
-5. `/trace/:traceId` 能看到闭环日志；`/accounts` 显示四类数据源（飞书 / 钉钉 / 企业微信 / 邮箱）的 `policy` / `mode`（真实接口或 Mock 模拟）、缺失变量名与「模拟发送」计数。
+5. `/trace/:traceId` 能看到闭环日志；`/accounts` 显示四类数据源（飞书 / 钉钉 / 微信 / 邮箱）的 `policy` / `mode`（真实接口或 Mock 模拟）、缺失变量名与「模拟发送」计数。
 6. 把 `VITE_API_TOKEN` 改错 → WS 立即 `offline` 且不再重连，REST 请求弹出「未授权」错误条。
 7. 一键契约自检（46 项断言，覆盖信封 / 鉴权 / `done` 无消息体 / trace / WS 握手，以及 `modes` / `sentMock` / `mode`+`policy` / 邮箱账号明细 / `delivery`）：
 

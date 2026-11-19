@@ -97,8 +97,8 @@ export const ONBOARDING_STATE_META: Record<OnboardingState, OnboardingStateMeta>
   error: { label: '异常', tone: 'error', tagColor: 'error' },
 };
 
-/** 推荐连接顺序：邮箱 → 钉钉 → 飞书 → 企微（个人版从最容易见效的邮箱开始） */
-export const CONNECT_STEP_ORDER: OnboardingStep['id'][] = ['mail', 'dingtalk', 'feishu', 'wecom'];
+/** 推荐连接顺序：邮箱 → 钉钉 → 飞书 → 微信（个人版从最容易见效的邮箱开始） */
+export const CONNECT_STEP_ORDER: OnboardingStep['id'][] = ['mail', 'dingtalk', 'feishu', 'wechat'];
 
 export function stepOrder(id: string): number {
   const index = CONNECT_STEP_ORDER.indexOf(id as OnboardingStep['id']);

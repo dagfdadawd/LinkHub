@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { App as AntApp } from 'antd';
 import type { AppConfigView } from '../../services/api';
 
@@ -8,6 +9,21 @@ const hoisted = vi.hoisted(() => ({
     loadAppConfig: vi.fn(),
     saveAppConfig: vi.fn(),
     refreshHealth: vi.fn(async () => {}),
+    wechatBridgeStatus: vi.fn(async () => ({
+      managed: false,
+      url: 'http://127.0.0.1:8787',
+      logPath: 'x',
+      bridge: {
+        state: 'unreachable',
+        reachable: false,
+        canSend: false,
+        canReceive: false,
+        receiveMode: 'none',
+        receiveReason: '未连接',
+      },
+    })),
+    startWechatBridge: vi.fn(),
+    stopWechatBridge: vi.fn(),
   },
 }));
 
@@ -46,7 +62,7 @@ function config(patch: Partial<AppConfigView> = {}): AppConfigView {
         },
         missing: ['DINGTALK_CLIENT_ID'],
       },
-      wecom: { fields: {}, missing: [] },
+      wechat: { fields: {}, missing: [] },
     },
     llm: {
       provider: { configured: false, source: 'none', key: 'LLM_PROVIDER' },
@@ -130,7 +146,7 @@ describe('AppConfigModal（平台应用配置，白号 P0-1）', () => {
         platforms: {
           feishu: { fields: {}, missing: [] },
           dingtalk: { fields: {}, missing: [] },
-          wecom: { fields: {}, missing: [] },
+          wechat: { fields: {}, missing: [] },
         },
       }),
     );
@@ -159,7 +175,7 @@ describe('AppConfigModal（平台应用配置，白号 P0-1）', () => {
         platforms: {
           feishu: { fields: {}, missing: [] },
           dingtalk: { fields: {}, missing: [] },
-          wecom: { fields: {}, missing: [] },
+          wechat: { fields: {}, missing: [] },
         },
       }),
     );
@@ -236,7 +252,7 @@ describe('AppConfigModal 保存结果判定（二轮审计 P1-2）', () => {
         platforms: {
           feishu: { fields: {}, missing: [] },
           dingtalk: { fields: {}, missing: [] },
-          wecom: { fields: {}, missing: [] },
+          wechat: { fields: {}, missing: [] },
         },
       }),
     );
@@ -255,6 +271,20 @@ describe('AppConfigModal 保存结果判定（二轮审计 P1-2）', () => {
       expect(hoisted.store.saveAppConfig).toHaveBeenCalledWith({
         platforms: { dingtalk: { stream: false } },
       }),
+    );
+  });
+
+  it('微信 RPA：网站内可把模式切到 real，不需要手改 .env', async () => {
+    const user = userEvent.setup();
+    renderModal();
+    await user.click(await screen.findByRole('tab', { name: '微信（RPA）' }));
+    const mode = await screen.findByLabelText('运行模式');
+    fireEvent.mouseDown(mode);
+    await user.click(await screen.findByText('真实 RPA（real）'));
+    fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
+
+    await waitFor(() =>
+      expect(hoisted.store.saveAppConfig).toHaveBeenCalledWith({ modes: { wechat: 'real' } }),
     );
   });
 });

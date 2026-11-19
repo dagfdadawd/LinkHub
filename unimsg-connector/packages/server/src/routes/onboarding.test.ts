@@ -32,7 +32,7 @@ test('GET /api/onboarding：Bearer 鉴权 + 4 步聚合 + dws 来源 + 无任何
   process.env.FAKE_DWS_STATE_FILE = join(dir, 'fake-dws-state.json');
   process.env.FEISHU_MODE = 'mock';
   process.env.DINGTALK_MODE = 'mock';
-  process.env.WECOM_MODE = 'mock';
+  process.env.WECHAT_MODE = 'mock';
   process.env.MAIL_MODE = 'mock';
   process.env.DATA_DIR = dir;
 
@@ -63,7 +63,7 @@ test('GET /api/onboarding：Bearer 鉴权 + 4 步聚合 + dws 来源 + 无任何
     const json = await res.json();
     assert.equal(json.ok, true);
     const data = json.data;
-    assert.deepEqual(data.steps.map((s: { id: string }) => s.id), ['mail', 'dingtalk', 'feishu', 'wecom']);
+    assert.deepEqual(data.steps.map((s: { id: string }) => s.id), ['mail', 'dingtalk', 'feishu', 'wechat']);
     assert.equal(data.overall.total, 4);
     assert.equal(typeof data.overall.ready, 'number');
     assert.equal(typeof data.firstRun, 'boolean');
@@ -101,6 +101,50 @@ test('GET /api/onboarding：Bearer 鉴权 + 4 步聚合 + dws 来源 + 无任何
     assert.ok(Array.isArray(mailJson.data.accounts));
     assert.ok(!JSON.stringify(mailJson).includes('authCode'));
   } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+test('GET /api/onboarding：WECHAT_MODE=real 但桥连不上 → 微信步骤 needs_install（P0 不再假 ready）', async () => {
+  const dir = tempDir();
+  process.env.DATA_DIR = dir;
+  const { createApp } = await import('../app');
+  const { config } = await import('../config');
+  const { resolveApiToken } = await import('../middlewares/auth');
+  const { InMemoryRepository } = await import('../db/repository');
+  const { connectors } = await import('../connectors/registry');
+  const { LlmService } = await import('../services/llm');
+  const { OcrService } = await import('../services/ocr');
+  const { RateLimiter } = await import('../services/rateLimiter');
+  const { MessageService } = await import('../services/message');
+  const { resetWechatBridgeCache } = await import('../services/wechatBridge');
+
+  const real = config.runtime.wechat;
+  const prevMode = real.mode;
+  const prevUrl = config.platforms.wechat.bridgeUrl;
+  real.mode = 'real';
+  config.platforms.wechat.bridgeUrl = 'http://127.0.0.1:1';
+  resetWechatBridgeCache();
+
+  const svc = new MessageService(
+    new InMemoryRepository(), connectors, new LlmService(), new OcrService(), new RateLimiter(3, 5), () => {},
+  );
+  const token = resolveApiToken(config.apiToken);
+  const server = http.createServer(createApp(svc, { corsOrigins: null }));
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  try {
+    const res = await fetch(`${base}/api/onboarding`, { headers: { Authorization: `Bearer ${token}` } });
+    assert.equal(res.status, 200);
+    const json = await res.json() as any;
+    const wechat = json.data.steps.find((s: any) => s.id === 'wechat');
+    assert.equal(wechat.state, 'needs_install', '桥没起来时不能给 ready');
+    assert.equal(wechat.detail.mode, 'real');
+    assert.equal(wechat.detail.bridge.reachable, false);
+    assert.match(wechat.summary, /连不上本机 RPA 桥/);
+  } finally {
+    real.mode = prevMode;
+    config.platforms.wechat.bridgeUrl = prevUrl;
+    resetWechatBridgeCache();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });

@@ -56,6 +56,6 @@ export const CHANNEL_DEFS: Array<{ value?: Platform; label: string }> = [
   { value: undefined, label: '全部' },
   { value: Platform.FEISHU, label: PLATFORM_META[Platform.FEISHU].name },
   { value: Platform.DINGTALK, label: PLATFORM_META[Platform.DINGTALK].name },
-  { value: Platform.WECOM, label: '企微' },
   { value: Platform.MAIL, label: PLATFORM_META[Platform.MAIL].name },
+  { value: Platform.WECHAT, label: PLATFORM_META[Platform.WECHAT].name },
 ];

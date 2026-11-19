@@ -17,8 +17,9 @@ import { Platform, type PlatformIdentityView } from '@unimsg/shared';
 import type { PlatformRuntime } from '../config/runtime';
 import type { DwsBinSource } from '../connectors/dwsBin';
 import type { MaskedMailAccount } from './mailAccounts';
+import type { WechatBridgeStatus } from './wechatBridge';
 
-export type OnboardingStepId = 'mail' | 'dingtalk' | 'feishu' | 'wecom';
+export type OnboardingStepId = 'mail' | 'dingtalk' | 'feishu' | 'wechat';
 export type OnboardingState = 'ready' | 'needs_user_auth' | 'needs_install' | 'needs_admin' | 'mock' | 'error';
 export type OnboardingActionKind = 'api' | 'form' | 'link' | 'copy' | 'command';
 
@@ -105,14 +106,21 @@ export interface OnboardingDeps {
     redirectUri: string;
     identityChannelsReal: boolean;
   };
-  wecom: { runtime: PlatformRuntime };
+  wechat: {
+    runtime: PlatformRuntime;
+    /**
+     * RPA 桥实测状态（只读探测，来自 services/wechatBridge）。
+     * 缺省 = 没探测（mock 模式不探测）：此时绝不能报 ready，因为"桥有没有起来"根本没验证。
+     */
+    bridge?: WechatBridgeStatus | null;
+  };
   port?: number;
 }
 
 const DWS_RELEASES_URL = 'https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli/releases';
 const DWS_REPO_URL = 'https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli';
 
-type StepPlatform = 'mail' | 'dingtalk' | 'feishu' | 'wecom';
+type StepPlatform = 'mail' | 'dingtalk' | 'feishu' | 'wechat';
 
 /** 命令统一带工作目录提示（P2-7：pnpm 不在 PATH 时用 corepack pnpm） */
 const CWD_HINT = '在 unimsg-connector/ 目录运行；pnpm 不在 PATH 时用 corepack pnpm run …';
@@ -180,17 +188,6 @@ export function dingtalkAdminChecklist(loginCommand?: string): string {
   ].join('\n');
 }
 
-/** 企业微信管理员可复制清单（纯文本；凭据写回 + 重启） */
-export function wecomAdminChecklist(port?: number): string {
-  return [
-    '企业微信管理员开通清单（LinkHub 个人版需要企业管理员配合）：',
-    '1. 打开企业微信管理后台 https://work.weixin.qq.com/ → 应用管理 → 自建，创建应用并记录 AgentId / Secret / 企业 CorpID；',
-    '2. 应用「接收消息」：设置 Token 与 EncodingAESKey，回调 URL 指向 LinkHub 的 /api/wecom/callback（需公网可达）；',
-    port ? '   本机演示端口：http://127.0.0.1:' + port + '/api/wecom/callback（公网需用域名/内网穿透）' : '',
-    '3. 应用「企业可信 IP」：添加运行 LinkHub 的机器的公网出口 IP（否则发送会报 60020）；',
-    '4. 把凭据写回 LinkHub：点「填写企业微信凭据」，或写入 .env 的 WECOM_CORP_ID / WECOM_AGENT_ID / WECOM_SECRET / WECOM_TOKEN / WECOM_AES_KEY，然后重启后端。',
-  ].join('\n');
-}
 function mailStep(deps: OnboardingDeps): OnboardingStep {
   const { accounts, mode } = deps.mail;
   const envCount = accounts.filter((a) => a.source === 'env').length;
@@ -643,68 +640,129 @@ function feishuStep(deps: OnboardingDeps): OnboardingStep {
   };
 }
 
-function wecomStep(deps: OnboardingDeps): OnboardingStep {
-  const { runtime } = deps.wecom;
+function wechatStep(deps: OnboardingDeps): OnboardingStep {
+  const { runtime, bridge } = deps.wechat;
   const detail = {
     missing: runtime.missing,
     warnings: runtime.warnings,
     configured: runtime.configured,
     mode: runtime.mode,
     policy: runtime.policy,
+    bridge: bridge ?? null,
   };
-  const configureAction: OnboardingAction = {
-    id: 'wecom-configure',
-    kind: 'form',
-    label: '填写企业微信凭据（Corp ID / Agent ID / Secret）',
-    path: '/api/app-config',
-    method: 'PUT',
-  };
-  const adminActions: OnboardingAction[] = [
-    configureAction,
-    { id: 'wecom-admin', kind: 'link', label: '打开企业微信管理后台', url: 'https://work.weixin.qq.com/' },
-    {
-      id: 'wecom-admin-checklist',
-      kind: 'copy',
-      label: '复制管理员开通清单（凭据 + 可信 IP + 重启）',
-      text: wecomAdminChecklist(deps.port),
-    },
-    doctorCommand('wecom'),
+  const setupHints = [
+    '微信个人版无官方收发 API，走 RPA 通道：需本机微信桌面端 + 本地 RPA 桥（scripts/wechat-rpa）。',
+    '启动桥：python scripts/wechat-rpa/rpa_bridge.py --mode rpa（需 pip install pyautogui pyperclip pywin32 uiautomation）。',
   ];
 
-  if (!runtime.configured) {
+  // 1) 配置上就是 mock：如实说不会碰真实微信（这里不是"就绪"）
+  if (runtime.mode !== 'real') {
     return {
-      id: 'wecom',
-      label: '企业微信',
-      state: 'needs_admin',
-      summary: '缺少企业微信自建应用凭据：需要企业管理员创建应用并提供 Corp ID / Agent ID / Secret。',
+      id: 'wechat',
+      label: '微信（RPA）',
+      state: 'mock',
+      summary: '微信当前为模拟模式：可在收件箱演示，但不会操作真实微信，也不会采集真实消息。',
       hints: [
-        runtime.missing.length > 0 ? `缺少变量：${runtime.missing.join(' / ')}` : '未配置企业微信自建应用。',
-        '个人版无法自行开通企业微信，需要企业管理员配合；拿到凭据后在 LinkHub 填写或写 .env 并重启。',
+        ...setupHints,
+        '要真实接入：设 .env 的 WECHAT_MODE=real，装齐依赖后以 --mode rpa 启动 RPA 桥。',
       ],
-      actions: adminActions,
+      actions: [doctorCommand('wechat')],
       detail,
     };
   }
 
-  if (runtime.mode !== 'real') {
+  // 2) 配了 real 但没探测到桥 / 桥连不上：绝不能报 ready（P0：以前只看环境变量）
+  if (!bridge) {
     return {
-      id: 'wecom',
-      label: '企业微信',
-      state: 'mock',
-      summary: '企业微信当前为演示模式：凭据已配置，但运行模式不是 real。',
-      hints: ['去掉 .env 的 WECOM_MODE=mock（或设为 auto/real）后重启即可真实收发。'],
-      actions: adminActions,
+      id: 'wechat',
+      label: '微信（RPA）',
+      state: 'needs_install',
+      summary: 'WECHAT_MODE=real，但还没有探测到本机 RPA 桥的运行态，无法确认能否真实收发。',
+      hints: [...setupHints, '点「重新检测」或刷新本页：后端会实际请求桥的 /health 再给结论。'],
+      actions: [doctorCommand('wechat')],
+      detail,
+    };
+  }
+
+  if (!bridge.reachable) {
+    return {
+      id: 'wechat',
+      label: '微信（RPA）',
+      state: 'needs_install',
+      summary: `WECHAT_MODE=real，但连不上本机 RPA 桥（${bridge.url}）。`,
+      hints: [
+        ...setupHints,
+        '确认桥已启动并监听该地址；如果是 Docker/远程后端，桥必须在后端能访问到的机器上。',
+      ],
+      actions: [doctorCommand('wechat')],
+      detail,
+    };
+  }
+
+  // 3) 桥活着但跑在 mock：发送会被后端拒绝（我们不再把它的"成功"当真实送达）
+  if (bridge.mode !== 'rpa') {
+    return {
+      id: 'wechat',
+      label: '微信（RPA）',
+      state: 'needs_install',
+      summary: `RPA 桥正在以 ${bridge.mode ?? '未知'} 模式运行：不会操作真实微信，发送会被如实拒绝。`,
+      hints: [
+        '用 --mode rpa 重启桥：python scripts/wechat-rpa/rpa_bridge.py --mode rpa',
+        '若依赖没装齐，桥会直接以退出码 2 报错并列出缺失项（不会静默降级）。',
+      ],
+      actions: [doctorCommand('wechat')],
+      detail,
+    };
+  }
+
+  // 4) 微信 4.x：不是配置问题，是版本根本不暴露控件树 —— 必须单独讲，
+  //    否则用户会去反复查依赖/重登微信，怎么弄都不会好。
+  if (bridge.client?.kind === 'weixin4') {
+    return {
+      id: 'wechat',
+      label: '微信（RPA）',
+      // 4.x 不是「不可用」：发送真实可用，接收走按需拉取。
+      // 标 needs_install 会把人推去装 3.9，而他其实可以立刻用起来。
+      state: 'ready',
+      summary: '微信 4.x：发送真实可用；接收为「按需拉取」（收件箱 → 微信 → 从微信拉取当前会话）。',
+      hints: [
+        '4.x 界面是 Qt 自绘，不暴露可访问性控件树（实测根节点仅 2 个空 Pane），所以做不到「自动轮询」；改为按需拉取：桥把微信置前 → 消息区拖选 → 复制 → 解析原文入库，零 OCR 误差。',
+        '按需拉取的边界：只覆盖当前在微信里打开的那个会话与可视区，执行时会短暂抢前台（结束自动还原剪贴板与焦点）。',
+        '4.x 发送能提交，但读不到当前会话标题，LinkHub 会标「已提交未核对」；发送前请确认微信里打开的是目标会话。',
+        '想要「消息自己进来」：换装微信 3.9.x 并登录，桥会自动轮询接收（3.x 的会话/消息列表是标准 ListControl）。',
+      ],
+      actions: [doctorCommand('wechat')],
+      detail,
+    };
+  }
+
+  // 5) 桥在 rpa 模式：还要确认它真的能收到消息（P0：以前接收钩子为空也报 ready）
+  if (!bridge.canReceive) {
+    return {
+      id: 'wechat',
+      label: '微信（RPA）',
+      state: 'needs_install',
+      summary: `RPA 桥在 rpa 模式，但真实接收还没就绪：${bridge.receiveReason}`,
+      hints: [
+        '发送已经可用（真实操作微信桌面端）；接收需要桥能读到微信窗口消息。',
+        '检查：微信桌面端已登录并打开、桥进程未被最小化到无法找到窗口、依赖 uiautomation 已安装。',
+        '只看当前会话可用 --no-switch；需要自动发现新消息则保持默认（会切换会话）。',
+      ],
+      actions: [doctorCommand('wechat')],
       detail,
     };
   }
 
   return {
-    id: 'wecom',
-    label: '企业微信',
+    id: 'wechat',
+    label: '微信（RPA）',
     state: 'ready',
-    summary: '企业微信自建应用已配置，机器人通道可用。',
-    hints: ['如发送报 60020（IP 不在白名单），请管理员把本机公网 IP 加入「企业可信 IP」。'],
-    actions: [doctorCommand('wecom'), configureAction],
+    summary: '微信 RPA 通道已就绪：发送真实操作微信桌面端，入站由桥轮询窗口消息转发。',
+    hints: [
+      bridge.receiveReason,
+      'RPA 受窗口布局/分辨率影响，也会切换会话；发送失败会如实报错，不会假装成功。',
+    ],
+    actions: [doctorCommand('wechat')],
     detail,
   };
 }
@@ -718,7 +776,7 @@ export function buildOnboarding(deps: OnboardingDeps): OnboardingView {
     mailStep(deps),
     dingtalkStep(deps),
     feishuStep(deps),
-    wecomStep(deps),
+    wechatStep(deps),
   ];
   const ready = steps.filter((s) => s.state === 'ready').length;
   // 白号审计 P1-2：非 ready 就是待处理（ready<total 时不得为 0）；mock 也是「未真实可用」，同样计入
@@ -749,5 +807,5 @@ export const ONBOARDING_PLATFORMS = {
   mail: Platform.MAIL,
   dingtalk: Platform.DINGTALK,
   feishu: Platform.FEISHU,
-  wecom: Platform.WECOM,
+  wechat: Platform.WECHAT,
 } as const;

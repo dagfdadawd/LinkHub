@@ -24,7 +24,7 @@ TOKEN = (
     if len(sys.argv) > 2
     else os.environ.get("LINKHUB_API_TOKEN", "dev-token")
 )
-PLATFORMS = ["feishu", "dingtalk", "wecom", "mail"]
+PLATFORMS = ["feishu", "dingtalk", "wechat", "mail"]
 
 
 def req(method, path, body=None, token=None):
@@ -76,9 +76,10 @@ dingtalk = {"msgtype": "text", "text": {"content": "周五前交周报"},
 s, h = req("POST", "/api/webhook/dingtalk", dingtalk)
 check("webhook dingtalk 200", s == 200, h)
 
-wecom = {"MsgType": "text", "Content": "周五前交周报", "MsgId": "wx_smoke_1", "FromUserName": "u_wx"}
-s, h = req("POST", "/api/webhook/wecom", wecom)
-check("webhook wecom success", s == 200 and h == "success", h)
+wechat = {"externalId": "wx_smoke_1", "from": "微信好友", "senderId": "u_wx",
+          "conversation": "微信好友", "conversationType": "p2p", "text": "周五前交周报", "type": "text"}
+s, h = req("POST", "/api/webhook/wechat", wechat, sig="dev-smoke")
+check("webhook wechat 200", s == 200, h)
 
 s, h = req("GET", "/api/messages")
 check("messages 需鉴权(401)", s == 401, s)

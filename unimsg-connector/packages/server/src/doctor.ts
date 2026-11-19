@@ -41,13 +41,13 @@ const USAGE = `用法：pnpm run doctor [选项]
       实测没有输出、退出码 0，看起来像成功但本项目自检根本没运行；
       请用 "pnpm run doctor"（在 unimsg-connector/ 下）或上面的全路径形式。
 
-LinkHub 只读自检：检查 .env / 平台模式 / 凭据 / 网络连通 / 企业微信出口 IP，
+LinkHub 只读自检：检查 .env / 平台模式 / 凭据 / 网络连通，
 输出 PASS / FAIL / SKIP 与中文修复建议。不会发送任何业务消息。
 
 选项：
   -h, --help            显示本帮助
   --json                只向 stdout 输出合法 JSON（人类日志不写 stdout）
-  --platform=<列表>     只检查指定平台，逗号分隔：feishu,dingtalk,wecom,mail
+  --platform=<列表>     只检查指定平台，逗号分隔：feishu,dingtalk,wechat,mail
                         例：--platform=feishu,mail
 
 退出码：
@@ -58,7 +58,7 @@ LinkHub 只读自检：检查 .env / 平台模式 / 凭据 / 网络连通 / 企�
 
 示例：
   pnpm run doctor                              # 在 unimsg-connector/ 下
-  pnpm run doctor --platform=wecom
+  pnpm run doctor --platform=wechat
   pnpm --filter @unimsg/server run doctor
   pnpm --filter @unimsg/server run --silent doctor --json
 
@@ -169,12 +169,6 @@ function collectProbeInput(): ProbeInput {
       stream: config.dingtalkStream,
       baseUrl: config.platforms.dingtalk.baseUrl,
     },
-    wecom: {
-      corpId: config.platforms.wecom.corpId,
-      secret: config.platforms.wecom.secret,
-      agentId: config.platforms.wecom.agentId,
-      baseUrl: config.platforms.wecom.baseUrl,
-    },
     mail: {
       accounts: config.mail.accounts,
       enabled: config.mail.enabled,
@@ -190,6 +184,8 @@ function collectProbeInput(): ProbeInput {
     },
     // config.runtime 的条目天然满足 PlatformProbeRuntime（多出的字段不会进报告）
     runtime: config.runtime,
+    // 微信 RPA 桥：doctor 会真的请求它的 /health（只读），确认模式与接收能力
+    wechat: { bridgeUrl: config.platforms.wechat.bridgeUrl },
     // 本人身份策略：doctor 只做只读探测（飞书 user token 读会话 / 钉钉 dws 版本与登录态）
     identity: {
       feishu: {
@@ -226,11 +222,9 @@ async function main(): Promise<number> {
   const generatedAt = new Date().toISOString();
   const env = collectEnvInfo();
   const platforms = collectPlatformReports(options.platformFilter);
-  const { checks, egressIp } = await runProbes(collectProbeInput(), {
+  const { checks } = await runProbes(collectProbeInput(), {
     platformFilter: options.platformFilter,
     timeoutMs: PROBE_TIMEOUT_MS,
-    // 企微可信 IP 绑的是出口公网 IP，每次自检都打印当前值，重启/换网后可直接对照
-    alwaysFetchEgressIp: true,
   });
 
   const report: DoctorReportInput = {
@@ -242,7 +236,6 @@ async function main(): Promise<number> {
     checks,
     port: config.port,
     tokenIsDefault: config.apiToken === 'dev-token',
-    ...(egressIp ? { egressIp } : {}),
     ...(options.platformFilter && options.platformFilter.length > 0
       ? { platformFilter: options.platformFilter }
       : {}),

@@ -62,25 +62,22 @@ export interface DingtalkCreds {
   baseUrl: string;
 }
 
-export interface WecomCreds {
-  corpId: string;
-  agentId: string;
-  secret: string;
-  token: string;
-  aesKey: string;
-  baseUrl: string;
-}
-
 export interface PlatformCredentials {
   feishu: FeishuCreds;
   dingtalk: DingtalkCreds;
-  wecom: WecomCreds;
+  wechat: WechatCreds;
 }
+
+/** 微信 RPA 桥：唯一配置是本地桥地址 */
+export interface WechatCreds {
+  bridgeUrl: string;
+}
+
+export const DEFAULT_WECHAT_BRIDGE_URL = 'http://127.0.0.1:8787';
 
 export const DEFAULT_FEISHU_BASE_URL = 'https://open.feishu.cn';
 export const DEFAULT_FEISHU_ACCOUNTS_BASE_URL = 'https://accounts.feishu.cn';
 export const DEFAULT_DINGTALK_BASE_URL = 'https://api.dingtalk.com';
-export const DEFAULT_WECOM_BASE_URL = 'https://qyapi.weixin.qq.com';
 
 /**
  * 飞书出站发送身份：
@@ -130,13 +127,8 @@ export function readPlatformCredentials(env: NodeJS.ProcessEnv): PlatformCredent
       stream: truthy(env.DINGTALK_STREAM),
       baseUrl: trimBase(env.DINGTALK_BASE_URL, DEFAULT_DINGTALK_BASE_URL),
     },
-    wecom: {
-      corpId: env.WECOM_CORP_ID ?? '',
-      agentId: env.WECOM_AGENT_ID ?? '',
-      secret: env.WECOM_SECRET ?? '',
-      token: env.WECOM_TOKEN ?? '',
-      aesKey: env.WECOM_AES_KEY ?? '',
-      baseUrl: trimBase(env.WECOM_BASE_URL, DEFAULT_WECOM_BASE_URL),
+    wechat: {
+      bridgeUrl: trimBase(env.WECHAT_BRIDGE_URL, DEFAULT_WECHAT_BRIDGE_URL),
     },
   };
 }
@@ -531,15 +523,15 @@ export function mailAccountSummary(a: MailAccount): {
 export const MODE_ENV_KEYS: Record<Platform, string> = {
   [Platform.FEISHU]: 'FEISHU_MODE',
   [Platform.DINGTALK]: 'DINGTALK_MODE',
-  [Platform.WECOM]: 'WECOM_MODE',
   [Platform.MAIL]: 'MAIL_MODE',
+  [Platform.WECHAT]: 'WECHAT_MODE',
 };
 
 export const PLATFORM_LABELS: Record<Platform, string> = {
   [Platform.FEISHU]: '飞书',
   [Platform.DINGTALK]: '钉钉',
-  [Platform.WECOM]: '企业微信',
   [Platform.MAIL]: '邮箱',
+  [Platform.WECHAT]: '微信',
 };
 
 export interface ModePolicyResult {
@@ -573,7 +565,7 @@ export function resolveModePolicies(env: NodeJS.ProcessEnv, opts: ModePolicyOpti
     if (truthy(mockRaw)) legacy = 'mock';
     else if (['false', '0', 'no', 'off'].includes(mockRaw.toLowerCase())) legacy = 'real';
     else warnings.push(`MOCK=${mockRaw} 不是合法值（true/false），已忽略`);
-    warnings.push('MOCK 已废弃：建议删除该变量，改用 FEISHU_MODE / DINGTALK_MODE / WECOM_MODE / MAIL_MODE=auto|real|mock');
+    warnings.push('MOCK 已废弃：建议删除该变量，改用 FEISHU_MODE / DINGTALK_MODE / MAIL_MODE=auto|real|mock');
   }
 
   const policies = {} as Record<Platform, ModePolicy>;
@@ -654,18 +646,24 @@ function capability(platform: Platform, input: RuntimeBuildInput): CapabilityRes
     return { configured: Boolean(p.dingtalk.appKey && p.dingtalk.appSecret), canSend, canReceive, missing, warnings };
   }
 
-  if (platform === Platform.WECOM) {
-    if (!p.wecom.corpId) missing.push('WECOM_CORP_ID');
-    if (!p.wecom.secret) missing.push('WECOM_SECRET');
-    if (!p.wecom.agentId) missing.push('WECOM_AGENT_ID');
-    if (!p.wecom.token) missing.push('WECOM_TOKEN');
-    if (!p.wecom.aesKey) missing.push('WECOM_AES_KEY');
-    const canSend = Boolean(p.wecom.corpId && p.wecom.secret && p.wecom.agentId);
-    const canReceive = Boolean(p.wecom.corpId && p.wecom.token && p.wecom.aesKey);
-    if (canSend && !canReceive) warnings.push('只能发不能收：缺少 WECOM_TOKEN / WECOM_AES_KEY（回调验签与解密）');
-    if (!canSend && canReceive) warnings.push('只能收不能发：缺少 WECOM_SECRET / WECOM_AGENT_ID');
-    if (canSend) warnings.push('企业微信要求发信出口 IP 在企业可信 IP 内，否则报 60020（用 pnpm run doctor 查看出口 IP）');
-    return { configured: canSend, canSend, canReceive, missing, warnings };
+  if (platform === Platform.WECHAT) {
+    // 微信 RPA：唯一凭据是本地 RPA 桥的地址。桥地址有默认值（http://127.0.0.1:8787）。
+    // 注意：这里只说"配置齐全"，不代表桥活着、更不代表桥在 rpa 模式——
+    // 真实能力由 services/wechatBridge 实际探测后判定（onboarding / doctor / health 共用）。
+    const bridgeUrl = (input.env.WECHAT_BRIDGE_URL || DEFAULT_WECHAT_BRIDGE_URL).trim();
+    const configured = Boolean(bridgeUrl);
+    warnings.push(
+      '微信个人版无官方 API，采用 RPA 方式：依赖本机微信桌面端 + 本地 RPA 桥；'
+      + '稳定性受窗口布局/分辨率影响，有账号风控风险，仅作补充通道。',
+    );
+    if (!configured) missing.push('WECHAT_BRIDGE_URL（本地 RPA 桥地址，默认演示可用 mock 模式）');
+    return {
+      configured,
+      canSend: configured,
+      canReceive: configured,
+      missing,
+      warnings,
+    };
   }
 
   // 邮箱：每个账号独立，但模式按整体解析
@@ -735,6 +733,24 @@ export function buildPlatformRuntime(input: RuntimeBuildInput): Record<Platform,
           : 'mock';
     // 邮箱轮询被显式关闭时，auto 下不可能"真实收到邮件"，回写也应如实标为模拟
     if (platform === Platform.MAIL && policy === 'auto' && !input.mailEnabled) mode = 'mock';
+    // 微信 RPA：默认走 mock，必须显式 WECHAT_MODE=real 才会操作真实微信桌面端。
+    // 桥地址有默认值，若按普通 auto 逻辑会因"凭据齐全"误判成真实通道。
+    if (platform === Platform.WECHAT && policy === 'auto') mode = 'mock';
+    if (platform === Platform.WECHAT && mode === 'mock') {
+      // P0：mock 不采集真实微信消息（入站靠手动 /mock/inject 或 /ingest），
+      // 以前 canReceive 跟着"桥地址有默认值"恒为 true，等于谎报能收。
+      // 真实接收是否可用由 wechatBridge 探针按桥上报的 receive 能力决定。
+      cap.canReceive = false;
+      cap.warnings = [
+        ...cap.warnings,
+        'Mock 模式下不采集真实微信消息：入站仅用于演示（手动注入）；要真实收发请设 WECHAT_MODE=real 并启动 RPA 桥',
+      ];
+    } else if (platform === Platform.WECHAT) {
+      cap.warnings = [
+        ...cap.warnings,
+        '真实收发取决于本机 RPA 桥的运行态：发送时会核对桥是否真的以 --mode rpa 运行；接收能力由桥上报，连接页/doctor 会实测',
+      ];
+    }
     out[platform] = {
       platform,
       label: PLATFORM_LABELS[platform],

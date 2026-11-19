@@ -33,7 +33,7 @@ function view(patch: Partial<OnboardingView> = {}): OnboardingView {
     firstRun: true,
     dws: { available: false, source: 'missing' },
     overall: { ready: 1, total: 4, needsAction: 3 },
-    steps: [step('mail', 'ready'), step('dingtalk', 'needs_install'), step('feishu', 'needs_admin'), step('wecom', 'mock')],
+    steps: [step('mail', 'ready'), step('dingtalk', 'needs_install'), step('feishu', 'needs_admin'), step('wechat', 'mock')],
     ...patch,
   };
 }
@@ -95,9 +95,9 @@ describe('状态 Tag / 推荐顺序 / 总进度', () => {
     expect(ONBOARDING_STATE_META.error.label).toBe('异常');
   });
 
-  it('按 邮箱 → 钉钉 → 飞书 → 企微 排序，未知平台放最后', () => {
+  it('按 邮箱 → 钉钉 → 飞书 → 微信 排序，未知平台放最后', () => {
     const shuffled = [
-      { ...step('wecom', 'mock') },
+      { ...step('wechat', 'mock') },
       { ...step('feishu', 'needs_admin') },
       { ...step('mail', 'ready') },
       { ...step('dingtalk', 'needs_install') },

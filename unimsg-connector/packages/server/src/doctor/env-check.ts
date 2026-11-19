@@ -29,7 +29,7 @@ export const KNOWN_ENV_KEYS: readonly string[] = [
   // 运行模式
   'FEISHU_MODE',
   'DINGTALK_MODE',
-  'WECOM_MODE',
+  'WECHAT_MODE',
   'MAIL_MODE',
   // 边界 / 智能
   'OCR_CONFIDENCE_THRESHOLD',
@@ -85,13 +85,8 @@ export const KNOWN_ENV_KEYS: readonly string[] = [
   'LINKHUB_TOOLS_DIR',
   'DWS_AUTH_TIMEOUT_MS',
   'DWS_SEND_TIMEOUT_MS',
-  // 企业微信
-  'WECOM_CORP_ID',
-  'WECOM_AGENT_ID',
-  'WECOM_SECRET',
-  'WECOM_TOKEN',
-  'WECOM_AES_KEY',
-  'WECOM_BASE_URL',
+  // 微信（RPA）
+  'WECHAT_BRIDGE_URL',
   // 邮箱
   'MAIL_POLL_SECONDS',
   'MAIL_ENABLED',
@@ -107,7 +102,7 @@ const MAIL_SUFFIXES = ['ADDRESS', 'AUTH_CODE', 'PROVIDER', 'LABEL', 'IMAP_HOST',
 const CHECK_PREFIXES = [
   'FEISHU_',
   'DINGTALK_',
-  'WECOM_',
+  'WECHAT_',
   'MAIL_',
   'LLM_',
   'OCR_',

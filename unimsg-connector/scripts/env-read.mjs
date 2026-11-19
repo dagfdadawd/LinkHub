@@ -56,7 +56,7 @@ function parsePort(raw, name, fallback, warnings) {
 /** 与 server 的 parseMailAccounts 一致：只认大写 MAIL_<KEY>_AUTH_CODE，值需非空 */
 function countCredentials(env) {
   let count = 0;
-  for (const key of ['FEISHU_APP_SECRET', 'DINGTALK_CLIENT_SECRET', 'WECOM_SECRET']) {
+  for (const key of ['FEISHU_APP_SECRET', 'DINGTALK_CLIENT_SECRET']) {
     if ((env[key] ?? '').trim()) count += 1;
   }
   for (const [key, value] of Object.entries(env)) {

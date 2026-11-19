@@ -4,6 +4,8 @@
  * 只读聚合，**不触发慢网络调用**：
  *  - 身份视图取进程内缓存（dws 未探测时后台预热，下次请求就有版本/登录态）；
  *  - 邮箱账号取本地/环境配置并脱敏；
+ *  - 微信仅在 WECHAT_MODE=real 时探测本机 RPA 桥（`GET /health`，1.2s 上限、5s 缓存）：
+ *    "配了 real" 不等于 "桥活着且在 rpa 模式"，不给 ready 就是不给假成功；
  *  - 响应绝不包含 token / 授权码 / 密钥。
  */
 import { basename } from 'node:path';
@@ -14,6 +16,7 @@ import { modeOf } from '../config';
 import { dingtalkPersonalClient } from '../connectors/dingtalkPersonal';
 import { identityChannelsReal, resolveIdentity } from '../services/identity';
 import { buildOnboarding } from '../services/onboarding';
+import { shouldProbeWechatBridge, wechatBridgeStatus } from '../services/wechatBridge';
 import { currentMailAccounts } from '../services/mailAccounts';
 
 /** 飞书未显式配置重定向 URL 时，给个人版一个本机默认值（与 OAuth 路由保持一致的默认） */
@@ -24,7 +27,7 @@ function defaultFeishuRedirectUri(): string {
 }
 
 /** 构造 onboarding 依赖（路由与单测共用；单测可直接替换 buildOnboarding） */
-export function collectOnboardingDeps() {
+export async function collectOnboardingDeps() {
   const client = dingtalkPersonalClient();
   const cached = client.lastKnownStatus();
   // 没有缓存时后台预热（不阻塞本次响应）：下次刷新就能看到 dws 版本/登录态
@@ -68,7 +71,11 @@ export function collectOnboardingDeps() {
       redirectUri: defaultFeishuRedirectUri(),
       identityChannelsReal: identityChannelsReal(Platform.FEISHU),
     },
-    wecom: { runtime: config.runtime[Platform.WECOM] },
+    wechat: {
+      runtime: config.runtime[Platform.WECHAT],
+      // 只有真的配了 real 才值得戳桥；mock 下探测没意义（也不会因此变 ready）
+      bridge: shouldProbeWechatBridge() ? await wechatBridgeStatus({ timeoutMs: 1200, maxAgeMs: 5000 }) : null,
+    },
     port: config.port,
   };
 }
@@ -76,10 +83,10 @@ export function collectOnboardingDeps() {
 export function onboardingRouter() {
   const r = Router();
 
-  r.get('/onboarding', (_req: Request, res: Response) => {
+  r.get('/onboarding', async (_req: Request, res: Response) => {
     res.setHeader('Cache-Control', 'no-store');
     try {
-      res.json(buildOnboarding(collectOnboardingDeps()));
+      res.json(buildOnboarding(await collectOnboardingDeps()));
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       res.status(500).json({ ok: false, error: `生成连接账号视图失败：${message}` });

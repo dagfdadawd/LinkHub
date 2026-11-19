@@ -61,16 +61,18 @@ describe('AccountCard 基础信息', () => {
     expect(screen.getByText(/该账号已跳过/)).toBeInTheDocument();
   });
 
-  it('部分配置平台展示 Mock 模拟 Tag、缺失变量与能力缺口告警（warnings）', () => {
-    render(<AccountCard account={accountOf(Platform.WECOM)} />);
+  it('微信 RPA 卡片：如实标演示通道 + 展示 RPA 依赖告警，mock 下不谎报能收', () => {
+    render(<AccountCard account={accountOf(Platform.WECHAT)} />);
 
+    expect(screen.getByText('已配置')).toBeInTheDocument();
     expect(screen.getByText('未配置（演示模式）')).toBeInTheDocument();
-    expect(screen.getByText(/WECOM_SECRET、WECOM_AGENT_ID/)).toBeInTheDocument();
-    expect(screen.getByText('不可发送')).toBeInTheDocument();
-    expect(screen.queryByText('不可接收')).not.toBeInTheDocument();
-    // 可替换性关键提示：能收不能发 + 企微可信 IP 限制
-    expect(screen.getByText(/只能收不能发：缺少 WECOM_SECRET \/ WECOM_AGENT_ID/)).toBeInTheDocument();
-    expect(screen.getByText(/企业微信要求发信出口 IP 在企业可信 IP 内/)).toBeInTheDocument();
+    // 如实说明这条通道靠什么跑，不把 RPA 说成官方 API
+    expect(screen.getByText(/微信个人版无官方 API，走 RPA 通道/)).toBeInTheDocument();
+    // P0：mock 不采集真实微信消息 → 必须如实显示「不可接收」，不能两侧都打勾
+    expect(screen.getByText(/不采集真实微信消息/)).toBeInTheDocument();
+    expect(screen.getByText('不可接收')).toBeInTheDocument();
+    // 发送在 mock 下是可用的（模拟发送），不应误报「不可发送」
+    expect(screen.queryByText('不可发送')).not.toBeInTheDocument();
   });
 
   it('健康平台：如实标「已配置（未验证）」并给可复制的 doctor 自检命令', () => {
@@ -252,10 +254,10 @@ describe('账号页工具函数（指标口径 / 自检命令）', () => {
     expect(sendBreakdown(undefined, 3)).toEqual({ total: 0, real: 0, mock: 0 });
   });
 
-  it('doctorCommand：四平台各自生成可复制命令', () => {
+  it('doctorCommand：四平台（飞书/钉钉/微信/邮箱）各自生成可复制命令', () => {
     expect(doctorCommand(Platform.FEISHU)).toBe('pnpm run doctor --platform=feishu');
     expect(doctorCommand(Platform.DINGTALK)).toBe('pnpm run doctor --platform=dingtalk');
-    expect(doctorCommand(Platform.WECOM)).toBe('pnpm run doctor --platform=wecom');
+    expect(doctorCommand(Platform.WECHAT)).toBe('pnpm run doctor --platform=wechat');
     expect(doctorCommand(Platform.MAIL)).toBe('pnpm run doctor --platform=mail');
   });
 });

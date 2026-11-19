@@ -177,11 +177,16 @@ test('GET /api/health：modes 语义不变，identities 摘要随身份可用', 
       assert.equal(json.envFile, null);
     }
     assert.equal(json.identities.feishu.send, 'mock');
+    // P1：微信/邮箱没有「本人 / 机器人」身份概念，不该在 identities 里出现（以前是 bot/bot，易误读）
+    assert.equal(json.identities.wechat, undefined, '微信不应出现在 identities');
+    assert.equal(json.identities.mail, undefined, '邮箱不应出现在 identities');
+    // 微信桥状态：mock 模式下不探测 → null（不能凭空报"就绪"）
+    assert.equal(json.wechatBridge, null);
     assert.ok(!JSON.stringify(json).includes('secret'));
   });
 });
 
-test('GET /api/accounts：飞书/钉钉下发 identity，企业微信/邮箱不适用', async () => {
+test('GET /api/accounts：飞书/钉钉下发 identity，微信/邮箱不适用', async () => {
   setupRealPersonalOnly();
   await dingtalkPersonalClient().authStatus({ force: true });
   await withApp(async (base) => {
@@ -196,8 +201,8 @@ test('GET /api/accounts：飞书/钉钉下发 identity，企业微信/邮箱不�
     assert.equal(dingtalk.identity.user.linkMethod, 'cli');
     assert.match(dingtalk.identity.user.loginCommand ?? '', /scripts[\\/]fake-dws\.mjs auth login$/);
     assert.match(dingtalk.identity.sendHint, /本人身份发送/);
-    const wecom = accounts.find((a) => a.platform === 'wecom')!;
-    assert.equal(wecom.identity, undefined);
+    const wechat = accounts.find((a) => a.platform === 'wechat')!;
+    assert.equal(wechat.identity, undefined);
     const mail = accounts.find((a) => a.platform === 'mail')!;
     assert.equal(mail.identity, undefined);
   });

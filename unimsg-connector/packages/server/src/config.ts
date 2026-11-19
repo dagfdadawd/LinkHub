@@ -244,14 +244,8 @@ export const config = {
       aesKey: platforms.dingtalk.aesKey,
       baseUrl: platforms.dingtalk.baseUrl,
     },
-    wecom: {
-      token: platforms.wecom.token,
-      aesKey: platforms.wecom.aesKey,
-      corpId: platforms.wecom.corpId,
-      agentId: platforms.wecom.agentId,
-      // 自建应用 Secret：换 access_token 用（后台"眼睛"图标查看，别点重置）
-      secret: platforms.wecom.secret,
-      baseUrl: platforms.wecom.baseUrl,
+    wechat: {
+      bridgeUrl: platforms.wechat.bridgeUrl,
     },
   },
 
@@ -349,7 +343,7 @@ export function refreshRuntime(): void {
     platforms: {
       feishu: config.platforms.feishu,
       dingtalk: { ...config.platforms.dingtalk, stream: config.dingtalkStream },
-      wecom: config.platforms.wecom,
+      wechat: config.platforms.wechat,
     },
     mailAccounts: config.mail.accounts,
     mailIssues: config.mail.issues,

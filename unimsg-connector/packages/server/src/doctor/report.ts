@@ -109,8 +109,6 @@ export interface DoctorReportInput {
   platforms: PlatformReport[];
   /** 环境检查 + 探针结果，顺序即展示顺序 */
   checks: CheckResult[];
-  /** 探测到的出口公网 IP（企业微信 60020 时采集，其余场景可能没有） */
-  egressIp?: string;
   /** 本次 --platform 过滤（空/未传 = 全部平台） */
   platformFilter?: Platform[];
   /** 后端实际监听端口（下一步提示用；缺省 3001） */
@@ -138,7 +136,6 @@ export interface DoctorJsonReport {
   platforms: PlatformReport[];
   checks: CheckResult[];
   summary: DoctorSummary;
-  egressIp: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -312,9 +309,6 @@ function renderChecks(checks: CheckResult[]): string[] {
 function renderConclusion(input: DoctorReportInput, summary: DoctorSummary, exitCode: number): string[] {
   const lines: string[] = [];
   lines.push('  【四、结论】');
-  if (typeof input.egressIp === 'string' && input.egressIp) {
-    lines.push(`  当前出口公网 IP：${input.egressIp}（企业微信「可信IP」需加入该 IP；出现 60020 时尤其注意）`);
-  }
 
   const port = input.port ?? 3001;
   const tokenHint = input.tokenIsDefault === false ? '<你的 API_TOKEN>' : 'dev-token';
@@ -332,7 +326,7 @@ function renderConclusion(input: DoctorReportInput, summary: DoctorSummary, exit
     lines.push(`    ${scope}当前都会以本地 Mock 运行：可以完整演示闭环，但没有验证任何真实账号。`);
     lines.push('  下一步：');
     lines.push('    1. 在 unimsg-connector/ 目录复制模板：cp .env.example .env（Windows PowerShell：Copy-Item .env.example .env）');
-    lines.push('    2. 只填你要用的那一个平台（飞书 / 钉钉 / 企微 / 邮箱任选其一），留空的平台自动回退 Mock');
+    lines.push('    2. 只填你要用的那一个平台（飞书 / 钉钉 / 微信 / 邮箱任选其一），留空的平台自动回退 Mock');
     lines.push('    3. 重跑自检：pnpm --filter @unimsg/server run doctor');
     lines.push('    4. 只想先看效果：直接启动后端 + 前端，界面会如实标注「模拟发送」');
   } else if (exitCode === 0) {
@@ -351,7 +345,7 @@ function renderConclusion(input: DoctorReportInput, summary: DoctorSummary, exit
     lines.push('  下一步：');
     lines.push('    1. 按 [FAIL] 建议修改 .env（注意：不要把真实凭据提交进 git）');
     lines.push('    2. 重跑自检：pnpm --filter @unimsg/server run doctor');
-    lines.push('    3. 只看某个平台：pnpm --filter @unimsg/server run doctor --platform=wecom');
+    lines.push('    3. 只看某个平台：pnpm --filter @unimsg/server run doctor --platform=wechat');
   }
   lines.push('  其他命令：pnpm --filter @unimsg/server run --silent doctor --json（机器可读；--silent 避免 pnpm 自身 banner 混入 stdout）');
   return lines;
@@ -449,7 +443,6 @@ export function buildJsonReport(input: DoctorReportInput): DoctorJsonReport {
     platforms,
     checks,
     summary,
-    egressIp: input.egressIp ?? null,
   };
 }
 

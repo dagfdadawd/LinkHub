@@ -7,6 +7,13 @@ import { store } from '../../store';
 import { MsgStatus, Platform } from '../../types';
 import type { UnifiedMessage } from '../../types';
 
+// 保存文件会碰 URL.createObjectURL / a.click，jsdom 里没有完整实现；
+// 这里只验证「下载按钮 → 调后端」这一段，保存动作本身由 download.test 覆盖。
+vi.mock('../../utils/download', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../utils/download')>();
+  return { ...actual, saveBlobAsFile: vi.fn() };
+});
+
 const FAILED: UnifiedMessage = {
   traceId: 't-fail-1',
   platform: Platform.FEISHU,
@@ -128,5 +135,40 @@ describe('DetailPanel 重新生成 AI 建议', () => {
     fireEvent.click(screen.getByRole('button', { name: /重新生成/ }));
 
     expect(await screen.findByText(/仍由关键词规则生成/)).toBeInTheDocument();
+  });
+});
+
+describe('DetailPanel 附件下载', () => {
+  it('有平台资源引用的附件显示下载按钮，点击调后端（本人发来的文件也可下载）', async () => {
+    const download = vi.spyOn(store, 'downloadAttachment').mockResolvedValue({
+      blob: new Blob(['%PDF'], { type: 'application/pdf' }),
+      filename: '周报.pdf',
+    });
+    renderPanel({
+      ...FAILED,
+      status: MsgStatus.RECEIVED,
+      attachments: [{
+        name: '周报.pdf',
+        mimeType: 'application/pdf',
+        size: 1024,
+        fileId: 'file-123',
+        resourceType: 'file',
+      }],
+    });
+
+    const button = screen.getByTestId('download-attachment-attachments-0');
+    expect(button).toHaveTextContent('下载');
+    fireEvent.click(button);
+
+    await waitFor(() => expect(download).toHaveBeenCalledWith('t-fail-1', 0, 'attachments'));
+  });
+
+  it('只有元数据、没有平台资源引用的附件不显示假下载按钮', () => {
+    renderPanel({
+      ...FAILED,
+      status: MsgStatus.RECEIVED,
+      attachments: [{ name: '本地文件.pdf', mimeType: 'application/pdf', size: 1024 }],
+    });
+    expect(screen.queryByRole('button', { name: /下载 本地文件\.pdf/ })).toBeNull();
   });
 });

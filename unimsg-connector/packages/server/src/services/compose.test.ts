@@ -75,6 +75,44 @@ test('compose：指定平台/会话主动发送，走完状态机且可回放', 
   }
 });
 
+test('compose：同时加为待办（标题 + 截止）落在同一条消息上，并写手动待办闭环日志', async () => {
+  const { svc, repo } = makeSvc();
+  const ack = await svc.compose({
+    platform: Platform.FEISHU,
+    conversationId: 'oc_todo_test',
+    text: '明天把周报发我',
+    todo: { title: '跟进周报', dueAt: '2026-11-20T02:00:00.000Z' },
+  });
+  // 待办就是这条发出的消息本身：不是幽灵消息，也不是另一次「加入待办」请求
+  assert.equal(ack.message.type, 'todo');
+  assert.equal(ack.message.done, false);
+  assert.equal(ack.message.todoTitle, '跟进周报');
+  assert.equal(ack.message.dueAt, '2026-11-20T02:00:00.000Z');
+  assert.equal(ack.message.body, '明天把周报发我', '正文不被标题覆盖，回放仍看得到原话');
+
+  await wait();
+  const m = repo.get(ack.taskId)!;
+  assert.equal(m.status, MsgStatus.SYNCED, '加待办不影响发送闭环，照样走完状态机');
+  assert.equal(m.type, 'todo');
+  const todoTrace = svc.getLoopLog(ack.taskId).find((e) => e.event === 'todo_added');
+  assert.ok(todoTrace, '缺少 todo_added 闭环事件');
+  assert.match(todoTrace.detail ?? '', /新建发送时手动加入待办/);
+  assert.match(todoTrace.detail ?? '', /跟进周报/);
+});
+
+test('compose：不勾选时消息仍是普通文本（加待办是可选行为）', async () => {
+  const { svc } = makeSvc();
+  const ack = await svc.compose({
+    platform: Platform.FEISHU,
+    conversationId: 'oc_plain_test',
+    text: '普通消息',
+  });
+  assert.equal(ack.message.type, 'text');
+  assert.equal(ack.message.todoTitle, undefined);
+  assert.equal(ack.message.dueAt, undefined);
+  await wait();
+});
+
 test('compose：带附件时元数据入库、内容不入库，适配器收到原始附件', async () => {
   const { svc, repo } = makeSvc();
   const a = attachment();
@@ -162,16 +200,16 @@ test('compose：邮箱可指定发件账号，未指定回退首个账号，未�
 
 test('compose：Mock 无会话时用 mock:demo 演示发送（不要求会话 ID）；真实模式无会话时显式报错、不伪造目标', async () => {
   const { svc } = makeSvc();
-  const ack = await svc.compose({ platform: Platform.WECOM, text: 'hi' });
+  const ack = await svc.compose({ platform: Platform.WECHAT, text: 'hi' });
   assert.equal(ack.message.conversation?.id, 'mock:demo', 'Mock 演示发送使用固定演示会话');
-  forceMode(Platform.WECOM, 'real');
+  forceMode(Platform.WECHAT, 'real');
   try {
     await assert.rejects(
-      () => makeSvc().svc.compose({ platform: Platform.WECOM, text: 'hi' }),
+      () => makeSvc().svc.compose({ platform: Platform.WECHAT, text: 'hi' }),
       /缺少目标会话|请在收件箱打开一条消息点「回复」/,
     );
   } finally {
-    forceMode(Platform.WECOM, 'mock');
+    forceMode(Platform.WECHAT, 'mock');
   }
 });
 

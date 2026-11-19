@@ -13,6 +13,7 @@ import { resetFeishuUserAuthCache } from '../connectors/feishuUserAuth';
 import { resetDingtalkPersonalClientCache } from '../connectors/dingtalkPersonal';
 import { resetIdentityCaches } from './identity';
 import { listAccounts } from './account';
+import { resetWechatBridgeCache, wechatBridgeStatus } from './wechatBridge';
 
 const dirs: string[] = [];
 const original = {
@@ -161,10 +162,60 @@ test('钉钉身份视图：全 Mock 时不探测 dws、不启动个人身份，�
   assert.equal(dingtalk === undefined, false);
 });
 
-test('企业微信 / 邮箱不下发 identity（不适用本人身份）', () => {
+test('微信 / 邮箱不下发 identity（不适用本人身份）', () => {
   const accounts = listAccounts();
-  for (const p of [Platform.WECOM, Platform.MAIL]) {
+  for (const p of [Platform.WECHAT, Platform.MAIL]) {
     const view = accounts.find((a) => a.platform === p)!;
     assert.equal(view.identity, undefined);
+  }
+});
+
+test('微信 real：账号视图带上桥实测状态（桥在 mock → 不可接收 + 告警）', async () => {
+  const prevMode = config.runtime.wechat.mode;
+  config.runtime.wechat.mode = 'real';
+  resetWechatBridgeCache();
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(
+    JSON.stringify({ ok: true, mode: 'mock' }),
+    { status: 200, headers: { 'content-type': 'application/json' } },
+  )) as typeof fetch;
+  try {
+    await wechatBridgeStatus({ url: 'http://127.0.0.1:8787', maxAgeMs: 0 });
+    const view = listAccounts().find((a) => a.platform === Platform.WECHAT)!;
+    assert.equal(view.canReceive, false, '桥是 mock 时不能显示可接收');
+    assert.equal(view.canSend, false, '桥是 mock 时也不能显示可发送');
+    assert.ok(view.warnings.some((w) => w.includes('RPA 桥不可用')));
+  } finally {
+    globalThis.fetch = origFetch;
+    resetWechatBridgeCache();
+    config.runtime.wechat.mode = prevMode;
+  }
+});
+
+test('微信 4.x：账号页把「按需拉取」算作可接收，且发送可用，和连接页不再矛盾', async () => {
+  const prevMode = config.runtime.wechat.mode;
+  config.runtime.wechat.mode = 'real';
+  resetWechatBridgeCache();
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(
+    JSON.stringify({
+      ok: true,
+      mode: 'rpa',
+      receive: { implemented: true, supported: false, reason: '4.x 无控件树' },
+      client: { kind: 'weixin4', uiaUsable: false, reason: '4.x 无控件树' },
+      pull: { available: true },
+    }),
+    { status: 200, headers: { 'content-type': 'application/json' } },
+  )) as typeof fetch;
+  try {
+    await wechatBridgeStatus({ url: 'http://127.0.0.1:8787', maxAgeMs: 0 });
+    const view = listAccounts().find((a) => a.platform === Platform.WECHAT)!;
+    assert.equal(view.canSend, true);
+    assert.equal(view.canReceive, true, '按需拉取也是接收能力，不能显示不可接收');
+    assert.ok(view.warnings.some((w) => w.includes('从微信拉取当前会话')));
+  } finally {
+    globalThis.fetch = origFetch;
+    resetWechatBridgeCache();
+    config.runtime.wechat.mode = prevMode;
   }
 });

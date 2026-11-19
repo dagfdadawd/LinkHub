@@ -1,5 +1,5 @@
 /**
- * Mock 种子数据：覆盖飞书 / 钉钉 / 企微三平台消息、六种状态、四类消息、降级与异常分支，
+ * Mock 种子数据：覆盖飞书 / 钉钉 / 微信三平台消息、六种状态、四类消息、降级与异常分支，
  * 让前端在没有后端的情况下也能完整演示「接收 → 展示 → 处理 → 回写 → 回流」；
  * 账号状态额外包含邮箱多账号样本（与后端 /api/accounts 同构）。
  */
@@ -117,7 +117,7 @@ const SEEDS: Seed[] = [
     deliveryReply: 'mock_dingtalk_2003',
   },
   {
-    platform: Platform.WECOM,
+    platform: Platform.WECHAT,
     senderId: 'u_zhoujiu',
     senderName: '周九',
     externalId: 'wx_3001',
@@ -131,7 +131,7 @@ const SEEDS: Seed[] = [
     minutesAgo: 240,
   },
   {
-    platform: Platform.WECOM,
+    platform: Platform.WECHAT,
     senderId: 'u_wushi',
     senderName: '吴十',
     externalId: 'wx_3002',
@@ -168,7 +168,7 @@ const SEEDS: Seed[] = [
     minutesAgo: 476,
   },
   {
-    platform: Platform.WECOM,
+    platform: Platform.WECHAT,
     senderId: 'u_chensan',
     senderName: '陈三',
     externalId: 'wx_3003',
@@ -206,7 +206,7 @@ const SEEDS: Seed[] = [
     minutesAgo: 26 * 60,
   },
   {
-    platform: Platform.WECOM,
+    platform: Platform.WECHAT,
     senderId: 'u_jiangliu',
     senderName: '蒋六',
     externalId: 'wx_3004',
@@ -377,9 +377,9 @@ export const INCOMING_TEMPLATES: Array<Pick<Seed, 'platform' | 'senderId' | 'sen
     replyDraft: '收到，下班前完成。',
   },
   {
-    platform: Platform.WECOM,
-    senderId: 'u_demo_wecom',
-    senderName: '演示·企业微信',
+    platform: Platform.WECHAT,
+    senderId: 'u_demo_wechat',
+    senderName: '演示·微信',
     body: '这个报表怎么导出？',
     type: 'text',
     intent: '咨询',
@@ -428,7 +428,7 @@ function mockIdentity(platform: Platform): PlatformIdentityView {
 /**
  * 账号状态样本：与后端 /api/accounts 同构（四类数据源）。
  * mode 是「本次实际通道」：飞书/邮箱凭据齐全走真实，钉钉因 MOCK 开关走模拟，
- * 企微缺发信凭据回退模拟——前端据此打绿 / 橙 Tag，Mock 绝不显示成真实成功；
+ * 微信默认走模拟——前端据此打绿 / 橙 Tag，Mock 绝不显示成真实成功；
  * warnings / issues 是能力缺口与配置问题，前端逐条展示（最需要的可替换性提示）。
  */
 export const ACCOUNTS: AccountInfo[] = [
@@ -457,20 +457,21 @@ export const ACCOUNTS: AccountInfo[] = [
     identity: mockIdentity(Platform.DINGTALK),
   },
   {
-    platform: Platform.WECOM,
-    label: '企业微信',
-    configured: false,
+    platform: Platform.WECHAT,
+    label: '微信',
+    configured: true,
     policy: 'auto',
     mode: 'mock',
-    canReceive: true,
-    canSend: false,
-    missing: ['WECOM_SECRET', 'WECOM_AGENT_ID'],
-    // 能力缺口提示：与 missing 并列展示，评审一眼看出「缺什么会导致什么」
+    // 与后端 runtime 同口径：mock 不采集真实微信消息，不能报「能收」
+    canReceive: false,
+    canSend: true,
+    missing: [],
+    // 能力提示：与 missing 并列展示，评审一眼看出「这条通道靠什么跑」
     warnings: [
-      '只能收不能发：缺少 WECOM_SECRET / WECOM_AGENT_ID（发信凭据）',
-      '企业微信要求发信出口 IP 在企业可信 IP 内，否则报 60020（用 pnpm run doctor 查看出口 IP）',
+      '微信个人版无官方 API，走 RPA 通道：依赖本机微信桌面端 + 本地 RPA 桥。',
+      'Mock 模式下不采集真实微信消息：入站仅用于演示；要真实收发请设 WECHAT_MODE=real 并启动 RPA 桥（--mode rpa）。',
     ],
-    reason: '收消息凭据齐全，缺少发信凭据，发送回退演示模式',
+    reason: '默认模拟演示；WECHAT_MODE=real 且 RPA 桥就绪后真实收发',
   },
   {
     platform: Platform.MAIL,

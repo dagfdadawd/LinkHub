@@ -9,6 +9,7 @@ import { config } from '../config';
 import { mailAccountSummary } from '../config/runtime';
 import { peekMailAccounts } from './mailAccounts';
 import { resolveIdentity } from './identity';
+import { peekWechatBridgeStatus, warmWechatBridge } from './wechatBridge';
 
 export interface MailAccountView {
   key: string;
@@ -93,6 +94,32 @@ export function listAccounts(): AccountView[] {
         source: mailStore?.sourceOf(a.key) ?? 'env',
       }));
       view.issues = config.mail.issues.map((i) => ({ level: i.level, message: i.message }));
+    }
+    // 微信：real 模式下"配了地址"不等于"桥活着且在 rpa 模式"。
+    // 这里只读探针缓存（不发请求），把实测结果写进告警；没探测过就触发一次后台探测。
+    if (platform === Platform.WECHAT && r.mode === 'real') {
+      const bridge = peekWechatBridgeStatus();
+      if (!bridge) {
+        warmWechatBridge();
+        view.canReceive = false;
+        view.canSend = false;
+        view.warnings.push('尚未探测到 RPA 桥运行态（正在后台探测，刷新即可）：在此之前不显示"可发送/可接收"');
+      } else {
+        // 4.x 的「不能自动收」是版本特性，不是配置坏了：按需拉取也是接收能力，
+        // 账号页不能再报「不可接收」；用 receiveMode 把两种接收方式说清楚。
+        view.canReceive = bridge.canReceive || bridge.receiveMode === 'pull';
+        view.canSend = bridge.canSend;
+        if (!bridge.canSend) {
+          view.warnings.push('RPA 桥当前不可发送：请用 --mode rpa 重启桥，发送会被如实拒绝');
+        }
+        view.warnings.push(
+          bridge.canReceive
+            ? `RPA 桥已确认：${bridge.receiveReason}`
+            : bridge.receiveMode === 'pull'
+              ? '微信 4.x 自动接收不可用；在收件箱选微信渠道后点「从微信拉取当前会话」即可按需接收'
+              : `RPA 桥不可用：${bridge.receiveReason}`,
+        );
+      }
     }
     return view;
   });

@@ -2,7 +2,7 @@
 
 > 文档版本：v1.0（2026-11-04）｜分析对象：git HEAD `be9321b` + 工作区未跟踪文件｜产出人：requirements-manager
 > 定位：回答用户原话「根据项目文档需求发散思考，想一下还会出现什么情况，尽量避免用户使用的时候出问题」，并把重点收敛到 **新用户快速上手 / 学习成本**。
-> 声明：本轮为**只读静态分析**（未启动服务、未运行 `e2e`/`doctor`、未修改任何代码/README/.env、未 commit/push）。文中不转述任何凭据值，邮箱/手机号一律脱敏；真实平台状态（飞书 21001、企微 60020）引自 README 实测记录。（**2026-11-12 补注：飞书本机租户 `21001` 已解除、飞书真实收发与本人身份已实测通过；企微仍卡 60020。下文涉及飞书不可用的现状判断以补注为准。**）
+> 声明：本轮为**只读静态分析**（未启动服务、未运行 `e2e`/`doctor`、未修改任何代码/README/.env、未 commit/push）。文中不转述任何凭据值，邮箱/手机号一律脱敏；真实平台状态引自 README 实测记录。（**2026-11-12 补注：飞书本机租户 `21001` 已解除、飞书真实收发与本人身份已实测通过。2026-11-19 补注：企业微信平台已移除，改为微信个人版 RPA 通道——原「60020 可信 IP」风险随之消失，改为「RPA 依赖本机微信环境」的风险。**）
 >
 > **配套文档**：[quickstart.md](quickstart.md)（5 分钟上手）｜[demo-script.md](demo-script.md)（现场演示脚本）｜[delivery-checklist.md](delivery-checklist.md)（交付/打包 checklist）｜[swap-accounts.md](swap-accounts.md)（换账号指南）
 >
@@ -10,14 +10,16 @@
 >
 > **2026-11-11 补注**：§2 的 G4（大模型）已落**真实调用**（OpenAI 兼容协议，默认 MiMo `mimo-v2.6-flash`；失败/超时回退内置规则并标注来源，低置信仍采用模型结果只标低精度，见 [ai-integration.md](ai-integration.md)），G1（独立部署）已提供 Docker 单容器方案（见 [deploy.md](deploy.md)）；G5（OCR）与 G2（PG/Redis）仍未实现。下文正文按 v1.0 原样保留，不改写当时的历史判断。
 >
-> **2026-11-12 补注**：飞书本机租户 `21001` 已解除（`app_access_token` / `tenant_access_token` 均 `code:0`），机器人 + 本人身份真实收发已实测通过（见 [飞书验收记录](verification/feishu-personal-e2e-2026-11-12.md)）。因此下文把「飞书真实链路不可用（21001）」视为**历史风险**，换租户 / 线下环境仍可能再现；「演示脚本第②③步会卡住」更新为**当前可真实演示，但需确认演示机租户策略与本机一致**。企微 `60020` 仍为当前风险。
+> **2026-11-12 补注**：飞书本机租户 `21001` 已解除（`app_access_token` / `tenant_access_token` 均 `code:0`），机器人 + 本人身份真实收发已实测通过（见 [飞书验收记录](verification/feishu-personal-e2e-2026-11-12.md)）。因此下文把「飞书真实链路不可用（21001）」视为**历史风险**，换租户 / 线下环境仍可能再现；「演示脚本第②③步会卡住」更新为**当前可真实演示，但需确认演示机租户策略与本机一致**。
+>
+> **2026-11-19 补注**：企业微信已于本轮移除，微信个人版改走 **RPA 补充通道**（无官方 API，本机桥 + 微信桌面端，默认 Mock）。下文所有「微信 60020 / 可信 IP / 回调 Token」均为历史记录，不再适用；现行风险见 R-26 与 §「微信 RPA 通道」。
 
 ---
 
 ## 0. 结论速览（TL;DR）
 
 1. **最大的上手风险不是"功能没做完"，而是"新用户按文档走，不一定能顺利看到效果"**：交付目录里带着真实凭据 `.env`、带 `packages/web/.env`（会让「纯前端 Mock 演示」这条最短路径失效）、端口占用/空数据/失败原因都没有"下一步"提示。
-2. **真实链路可用面**：钉钉（Stream）、邮箱（IMAP/SMTP）、**飞书（2026-11-12 本机租户 `21001` 已解除，机器人 + 本人身份真实收发已实测通过）**；企微仍卡可信 IP `60020` 且缺回调 Token/AES。演示脚本第②③④⑤步中的飞书部分**当前可真实演示，但需确认演示机租户策略与本机一致**；企微仍需 Mock。
+2. **真实链路可用面**：钉钉（Stream）、邮箱（IMAP/SMTP）、**飞书（2026-11-12 本机租户 `21001` 已解除，机器人 + 本人身份真实收发已实测通过）**；微信为 RPA 通道、默认 Mock（真实收发需本机微信桌面端 + 桥）。演示脚本第②③④⑤步中的飞书部分**当前可真实演示，但需确认演示机租户策略与本机一致**；微信仍需 Mock。
 3. **数据正确性有两个"用户真的会踩"的坑**：邮箱带附件/嵌套 multipart 邮件正文整段丢失；IMAP 单轮最多 20 封且水位只存内存 → 重启或突发邮件会漏信。两者都在真实可用链路上，不是 Mock 演示问题。
 4. **5 分钟上手的最大摩擦是信息结构**：README 共 466 行，快速开始在第 213 行、有 3 种相互排斥的启动方式；且当前工作区的 `packages/web/.env` 会让"只启动前端看 Mock"变成"连不上后端"的报错页。
 5. 计数：**P0 7 条 / P1 14 条 / P2 8 条 / P3 2 条，共 31 条**；写作期间已有 **10 条**在工作区看到代码改动（🧪，见 §7.3 快照，均未验收）；R-24（UIDVALIDITY）与已派的水位持久化相邻，建议一并处理。
@@ -57,7 +59,7 @@
 |---|---|---|---|---|---|
 | G1 | Docker Compose 拉起 4 服务（postgres/redis/server/web），纯净服务器零依赖启动（执行文档 §5.1–5.3、交付物） | **仓库没有任何 Dockerfile / docker-compose.yml**；本机只能 `pnpm` 启动，依赖 Node/pnpm/网络安装 | 全仓库 grep `docker compose` 0 命中；README 全文无 Docker 章节 | 按文档找 compose 文件 → 找不到；"独立部署 7/20 分"无法演示 | 📄 补 README「承诺-实现对照表」；是否补最小 compose 骨架由 Lead 定（M/L） |
 | G2 | PostgreSQL + Redis 持久化/缓存/限流（§2.6、§5.1） | 仅内存实现；`DATABASE_URL` 只影响启动日志一行 | `db/repository.ts:30-83`、`index.ts:58`、README:146 | 重启即清空，与"持久化"承诺不符 | ✅ 接受并说明（README 已写）；对照表标注 |
-| G3 | 三平台（飞书/钉钉/企微）真实收发、稳定运行 +3 分（§6.3、§7.2） | 真实可用：钉钉 Stream、邮箱；**飞书 2026-11-12 本机租户 `21001` 已解除，机器人 + 本人身份真实收发已实测通过**；企微缺回调凭据且 `60020` | README:143、398-400；`connectors/feishu.ts:105`、`wecom.ts:188`；飞书见 2026-11-12 验收记录 | 按演示脚本第②③④⑤步操作：飞书当前可真实演示（需确认演示机租户策略与本机一致）、企微仍 Mock → 不会卡住 | 📄 演示脚本 v2：钉钉 + 邮箱 + 飞书真实、企微 Mock + 替代路径（M） |
+| G3 | 三平台（飞书/钉钉/微信）真实收发、稳定运行 +3 分（§6.3、§7.2） | 真实可用：钉钉 Stream、邮箱；**飞书 2026-11-12 本机租户 `21001` 已解除，机器人 + 本人身份真实收发已实测通过**；微信为 RPA 补充通道（默认 Mock，无官方 API 限制） | README 平台支持表；`connectors/feishu.ts`、`connectors/wechat.ts`；飞书见 2026-11-12 验收记录 | 按演示脚本第②③④⑤步操作：飞书当前可真实演示（需确认演示机租户策略与本机一致）、微信走 RPA、默认 Mock → 不会卡住 | 📄 演示脚本 v2：钉钉 + 邮箱 + 飞书真实、微信 Mock + 替代路径（M） |
 | G4 | 大模型意图识别/摘要/草稿，抽样 ≥30 条准确率 ≥85%（§6.1、初赛 §6.2） | 关键词规则 Mock；无抽样集、无准确率证据 | `services/llm.ts`、README:145 | 提问"AI 在哪/准确率"时只能答规则 | 📄 文档如实降级说明 + 演示时标注「规则 Mock」 |
 | G5 | OCR（腾讯云）图片/文件文字提取 | 规则 Mock，未调用任何 OCR | `services/ocr.ts`、README:145 | 图片消息 OCR 结果为占位/待确认 | 📄 同 G4 |
 | G6 | CORS 白名单、后端仅内网（执行文档 §2.5） | 默认仍是 `cors()` 全放行、`listen(port)` 绑定所有网卡、默认 token；本轮新增 `CORS_ORIGINS` 白名单（不填仍 `*`）与 `SERVER_HOST` | HEAD `app.ts:14`、`index.ts:57`、`config.ts:85`；工作区已改（§7.3） | 同网段任何人可读取/回复消息（演示 Wi-Fi 场景） | 🧪 已落代码（白名单/告警/生产闸门）；空 token 仍会关鉴权，见 R-10 |
@@ -91,13 +93,13 @@
 | 3 | 自检 | `pnpm run doctor` 输出质量较好（PASS/FAIL/中文建议/出口 IP），但结论段没有"疑似拼写错误""找到但未加载的 .env" | P1（R-09/R-25） |
 | 4 | 起服务 | 换 `.env` 后必须重启；`.env` 的加载优先级不透明（`import 'dotenv/config'` 会先读 cwd，可能被 `packages/server/.env` 覆盖） | P2（R-25） |
 | 5 | 前端联调 | 前端自己的 `packages/web/.env` 里 `VITE_API_TOKEN` 必须与后端 `API_TOKEN` 一致；**若按 README 把后端 token 改成生产值，前端会 401，且 `pnpm e2e` 必挂** | P1（R-08） |
-| 6 | 真实收发 | 飞书 21001（**历史：本机租户 2026-11-12 已解除**；换租户 / 线下环境仍可能再现）/ 企微 60020 需要"企业认证 / 可信 IP / 公网回调"，同学环境大概率无法满足；失败原因只在 trace 页可见 | P1（R-17/R-20） |
+| 6 | 真实收发 | 飞书 21001（**历史：本机租户 2026-11-12 已解除**；换租户 / 线下环境仍可能再现）/ 微信 RPA 需本机微信桌面端 + 桥，同学环境需按文档准备；失败原因只在 trace 页可见 | P1（R-17/R-20） |
 | 7 | 换邮箱 | 授权码、IMAP/SMTP 开启步骤文档很完整；但附件邮件正文会丢、IMAP 中文目录会失败 | **P0（R-04/R-07，🧪）** |
 
 ### 3.3 只配部分平台 / 多账号
 
 - 只配钉钉（Stream）或只配邮箱：`auto` 回退逻辑正确，未配平台自动 Mock，`/api/accounts` 能看到 `mode/missing/reason`。✅
-- **半可用歧义**：`auto` 只要"能收或能发"就判 `real`（`config/runtime.ts:561-568`）。例如只填 `FEISHU_VERIFY_TOKEN` → 收真实、发 Mock；企微只填 CorpId/Secret/AgentId → 发"真实"但必报 60020。账号页虽有 warnings，普通用户仍容易把「真实接口」理解成"都配好了"（P1，R-20）。
+- **半可用歧义**：`auto` 只要"能收或能发"就判 `real`（`config/runtime.ts:561-568`）。例如只填 `FEISHU_VERIFY_TOKEN` → 收真实、发 Mock。（微信 RPA 无凭据，auto 恒为 Mock，须显式 real。）账号页虽有 warnings，普通用户仍容易把「真实接口」理解成"都配好了"（P1，R-20）。
 - **重复/多账号**：同一邮箱用两个 key 配置（或 `INBOX,inbox` 大小写不同）会产生两套 `externalId` → 同一封邮件重复入库（P2，R-22）。
 - **MAIL_ACCOUNTS 显式列表写错 key**（如 `my_school` 对应应为 `MAIL_MYSCHOOL_*`）只报 warn 级 issue，账号被静默跳过（`config/runtime.ts:247-354`，P2/R-22）。
 
@@ -106,18 +108,18 @@
 - 发送路径有令牌桶 + 3 次指数退避（1/2/4s，`services/rateLimiter.ts:24-39`），耗尽写 DLQ、状态 `failed`。✅
 - **断网时前端不会自己恢复**：WS 最多重连 8 次（约 45s）后进入 `offline` 且不再重连、无"重试"按钮（`wsRealtime.ts:119-131`）；REST 也不轮询 → 后端恢复后必须手动刷新页面（P1，R-13）。
 - 钉钉 Stream 建连失败只在启动时 `console.error` 一次（`index.ts:66-68`），换网/断线后界面无任何"长连接已断开"信号；`/api/accounts` 的 `canReceive` 仍为 true（P2，R-26）。
-- **演示网络变化**：出口公网 IP 变化会直接导致企微 60020（README:383 已说明，doctor 每次打印出口 IP —— 这是好设计，文档层已兜底）。
+- **演示环境变化**：微信 RPA 依赖本机微信桌面端已登录、桥进程运行、窗口不被遮挡；演示机切换或微信登出会导致发送失败（发送失败会如实报错并可重试）。
 
 ### 3.5 电脑重启 / 换网 / 开代理
 
 - 重启：内存存储清空（消息/闭环日志/DLQ 全丢）；邮箱 UID 水位在内存，重启后重新立基线，**停机期间到达的邮件被跳过**（README:418 已声明但用户未必读；P1，R-07/R-18）。
 - 换网/开代理：本服务不读 `HTTP(S)_PROXY`，fetch/IMAP/SMTP 全直连；公司代理+SSL 拦截环境真实模式会整体失败（doctor 的报错建议覆盖了代理文案，但服务本身不代理）。P2，R-26。
-- 时钟偏差：钉钉验签容忍 1 小时窗口（`connectors/dingtalk.ts:76`），企业微信 3600s（`wecom.ts:27/115`）；系统时间偏差大 → 回调统一 401，且错误信息只有 `verify failed`。P2，R-26。
+- 时钟偏差：钉钉验签容忍 1 小时窗口（`connectors/dingtalk.ts:76`），微信 3600s（`wechat.ts:27/115`）；系统时间偏差大 → 回调统一 401，且错误信息只有 `verify failed`。P2，R-26。
 
 ### 3.6 中文 / emoji / 超长正文 / 附件
 
 - 中文与 emoji：JSON/UTF-8 链路正常；邮件正文 base64 + UTF-8 正常；已实测中文主题/正文无损（README:396）。✅
-- **超长**：前端限 2000 字符（`ReplyComposer.tsx:31`），后端无平台级限制校验；企微 `text.content` 上限约 2048 **字节**（约 680 汉字）、钉钉/飞书限制各不相同 → 真实发送失败，用户只看到"回写失败"（P1，R-14）。
+- **超长**：前端限 2000 字符（`ReplyComposer.tsx:31`），后端无平台级限制校验；微信 `text.content` 上限约 2048 **字节**（约 680 汉字）、钉钉/飞书限制各不相同 → 真实发送失败，用户只看到"回写失败"（P1，R-14）。
 - **附件**：带附件邮件在常见 `multipart/mixed > multipart/alternative + attachment` 结构下，正文会整段丢失、只剩 `[附件] 文件名`（P0，R-04，🔧）。图片/文件消息本身没有缩略图/附件下载入口，详情页只显示文字（P3，R-30）。
 
 ---
@@ -129,9 +131,9 @@
 | 用户 | 关键步骤（理想） | 无摩擦耗时 | 当前现实耗时 | 主要卡点 | 摩擦级别 | 学习成本 | 建议（文档/产品） |
 |---|---|---|---|---|---|---|---|
 | **评审/评委**（零账号，5 分钟看演示） | 打开 README → 选纯前端 Mock → 起服务 → 浏览收件箱 → 演示一次回复闭环 | 3–5 min（已有 node_modules）；纯净环境 +2–3 min 装依赖 | **8–15 min** | 快速开始在第 213 行；3 种启动方式要选；`web/.env` 破坏纯前端 Mock；空态无"下一步"；端口占用栈 | **高** | 读文档 3–5 + 排错 5–10 | 📄 README 顶部「3 分钟零账号跑起来」+ 成功信号；📄 删/改 `web/.env`；🔧 前端首启引导 |
-| **同学/接手人**（换成自己的账号） | 复制 `.env` → 填一段 → `doctor` → 重启 → `/api/accounts` 看 mode | 5–8 min（不含平台后台取凭据 10–30 min） | **15–30 min** | .env 放错位置/拼错变量静默 Mock；前端 token 双写；真实平台 21001（历史）/60020；失败原因不显眼 | **中高** | 5–8 + 排错 10–20 | 📄 一页"换号 checklist + 错误表"；🔧 doctor 加拼写/加载校验；⏳ 失败原因可见 |
+| **同学/接手人**（换成自己的账号） | 复制 `.env` → 填一段 → `doctor` → 重启 → `/api/accounts` 看 mode | 5–8 min（不含平台后台取凭据 10–30 min） | **15–30 min** | .env 放错位置/拼错变量静默 Mock；前端 token 双写；真实平台 21001（历史）；微信 RPA 需本机环境；失败原因不显眼 | **中高** | 5–8 + 排错 10–20 | 📄 一页"换号 checklist + 错误表"；🔧 doctor 加拼写/加载校验；⏳ 失败原因可见 |
 | **队友接手开发** | clone → `cd unimsg-connector` → install → typecheck → test → e2e | 5–10 min（e2e 需 Python/PowerShell） | **6–15 min** | 根目录无 package.json，习惯性在根跑 install/start 会失败；pnpm 可能不在 PATH（本机需 shim）；Python 缺失时 e2e 才提示；Node <20 无硬阻断 | **中** | 3–8 | 📄 README 环境一节写"所有命令必须在 unimsg-connector/ 下"；🔧 启动时 Node 版本中文提示 |
-| **老师/评委**（对照设计文档验收） | 读 docx → 按 §5 部署 → 按 §7.2 演示三平台闭环 → 按 §6 看 AI 能力 | 10–15 min | **30 min+ 且部分项无法通过** | 文档承诺 Docker/PG/Redis/LLM/OCR/三平台真实收发，交付未全达（飞书 2026-11-12 已补测通过、企微仍受限）；演示脚本第 2 步飞书当前可用（需确认租户），企微 Mock | **高** | 10–15 + 20+ 解释 | 📄 承诺-实现对照表（§2）；📄 演示脚本 v2 默认 Mock 兜底；⏳ 证据更新 |
+| **老师/评委**（对照设计文档验收） | 读 docx → 按 §5 部署 → 按 §7.2 演示三平台闭环 → 按 §6 看 AI 能力 | 10–15 min | **30 min+ 且部分项无法通过** | 文档承诺 Docker/PG/Redis/LLM/OCR/三平台真实收发，交付未全达（飞书 2026-11-12 已补测通过、微信仍受限）；演示脚本第 2 步飞书当前可用（需确认租户），微信 Mock | **高** | 10–15 + 20+ 解释 | 📄 承诺-实现对照表（§2）；📄 演示脚本 v2 默认 Mock 兜底；⏳ 证据更新 |
 
 **一句话**：当前项目"能跑"但"跑起来之前要读懂的东西太多"；把 **最短路（纯前端 Mock 30 秒）** 修通、把 **失败提示都变成下一步**，四类用户的学习成本能从 15–30 分钟压到 5 分钟内。若 §7.3 的并行修复全部验收，预计：评审 **3–5 min**、同学换号 **5–8 min + 平台后台时间**、队友接手 **3–5 min**，即回到目标区间。
 
@@ -152,7 +154,7 @@ README 顶部（前 60 行内）建议顺序越靠前越好：
 
 建议新增/拆出：[quickstart.md](quickstart.md)（一页，评审可打印）、[demo-script.md](demo-script.md)（5 分钟分镜 + 兜底：网络/凭据失效 → 全 Mock）、`docs/troubleshooting.md`（从 `swap-accounts.md` §6.8/§7 抽错误表；本轮先并入 quickstart 的「常见卡点一张表」）。
 
-**常见错误表建议条目**：`EADDRINUSE`→端口被占用改 SERVER_PORT；`无法连接后端服务`→后端未启动/端口不一致/`web/.env` 残留；`未授权：API Token 无效`→两处 token 不一致或 `API_TOKEN=` 留空；`pnpm install` 在根目录报 No package.json→先 `cd unimsg-connector`；`doctor` 显示全 Mock→`.env` 位置/拼写；`21001`→飞书租户策略（**本机租户 2026-11-12 已解除**；其他租户换租户/企业认证，本地改 mock）；`60020`→企微可信 IP 加 doctor 打印的出口 IP；`IMAP 登录失败`→授权码不是登录密码/未开 IMAP；`STARTTLS 失败`→端口与加密方式不匹配（465 vs 587）；`邮件收不到`→45s 轮询 + Junk 目录 + 重启漏信。
+**常见错误表建议条目**：`EADDRINUSE`→端口被占用改 SERVER_PORT；`无法连接后端服务`→后端未启动/端口不一致/`web/.env` 残留；`未授权：API Token 无效`→两处 token 不一致或 `API_TOKEN=` 留空；`pnpm install` 在根目录报 No package.json→先 `cd unimsg-connector`；`doctor` 显示全 Mock→`.env` 位置/拼写；`21001`→飞书租户策略（**本机租户 2026-11-12 已解除**；其他租户换租户/企业认证，本地改 mock）；微信 RPA 发送失败→确认桥已启动、微信桌面端已登录、会话名与微信里一致；`IMAP 登录失败`→授权码不是登录密码/未开 IMAP；`STARTTLS 失败`→端口与加密方式不匹配（465 vs 587）；`邮件收不到`→45s 轮询 + Junk 目录 + 重启漏信。
 
 ### 4.3 产品侧首启引导建议
 
@@ -180,7 +182,7 @@ README 顶部（前 60 行内）建议顺序越靠前越好：
 ### P0（7 条：会直接卡住、数据错误或凭据泄露）
 
 #### R-01 [P0][D/F] 交付包内包含真实凭据、隐私与旧产物
-- **触发**：把工作目录直接 zip / 拷 U 盘 / 发给评审；`unimsg-connector/.env`（含真实飞书/钉钉/企微 Secret 与 163/QQ 授权码；条目已确认非空，本文不转述值）、`.env.bak-2026-11-03`（另一份完整旧凭据）、`scripts/e2e-server.log`、`packages/web/.env`、`test.photos/`、`node_modules/` 全在目录里。
+- **触发**：把工作目录直接 zip / 拷 U 盘 / 发给评审；`unimsg-connector/.env`（含真实飞书/钉钉/微信 Secret 与 163/QQ 授权码；条目已确认非空，本文不转述值）、`.env.bak-2026-11-03`（另一份完整旧凭据）、`scripts/e2e-server.log`、`packages/web/.env`、`test.photos/`、`node_modules/` 全在目录里。
 - **用户看到**：压缩包 171.8MB / 23,681 个文件（node_modules 实测）；更严重的是凭据与手机号邮箱（脱敏：`1******@163.com`、`3******@qq.com`）随包泄露，无法撤回。
 - **现状**：`unimsg-connector/.gitignore:3` 与根 `.gitignore:70` 只保护 git，**不保护 zip**；`git ls-files` 124 个跟踪文件里没有凭据（这点做对了）；交付物定义/打包脚本缺失。
 - **根因**：安全边界只建在 git 层；"交付包"没有被当作产物定义。
@@ -197,7 +199,7 @@ README 顶部（前 60 行内）建议顺序越靠前越好：
 
 #### R-03 [P0][A/F] 设计文档承诺无法按文档验收（部署/AI/三平台真实收发）
 - **触发**：评审/老师拿两份 docx 对照验收（执行文档 §5.1–5.3 部署、§6.3 三平台、§6.1 AI、§1.4 初步验证证据）。
-- **用户看到**：找不到 Dockerfile/compose、没有 PG/Redis、LLM/OCR 是规则 Mock（历史判断）；演示脚本第②步飞书消息在 2026-11-12 前会失败（21001），**本机租户已解除、飞书当前可真实收发**；企微仍 60020。
+- **用户看到**：找不到 Dockerfile/compose、没有 PG/Redis、LLM/OCR 是规则 Mock（历史判断）；演示脚本第②步飞书消息在 2026-11-12 前会失败（21001），**本机租户已解除、飞书当前可真实收发**；微信为 RPA 通道、默认 Mock。
 - **现状**：见 §2 表 G1–G10；README「已知限制」已如实写了大部分（README:412-426），但**设计文档本身未同步**，且 README 没有一张"文档承诺 vs 实现"的对照表。
 - **根因**：文档按"目标态"写、实现按"可交付态"做，两者没有版本对齐机制。
 - **建议**：〔文档，M〕README 增加「承诺-实现对照表」（可直接用 §2）；`DEMO.md` 演示脚本 v2 默认全 Mock 兜底 + 钉钉/邮箱真实可选；是否补 compose 骨架（L）由 Lead 决策。
@@ -222,7 +224,7 @@ README 顶部（前 60 行内）建议顺序越靠前越好：
 #### R-06 [P0][C/D] 空/畸形 webhook 被接收并污染幂等键
 - **触发**：评审用 `curl -X POST /api/webhook/feishu -d '{}'` 试探；或平台推送了缺 ID 的事件；Mock 模式下无签名也会通过。
 - **用户看到**：收件箱出现一条**空消息**；此后所有缺 ID 的事件都被判为"重复"静默丢弃（`duplicate=true`），用户以为消息丢了。
-- **现状**：`routes/webhook.ts:32-36` 无签名时 `querySignature` 默认返回 `'mock'`，Mock 模式下任意空 body 通过验签；`connectors/feishu.ts:45`、`dingtalk.ts:35`、`wecom.ts:132` 缺 ID 时 `externalId='unknown'`，全部共用同一个幂等键。README:423 已把它列为"已知限制"但未修。
+- **现状**：`routes/webhook.ts:32-36` 无签名时 `querySignature` 默认返回 `'mock'`，Mock 模式下任意空 body 通过验签；`connectors/feishu.ts:45`、`dingtalk.ts:35`、`wechat.ts:132` 缺 ID 时 `externalId='unknown'`，全部共用同一个幂等键。README:423 已把它列为"已知限制"但未修。
 - **根因**：入口缺少最小的 body/字段校验，幂等键允许退化值。
 - **建议**：〔代码，S〕入口校验：空 body、非对象、缺 `externalId`/`message_id`/`msgId`、`externalId==='unknown'` → 400 且不入库、不写幂等表；返回 JSON 错误说明。
 - **状态**：🧪 已落代码（写作时快照）：`services/message.ts` 新增 `isEmptyPlatformEvent`/`InvalidPlatformEvent`（空对象/空数组/空白字符串/缺 externalId 均拒绝），`routes/webhook.ts` 在入库前拦截并返回 400；`app.ts` 同时把畸形 JSON 从 Express HTML 报错页改成 JSON；待验收（含非消息事件过滤，见 R-23）。
@@ -263,8 +265,8 @@ README 顶部（前 60 行内）建议顺序越靠前越好：
 
 #### R-11 [P1][C] "状态回流"是本地乐观推进、可被倒退，真实平台事件没有回流通道
 - **触发**：任何一次 Mock/真实发送成功；或调用自定义 status webhook 传 `status=received`。
-- **用户看到**：状态自动变绿 `已同步`，即使对方实际没收到（邮件退信/企微 60020 之外的成功返回也不代表送达）；发的回流事件若乱序，已 `synced` 的消息会**倒退**成 `received`，UI 状态跳回。
-- **现状**：`services/message.ts:157-164` 在真实发送返回后立刻 `SENT→SYNCED` 并写日志"平台状态回流"；`message.ts:185-193` `syncStatus` 接受任意 `MsgStatus`（含 `received`）且未知值默认 `synced`；`services/sync.ts:9-18` 只识别顶层 `event==='status'|'sync'|'message.status'` 的自造报文，飞书/企微真实事件格式不会命中。
+- **用户看到**：状态自动变绿 `已同步`，即使对方实际没收到（邮件退信、微信 RPA 的成功返回也不代表对方一定看到）；发的回流事件若乱序，已 `synced` 的消息会**倒退**成 `received`，UI 状态跳回。
+- **现状**：`services/message.ts:157-164` 在真实发送返回后立刻 `SENT→SYNCED` 并写日志"平台状态回流"；`message.ts:185-193` `syncStatus` 接受任意 `MsgStatus`（含 `received`）且未知值默认 `synced`；`services/sync.ts:9-18` 只识别顶层 `event==='status'|'sync'|'message.status'` 的自造报文，飞书/微信真实事件格式不会命中。
 - **根因**："接口 ack"与"平台送达/已读"没有区分；状态迁移缺少单向性守卫。
 - **建议**：〔代码+文档，S/M〕① `syncStatus` 做单向状态守卫（只允许前进或显式 `failed`），非法回退忽略并记日志；② 文案把 `synced` 解释为"平台接口已确认"（或新增独立 `delivered` 字段）；③ 文档说明真实回流未对接，演示回流用自造事件。
 - **状态**：🧪 部分已落代码（写作时快照）：`message.ts` 新增 `STATUS_RANK` 状态秩与防倒退校验（倒退/重复请求忽略并记 `sync_ignored`，保留原状态）；`sent→synced` 的乐观语义与真实平台事件回流仍未变，需产品/文档决策；待验收。
@@ -286,11 +288,11 @@ README 顶部（前 60 行内）建议顺序越靠前越好：
 - **状态**：⏳ 待排期（与已派"Web 首启引导"可同批）。
 
 #### R-14 [P1][C/E] 长消息超平台限制无校验，失败原因泛化
-- **触发**：粘贴 1500+ 中文字符或大段 emoji 回复；或回复内容超过企微 2048 字节。
+- **触发**：粘贴 1500+ 中文字符或大段 emoji 回复；或回复内容超过微信 2048 字节。
 - **用户看到**：状态变「发送失败」，详情只写"回写失败，已写入死信队列"；真实原因（平台 limit errcode）在 trace 页/控制台，用户不知道是"太长"。
-- **现状**：`ReplyComposer.tsx:31` 只限 2000 **字符**；`routes/messages.ts:36-40` 只 trim；各 `convert()`（`wecom.ts:144-152`、`dingtalk.ts:48-53`、`feishu.ts:58-64`）不做长度/字节校验。
+- **现状**：`ReplyComposer.tsx:31` 只限 2000 **字符**；`routes/messages.ts:36-40` 只 trim；各 `convert()`（`wechat.ts:144-152`、`dingtalk.ts:48-53`、`feishu.ts:58-64`）不做长度/字节校验。
 - **根因**：统一消息模型没有"平台侧限制"这一层。
-- **建议**：〔代码，S〕按平台做字节/字符上限校验并在前端提示（企微约 2048 字节、钉钉/飞书按各自限制）；超限错误映射成中文"内容过长，请精简到 N 字内"。
+- **建议**：〔代码，S〕按平台做字节/字符上限校验并在前端提示（微信约 2048 字节、钉钉/飞书按各自限制）；超限错误映射成中文"内容过长，请精简到 N 字内"。
 - **状态**：⏳ 待排期。
 
 #### R-15 [P1][B] 运行时版本与安装门槛：Node/pnpm/Python（项目无 Java 运行时）
@@ -310,7 +312,7 @@ README 顶部（前 60 行内）建议顺序越靠前越好：
 - **状态**：📄 文档（与 R-01 同批）。
 
 #### R-17 [P1][E] 真实发送失败原因不可见，用户不知道下一步
-- **触发**：飞书 21001（历史 / 其他租户）、企微 60020/缺权限、SMTP 535、钉钉机器人未发布等真实失败。
+- **触发**：飞书 21001（历史 / 其他租户）、微信 RPA 桥未就绪、SMTP 535、钉钉机器人未发布等真实失败。
 - **用户看到**：详情页红条「回写失败，已写入死信队列」+ 建议"可修改内容后再次发送"；真实原因只在闭环日志（需切到回放页）或控制台。
 - **现状**：`services/message.ts:167-174` 把 reason 写进 loop log 与 DLQ；`DetailPanel.tsx:133-141` 只展示通用文案；`listDlq()` 没有 REST 接口，健康页只有计数。
 - **根因**：失败信息的展示层没有消费日志层的原因。
@@ -334,7 +336,7 @@ README 顶部（前 60 行内）建议顺序越靠前越好：
 - **状态**：⏳ 待排期（很小，建议本轮顺手修）。
 
 #### R-20 [P1][A] 半可用平台的「真实」歧义：`auto` 只要收/发任一能力就判 real
-- **触发**：只填部分凭据（飞书只有 Verify Token、企微只有 CorpId/Secret/AgentId、钉钉开了 Stream 没配 robotCode 等）。
+- **触发**：只填部分凭据（飞书只有 Verify Token、钉钉开了 Stream 没配 robotCode、微信设了 real 但桥没启动等）。
 - **用户看到**：账号页显示「真实接口」，但实际"只能收不能发"或"只能发不能收"；回复时抛错/收不到消息时误以为是 bug。
 - **现状**：`config/runtime.ts:561-568` 的 `mode` 判定；warnings 已存在（`runtime.ts:481-516`）但展示在卡片尾部，普通用户容易忽略；README:110-127 行为矩阵很长但准确。
 - **根因**：一个 `mode` 字段承载了收和发两种能力，语义被压缩。
@@ -360,9 +362,9 @@ README 顶部（前 60 行内）建议顺序越靠前越好：
 - 状态：⏳。
 
 #### R-23 [P2][C] 真实平台非消息事件会入库成空消息
-- 触发：企微回调的进入应用/菜单事件（`<MsgType>event</MsgType>`）、飞书订阅了非 `im.message.receive_v1` 的事件；真实模式下验签通过。
+- 触发：微信回调的进入应用/菜单事件（`<MsgType>event</MsgType>`）、飞书订阅了非 `im.message.receive_v1` 的事件；真实模式下验签通过。
 - 用户看到：收件箱多出一条空正文消息；第二条因 `externalId='unknown'` 被判重复。
-- 现状：`connectors/wecom.ts:119-141` 不区分 `MsgType=event`；`feishu.ts:28-56` 只按 `event.message` 解析、缺字段退化；`services/sync.ts:9-18` 不会把它们识别成状态事件。
+- 现状：`connectors/wechat.ts:119-141` 不区分 `MsgType=event`；`feishu.ts:28-56` 只按 `event.message` 解析、缺字段退化；`services/sync.ts:9-18` 不会把它们识别成状态事件。
 - 根因：事件分流只支持自造格式，未按真实平台事件 schema 过滤。
 - 建议：〔代码，S〕非消息类事件直接 200 ack 但不入库（记录 debug 日志）；与 R-06 的入口校验同批。
 - 状态：⏳（建议并入 R-06 派工）。
@@ -386,7 +388,7 @@ README 顶部（前 60 行内）建议顺序越靠前越好：
 #### R-26 [P2][B] 代理 / SSL 拦截 / 时钟偏差：真实模式整体不可用且提示有限
 - 触发：公司/校园网强制代理、杀毒软件 HTTPS 中间人、系统时间偏差 >1h。
 - 用户看到：fetch/IMAP/SMTP 全部 `certificate`/`ECONNREFUSED`/`verify failed`；doctor 有代理与网络文案，但服务本身不读 `HTTP(S)_PROXY`；回调验签 401 只有 `verify failed`。
-- 现状：`connectors/real.ts:18-53` 用内置 fetch；`imapClient.ts/smtpClient.ts` 用 `node:tls`（默认校验证书）；`dingtalk.ts:76`、`wecom.ts:27/115` 时间窗；README 未写"不读代理"。
+- 现状：`connectors/real.ts:18-53` 用内置 fetch；`imapClient.ts/smtpClient.ts` 用 `node:tls`（默认校验证书）；`dingtalk.ts:76`、`wechat.ts:27/115` 时间窗；README 未写"不读代理"。
 - 根因：Node 内置 fetch/tls 不自动继承系统代理配置；时间窗错误未给出具体原因。
 - 建议：〔文档，S〕README/QUICKSTART 写"本服务不读取 HTTP(S)_PROXY，代理环境请设置系统级透明代理或直连"；验签失败日志补充"检查本机时间"。
 - 状态：📄 文档兜底（接受）。
@@ -418,7 +420,7 @@ README 顶部（前 60 行内）建议顺序越靠前越好：
 ### P3（2 条：可接受/仅体验瑕疵）
 
 #### R-30 [P3][C/E] 体验小项合集：发送方显示 ID、"重新生成"无效果、待办页文案写"三平台"
-- 现状：飞书/企微的 `sender.name` 直接用 ID（`feishu.ts:46`、`wecom.ts:133`），详情页显示一串 open_id/userid；「AI 建议 → 重新生成」在真实后端模式也只弹"Mock 模式下由关键词规则生成"（`AiSuggestion.tsx:49-52`），点了没变化；待办页文案写"从三平台消息中识别"（`TodosPage.tsx:30`），实际是四类数据源。
+- 现状：飞书/微信的 `sender.name` 直接用 ID（`feishu.ts:46`、`wechat.ts:133`），详情页显示一串 open_id/userid；「AI 建议 → 重新生成」在真实后端模式也只弹"Mock 模式下由关键词规则生成"（`AiSuggestion.tsx:49-52`），点了没变化；待办页文案写"从三平台消息中识别"（`TodosPage.tsx:30`），实际是四类数据源。
 - 根因：小文案/展示未随四平台扩展开关更新。
 - 建议：〔代码+文档，S〕飞书取 `sender.name` 兜底 ID；按钮文案改"Mock 规则（不可重新生成）"或隐藏；待办页改"四类数据源"。
 - 状态：🟡 部分修复（2026-11-13）：「重新生成」已接真接口 `POST /api/messages/:id/reanalyze`，真实重跑当前 LLM 配置、写闭环日志、更新消息并把「为何仍是规则兜底」的原因回传前端，按钮带 loading；同时 AI 来源标签改为按实际生效厂商动态标注。发送方显示 ID / 待办页「三平台」文案两项仍待处理。
@@ -428,10 +430,10 @@ README 顶部（前 60 行内）建议顺序越靠前越好：
 - 建议：〔接受〕演示/单机场景不修；README 保留说明即可（已覆盖）。
 - 状态：✅ 接受。
 
-#### R-32 [P1][A/C] 群消息聚合预期落空：钉钉/企微只推「@机器人」的群消息
+#### R-32 [P1][A/C] 群消息聚合预期落空：钉钉/微信只推「@机器人」的群消息
 - 触发：用户把机器人拉进群，期望像"消息聚合器"一样接住群里所有聊天；实际普通群消息一条都收不到。
 - 用户看到：单聊正常，群里也 @ 了机器人却没反应；或者干脆没 @，然后判定"接入失败"。
-- 现状：钉钉 Stream `TOPIC_ROBOT` 只投递单聊与群内 @ 消息（平台规则，非代码缺陷）；企业微信同理（回调只有 @ 消息）。代码侧群会话已支持：`connectors/dingtalk.ts` 解析 `conversationType`（兼容字符串/数字）与 `conversationTitle`，群回复走 `robot/groupMessages/send`；`stream/dingtalkStream.ts` 每条入站事件打印「`[stream] 收到钉钉消息：群聊「群名」…`」，有无日志即可判定"平台没推 vs 我们漏了"；详情页「会话」显示「群聊「群名」· 回复会发回该群」。
+- 现状：钉钉 Stream `TOPIC_ROBOT` 只投递单聊与群内 @ 消息（平台规则，非代码缺陷）；微信同理（回调只有 @ 消息）。代码侧群会话已支持：`connectors/dingtalk.ts` 解析 `conversationType`（兼容字符串/数字）与 `conversationTitle`，群回复走 `robot/groupMessages/send`；`stream/dingtalkStream.ts` 每条入站事件打印「`[stream] 收到钉钉消息：群聊「群名」…`」，有无日志即可判定"平台没推 vs 我们漏了"；详情页「会话」显示「群聊「群名」· 回复会发回该群」。
 - 根因：平台对机器人只开放「被 @」的群消息，全量群消息属于企业认证的会话存档能力，个人/学生租户不可用。
 - 建议：〔文档+文案，S〕README「已知限制」与 quickstart 卡点表写明边界，演示话术不承诺全量群消息；群聊演示必须 @机器人；若 @ 后仍无日志 → 按 quickstart 检查机器人归属/发布版本/Stream 模式。
 - 状态：📄 文档已兜底 + 🧪 入站日志/群会话展示与单测已落。
@@ -466,7 +468,7 @@ README 顶部（前 60 行内）建议顺序越靠前越好：
 5. **邮箱嵌套 multipart 正文**（R-04，🧪 已落代码）——真实可用链路上的数据错误。
 
 **可以本轮只补文档/接受**：Docker/PG/Redis/LLM/OCR（§2 G1–G5）、多实例、代理环境、旧证
-据；企微 60020 属平台/网络侧，代码无解，必须写成"现实说明 + 替代演示路径"；飞书 21001 本机租户已于 2026-11-12 解除、真实收发已实测通过（其他租户仍可能），演示可按真实链路。
+据；微信 RPA 依赖本机环境，必须写成"前提准备 + 替代演示路径"；飞书 21001 本机租户已于 2026-11-12 解除、真实收发已实测通过（其他租户仍可能），演示可按真实链路。
 
 ### 7.2 验收方式（不需要跑全量 e2e/doctor）
 
@@ -563,7 +565,7 @@ README 顶部（前 60 行内）建议顺序越靠前越好：
 
 | 角度 | 覆盖风险 |
 |---|---|
-| A 用户旅程（演示/换号/部分配置/真实收发/可信 IP/交付/重启换网/多账号/中文附件） | R-01、R-02、R-03、R-18、R-20、R-21、R-26、R-31 |
+| A 用户旅程（演示/换号/部分配置/真实收发/微信 RPA/交付/重启换网/多账号/中文附件） | R-01、R-02、R-03、R-18、R-20、R-21、R-26、R-31 |
 | B 环境与安装（Node/pnpm、corepack、中文路径、端口、.env/BOM/CRLF/双文件/代理、时钟、IPv6、只读盘） | R-05、R-09、R-15、R-16、R-25、R-26 |
 | C 数据与协议（空 webhook、幂等、重复推送、IMAP 水位/目录/MIME、SMTP、长消息、会话形态、token/限流、WS、时区） | R-04、R-06、R-07、R-11、R-12、R-14、R-22、R-23、R-24、R-27、R-30 |
 | D 安全与合规（dev-token、验签 strict、日志/报告/截图、`.env` 误提交、CORS、WS token、health 暴露） | R-01、R-06、R-10、R-19 |
@@ -574,7 +576,7 @@ README 顶部（前 60 行内）建议顺序越靠前越好：
 
 - 启动与装配：`packages/server/src/index.ts:57-74`（listen / Stream / MailPoller）、`app.ts:12-21`（CORS、body limit、路由顺序）
 - 配置解析：`config.ts:15-16/34-36/85`、`config/runtime.ts:88-118/247-354/555-585`
-- 接入：`routes/webhook.ts:32-96`、`connectors/{feishu,dingtalk,wecom}.ts`、`connectors/mail/{mail,mime,imapClient,smtpClient}.ts`、`stream/{mailPoller,dingtalkStream}.ts`
+- 接入：`routes/webhook.ts:32-96`、`connectors/{feishu,dingtalk,wechat}.ts`、`connectors/mail/{mail,mime,imapClient,smtpClient}.ts`、`stream/{mailPoller,dingtalkStream}.ts`
 - 中枢：`services/message.ts:43-103/115-193`、`services/sync.ts:9-18`、`services/rateLimiter.ts:24-39`、`core/idempotency.ts`
 - 存储：`db/repository.ts:30-83`、`db/migrations/001_init.sql`
 - 鉴权/实时：`middlewares/auth.ts:8-21`、`ws.ts:16-36`

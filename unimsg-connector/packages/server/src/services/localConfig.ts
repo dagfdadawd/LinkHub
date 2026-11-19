@@ -47,12 +47,8 @@ export interface LocalConfig {
       aesToken?: string;
       aesKey?: string;
     };
-    wecom?: {
-      corpId?: string;
-      agentId?: string;
-      secret?: string;
-      token?: string;
-      aesKey?: string;
+    wechat?: {
+      bridgeUrl?: string;
     };
   };
   llm?: {
@@ -64,7 +60,7 @@ export interface LocalConfig {
   modes?: {
     feishu?: LocalModePolicy;
     dingtalk?: LocalModePolicy;
-    wecom?: LocalModePolicy;
+    wechat?: LocalModePolicy;
     mail?: LocalModePolicy;
   };
   updatedAt?: string;
@@ -80,13 +76,13 @@ export interface LocalConfigPatch {
   platforms?: {
     feishu?: Partial<Record<keyof NonNullable<LocalConfig['platforms']>['feishu'], string | boolean | null>>;
     dingtalk?: Partial<Record<keyof NonNullable<LocalConfig['platforms']>['dingtalk'], string | boolean | null>>;
-    wecom?: Partial<Record<keyof NonNullable<LocalConfig['platforms']>['wecom'], string | boolean | null>>;
+    wechat?: Partial<Record<keyof NonNullable<LocalConfig['platforms']>['wechat'], string | boolean | null>>;
   };
   llm?: Partial<Record<keyof NonNullable<LocalConfig['llm']>, string | null>>;
   modes?: {
     feishu?: LocalModePolicy | null;
     dingtalk?: LocalModePolicy | null;
-    wecom?: LocalModePolicy | null;
+    wechat?: LocalModePolicy | null;
     mail?: LocalModePolicy | null;
   };
 }
@@ -126,12 +122,8 @@ export const FIELD_SPECS: readonly FieldSpec[] = [
   { path: 'platforms.dingtalk.stream', env: 'DINGTALK_STREAM', kind: 'bool', label: '钉钉 Stream 长连接' },
   { path: 'platforms.dingtalk.aesToken', env: 'DINGTALK_AES_TOKEN', kind: 'secret', maxLength: 512, label: '钉钉 AES Token' },
   { path: 'platforms.dingtalk.aesKey', env: 'DINGTALK_AES_KEY', kind: 'secret', maxLength: 512, label: '钉钉 AES Key' },
-  // 企业微信
-  { path: 'platforms.wecom.corpId', env: 'WECOM_CORP_ID', kind: 'string', maxLength: 128, label: '企业微信 Corp ID' },
-  { path: 'platforms.wecom.agentId', env: 'WECOM_AGENT_ID', kind: 'string', maxLength: 64, label: '企业微信 Agent ID' },
-  { path: 'platforms.wecom.secret', env: 'WECOM_SECRET', kind: 'secret', maxLength: 512, label: '企业微信 Secret' },
-  { path: 'platforms.wecom.token', env: 'WECOM_TOKEN', kind: 'secret', maxLength: 512, label: '企业微信 Token' },
-  { path: 'platforms.wecom.aesKey', env: 'WECOM_AES_KEY', kind: 'secret', maxLength: 512, label: '企业微信 EncodingAESKey' },
+  // 微信（RPA 本地桥）
+  { path: 'platforms.wechat.bridgeUrl', env: 'WECHAT_BRIDGE_URL', kind: 'string', maxLength: 256, label: '微信 RPA 桥地址' },
   // 身份策略
   { path: 'identity.feishu', env: 'FEISHU_IDENTITY', kind: 'identity', label: '飞书收发身份策略' },
   { path: 'identity.dingtalk', env: 'DINGTALK_IDENTITY', kind: 'identity', label: '钉钉收发身份策略' },
@@ -144,7 +136,7 @@ export const FIELD_SPECS: readonly FieldSpec[] = [
   // 运行模式
   { path: 'modes.feishu', env: 'FEISHU_MODE', kind: 'mode', label: '飞书运行模式' },
   { path: 'modes.dingtalk', env: 'DINGTALK_MODE', kind: 'mode', label: '钉钉运行模式' },
-  { path: 'modes.wecom', env: 'WECOM_MODE', kind: 'mode', label: '企业微信运行模式' },
+  { path: 'modes.wechat', env: 'WECHAT_MODE', kind: 'mode', label: '微信运行模式' },
   { path: 'modes.mail', env: 'MAIL_MODE', kind: 'mode', label: '邮箱运行模式' },
   // LLM（可选）
   { path: 'llm.provider', env: 'LLM_PROVIDER', kind: 'string', maxLength: 64, label: 'AI 模型服务商' },
@@ -392,7 +384,7 @@ export interface MaskedPlatformView {
 }
 
 function platformView(
-  prefix: 'platforms.feishu' | 'platforms.dingtalk' | 'platforms.wecom',
+  prefix: 'platforms.feishu' | 'platforms.dingtalk' | 'platforms.wechat',
   required: string[],
   config: LocalConfig,
   env: NodeJS.ProcessEnv,
@@ -421,7 +413,7 @@ export interface AppConfigView {
   platforms: {
     feishu: MaskedPlatformView & { redirectHint?: string };
     dingtalk: MaskedPlatformView;
-    wecom: MaskedPlatformView;
+    wechat: MaskedPlatformView;
   };
   /** 本地配置文件存在的时间（用于「已保存，需重启」提示） */
   updatedAt?: string;
@@ -473,7 +465,7 @@ export function buildAppConfigView(args: BuildAppConfigViewArgs): AppConfigView 
     platforms: {
       feishu: platformView('platforms.feishu', ['appId', 'appSecret'], config, env),
       dingtalk: platformView('platforms.dingtalk', ['clientId', 'clientSecret'], config, env),
-      wecom: platformView('platforms.wecom', ['corpId', 'agentId', 'secret'], config, env),
+      wechat: platformView('platforms.wechat', ['bridgeUrl'], config, env),
     },
     ...(config.updatedAt ? { updatedAt: config.updatedAt } : {}),
     restartRequired,

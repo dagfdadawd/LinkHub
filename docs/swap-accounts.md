@@ -1,6 +1,6 @@
 # LinkHub 换账号指南（swap-accounts）
 
-> 目标：评审 / 同学拿到仓库后，**只改 `unimsg-connector/.env`，不改一行代码**，就能用自己的飞书、钉钉、企业微信、邮箱账号把真实收发跑起来。
+> 目标：评审 / 同学拿到仓库后，**只改 `unimsg-connector/.env`，不改一行代码**，就能用自己的飞书、钉钉、微信、邮箱账号把真实收发跑起来。
 >
 > 本文所有凭据一律用占位符表示（`xxxxxxxx` / `you@example.com` 形式），请勿把真实密钥、授权码、邮箱地址提交进 git 或发到群里。
 
@@ -9,9 +9,9 @@
 - 换账号的 3 步快速路径与模式判定（为什么填了凭据还是 Mock）
 - 四个平台各自的 checklist：**后台点什么 → 填哪些 env → 验证命令 → 常见报错**
 - **本人账号收发**（飞书 OAuth / 钉钉官方 CLI `dws`）的配置、验证、平台限制与回退（完整版见 [personal-identity.md](personal-identity.md)）
-- errcode 排错总表（21001 / 10014 / 60020 / 40013 / 535 / 550 / Unsafe Login / ENOTFOUND / ETIMEDOUT …）
+- errcode 排错总表（21001 / 10014 / 535 / 550 / Unsafe Login / ENOTFOUND / ETIMEDOUT …）
 - 邮箱 provider 预设表、端口与加密方式表、多账号写法
-- 「企业可信 IP」与飞书企业认证的现实说明
+- 飞书企业认证（21001）的现实说明
 - 安全与回滚
 
 ---
@@ -24,7 +24,7 @@
 4. **Mock 是合法状态，但一定标注**：没配凭据或配得不全时，`auto` 会自动回退本地模拟；回写消息里会写 `delivery.mode=mock`，闭环日志与前端都显示「模拟发送」，**不会假装真实平台已收到**。
 5. **命令写法**：在 `unimsg-connector/` 目录下用 `pnpm run doctor`；**不要写 `pnpm doctor`**——pnpm 9 会命中同名内置命令（实测无输出、退出码 0），看起来像成功但本项目自检根本没运行。在脚本 / CI 里推荐全路径：`pnpm --filter @unimsg/server run doctor`。
 
-> 更多架构、API、测试说明见根目录 [README.md](../README.md)。
+> 更多架构、API、测试说明见 [reference.md](reference.md)；项目总览见根目录 [README.md](../README.md)。
 
 ---
 
@@ -32,16 +32,16 @@
 
 | 场景 | 推荐方式 | 怎么做 | 生效方式 |
 |---|---|---|---|
-| 个人版 / 白号：填平台应用凭据、切身份模式 | **图形化「平台应用配置」** | 「连接账号」→ 对应卡片 **「填写飞书应用凭据 / 填写钉钉应用凭据 / 填写企业微信凭据」**，或「平台账号」页右上 **「平台应用配置」**；钉钉「仅用本人身份」开关 | **应用凭据 / 模式：保存后必须重启 LinkHub**；**钉钉「仅用本人身份」：热应用、无需重启** |
+| 个人版 / 白号：填平台应用凭据、切身份模式 | **图形化「平台应用配置」** | 「连接账号」→ 对应卡片 **「填写飞书应用凭据 / 填写钉钉应用凭据 / 填写微信凭据」**，或「平台账号」页右上 **「平台应用配置」**；钉钉「仅用本人身份」开关 | **应用凭据 / 模式：保存后必须重启 LinkHub**；**钉钉「仅用本人身份」：热应用、无需重启** |
 | 个人版：添加 / 换邮箱 | **图形化授权中心** | 「连接账号」→ 邮箱卡片 **「添加邮箱账号」** → 测试连接 → 保存账号 | **热加载、无需重启**；已验证账号自动真实收信 |
 | 个人版：连接钉钉 / 飞书本人身份 | **图形化授权中心** | 钉钉「用钉钉本人账号登录（推荐，无需机器人应用）」；飞书「连接飞书本人账号」 | **登录成功后热应用、无需重启**（钉钉：点按钮只打开登录弹窗，未授权/取消不改配置；成功后自动启用本人身份；注销时自动启用的自动回退） |
-| 批量 / CI / 运维：换机器人凭据、企微应用 | **直接改 `.env`** | 按 §1 的 3 步复制模板 → 只填目标平台 → `pnpm run doctor` → 重启 | **必须重启后端**（后端只在启动时读 `.env`） |
+| 批量 / CI / 运维：换机器人凭据、微信应用 | **直接改 `.env`** | 按 §1 的 3 步复制模板 → 只填目标平台 → `pnpm run doctor` → 重启 | **必须重启后端**（后端只在启动时读 `.env`） |
 | 已用 `.env` 配好，想改其中之一 | 二者皆可 | 页面不能覆盖 `.env` 显式写死的键（会提示「部分配置来自 .env，未被本次保存覆盖」）；要改就改 `.env` 并重启 | 改完重启 |
 
 - **配置来源与优先级**：`.env`（显式，**优先级最高**）→ 页面保存的本地配置 `linkhub-config.json`（有 `DATA_DIR` 时 `DATA_DIR/linkhub-config.json`，否则 `unimsg-connector/.linkhub-config.json`；已 gitignore、非 Windows chmod 600、**secret 只回末 4 位、绝不下发明文**）。
-- **白号口径**：2 项可自助（邮箱、钉钉）+ 2 项需管理员（飞书、企微），不是四个平台都需要管理员。
+- **白号口径**：2 项可自助（邮箱、钉钉）+ 1 项需管理员（飞书），不是四个平台都需要管理员。
 - **同一邮箱 key 的优先级**：`.env` 与页面添加的本地账号同时存在时，**本地导入覆盖 `.env` 并 warn**（以最近一次页面操作为准）；授权中心列表会标来源「来自 .env」/「本地」。
-- 「平台应用配置」弹窗按 **飞书 / 钉钉 / 企业微信 / AI 模型（可选）** 分 Tab，字段来源标「来自 .env（不可覆盖）/ 本地配置 / 已配置 / 未配置」；已有 secret 只显示「已配置」、不回显。授权中心 / 应用配置弹窗**不显示任何 token / 授权码明文**；管理员清单可整段复制发给管理员（见 [personal-identity.md §3.4](personal-identity.md#34-管理员事项汇总授权中心可一键复制)）。
+- 「平台应用配置」弹窗按 **飞书 / 钉钉 / 微信 / AI 模型（可选）** 分 Tab，字段来源标「来自 .env（不可覆盖）/ 本地配置 / 已配置 / 未配置」；已有 secret 只显示「已配置」、不回显。授权中心 / 应用配置弹窗**不显示任何 token / 授权码明文**；管理员清单可整段复制发给管理员（见 [personal-identity.md §3.4](personal-identity.md#34-管理员事项汇总授权中心可一键复制)）。
 ## 1. 换账号 3 步
 
 ```bash
@@ -51,7 +51,7 @@ cd unimsg-connector
 cp .env.example .env              # Windows PowerShell：Copy-Item .env.example .env
 
 # 2) 只填“目标平台”那一段，其他平台留空即可（留空 = auto 回退 Mock）
-#    飞书 / 钉钉 / 企业微信 / 邮箱的变量见下面各平台 checklist
+#    飞书 / 钉钉 / 微信 / 邮箱的变量见下面各平台 checklist
 
 # 3) 自检（只读，不发任何业务消息），通过后再启动
 pnpm run doctor
@@ -63,7 +63,7 @@ pnpm --filter @unimsg/server start
 ```bash
 pnpm run doctor --platform=feishu      # 只查飞书
 pnpm run doctor --platform=dingtalk    # 只查钉钉
-pnpm run doctor --platform=wecom       # 只查企业微信
+pnpm run doctor --platform=wechat       # 只查微信
 pnpm run doctor --platform=mail        # 只查邮箱
 pnpm run doctor --platform=feishu,mail # 多个平台用逗号
 ```
@@ -76,7 +76,7 @@ pnpm --filter @unimsg/server run --silent doctor --json
 
 > `--json` 场景必须加 `--silent` 且用**全路径**：`pnpm run doctor --json` 会把 pnpm 启动横幅写进 stdout，破坏 JSON。
 
-「换账号」可以只换一个平台，例如只把钉钉换成自己的应用：改 `DINGTALK_*` 四个变量 → `pnpm run doctor --platform=dingtalk` → 重启后端。飞书 / 企微 / 邮箱的配置不受影响。
+「换账号」可以只换一个平台，例如只把钉钉换成自己的应用：改 `DINGTALK_*` 四个变量 → `pnpm run doctor --platform=dingtalk` → 重启后端。飞书 / 微信 / 邮箱的配置不受影响。
 
 ---
 
@@ -88,7 +88,7 @@ pnpm --filter @unimsg/server run --silent doctor --json
 | `real` | 强制真实接口 | 发送时显式报错并列出缺失变量，**绝不静默假成功** |
 | `mock` | 强制本地模拟（填了凭据也不外呼） | 不适用，适合离线演示 |
 
-- 变量名：`FEISHU_MODE` / `DINGTALK_MODE` / `WECOM_MODE` / `MAIL_MODE`。
+- 变量名：`FEISHU_MODE` / `DINGTALK_MODE` / `WECHAT_MODE` / `MAIL_MODE`。
 - 旧全局 `MOCK` 已废弃：只在没写 `*_MODE` 时作为默认策略（`true→mock`、`false→real`），启动日志和 doctor 都会警告；请删除它。
 - `auto` 下邮箱有特例：`MAIL_ENABLED=false`（关轮询）时按 Mock 处理；需要「只发不收」请显式 `MAIL_MODE=real`。
 - 每个平台解析出的 `policy / mode / configured / canSend / canReceive / missing / warnings / reason` 在三处一致：`/api/accounts`、启动日志、`doctor`。
@@ -96,7 +96,7 @@ pnpm --filter @unimsg/server run --silent doctor --json
 
 ```bash
 curl http://127.0.0.1:3001/api/health
-# 看 modes：{"feishu":"real","dingtalk":"mock","wecom":"mock","mail":"mock"}
+# 看 modes：{"feishu":"real","dingtalk":"mock","wechat":"mock","mail":"mock"}
 curl -H "Authorization: Bearer dev-token" http://127.0.0.1:3001/api/accounts
 # 看每个平台的 mode / policy / missing / reason；邮箱另有 accounts[] 明细（地址脱敏）
 ```
@@ -423,87 +423,136 @@ curl -H "Authorization: Bearer dev-token" http://127.0.0.1:3001/api/accounts
 
 ---
 
-## 5. 企业微信 checklist
+## 5. 微信 checklist（RPA 通道）
 
-### 5.1 后台点什么
+> 微信**个人版没有官方收发 API**。本项目按赛题 Supplemental 允许的 RPA 路径接入：本机跑一个独立 Python 桥（`scripts/wechat-rpa/rpa_bridge.py`），用键鼠模拟操作微信桌面端。「收」= 桥读窗口新消息 → POST 本机 webhook；「发」= 后端调桥 `/send` → 桥模拟粘贴回车。
+>
+> 因此微信**不需要任何平台凭据**（没有 corpId / Secret / Token / 可信 IP / 回调这些企业级概念），只有「桥地址」一个配置。
 
-在 [企业微信管理后台](https://work.weixin.qq.com/)：
+### 5.1 前提准备（需要你在本机做）
 
-1. **我的企业 → 企业信息**：复制 **企业ID** → `WECOM_CORP_ID`。
-2. **应用管理 → 自建 → 创建应用**：填名称 / logo / 可见范围。
-3. **应用详情页**：复制 **AgentId** → `WECOM_AGENT_ID`；点 **Secret 的「眼睛」图标**复制 Secret → `WECOM_SECRET`（**不要点重置**，重置后旧 Secret 立即失效）。
-4. 该应用 → **接收消息 → 设置 API 接收**：
-   - URL：`https://<公网域名>/api/webhook/wecom`
-   - 随机生成 **Token** → `WECOM_TOKEN`
-   - 随机生成 **EncodingAESKey**（43 位）→ `WECOM_AES_KEY`
-5. **应用详情 → 企业可信 IP**：把**发信出口公网 IP** 加进去。不知道出口 IP 时：
-   - 先跑 `pnpm run doctor --platform=wecom`，若返回 60020，doctor 会直接打印当前出口 IP；
-   - 或访问 `https://ifconfig.me/ip` 查看。
-6. 确认应用「可见范围」包含需要收发的成员。
+1. **Windows 上登录微信 PC 桌面端**并保持打开。
 
-> 企业微信回调 URL 必须公网可达，且 GET 握手要通过：服务会校验 SHA1 签名并解密 `echostr` 后回明文。**配置 Token / AES Key 之前，URL 验证不会通过。**
+   > **版本决定「怎么收」**：
+   > - **3.9.x**（`WeChat.exe`，窗口类 `WeChatMainWndForPC`）：暴露完整控件树，可以**自动轮询**接收，不需要你点任何按钮。
+   > - **4.x**（`Weixin.exe`，Qt 5 自绘）：实测 4.2.0.53 的可访问性树只有 2 个空 `Pane`、渲染子窗口 `childCount=0`，UIA 与 MSAA 都拿不到控件（`Weixin.dll` 里连 `QWindowsAccessib` 都没有，编译期就裁掉了）。**自动轮询不可用，但可以「按需拉取」**：在收件箱选微信渠道 →「从微信拉取当前会话」，桥会把微信置前、拖选复制、解析原文入库。
+   >
+   > 桥启动时自动识别版本，`/health` 的 `client.kind` 会写明 `wechat3` / `weixin4` 与原因。
+2. 安装依赖：`python -m pip install pyautogui pyperclip pywin32 uiautomation pillow`
+   （`uiautomation` 只对 3.9.x 的**自动轮询**有用；`pillow` 用于截图。4.x 的按需拉取只要 `pyautogui` + `pyperclip` + `pywin32`。）
+3. （仅真实收发需要）`.env` 里设 `WECHAT_MODE=real`。默认 `mock` 只演示、不碰真实微信。
+
+> 环境检查：`python --version` 应 ≥ 3.9；`pip list | findstr uiautomation` 能看到包即装好。
 
 ### 5.2 填哪些 env
 
 ```dotenv
-WECOM_MODE=auto
-WECOM_CORP_ID=wwxxxxxxxxxxxxxxxx
-WECOM_AGENT_ID=1000002
-WECOM_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-WECOM_TOKEN=xxxxxxxxxxxxxxxx
-WECOM_AES_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx   # 43 位
-# WECOM_BASE_URL=https://qyapi.weixin.qq.com                  # 一般不用改
+WECHAT_MODE=real                                  # 默认 mock；real 才操作真实微信
+WECHAT_BRIDGE_URL=http://127.0.0.1:8787            # 桥地址，一般不用改（改了桥端口才同步）
 ```
 
-### 5.3 验证命令
+> `WECHAT_MODE=real` 只代表「配置上允许真实操作」，**不等于桥已就绪**：后端会实际请求桥的
+> `/health`（1.2s 超时、5s 缓存），确认它真的在 `rpa` 模式、并且接收能力可用。
+> 桥在 mock、没启动、或读不到微信窗口时，「连接账号」页不会报 ready，发送也会被如实拒绝。
+
+### 5.3 启动桥并验证
+
+**第一步：启动 RPA 桥（另开一个终端）**
 
 ```bash
-pnpm run doctor --platform=wecom
+cd unimsg-connector/scripts/wechat-rpa
+python rpa_bridge.py --mode mock        # 零依赖自测（不碰真实微信）
+# 确认链路通：另开终端注入一条模拟消息，LinkHub 收件箱应出现
+curl -X POST http://127.0.0.1:8787/mock/inject -H "Content-Type: application/json" \
+  -d '{"from":"张三","text":"明天交周报","conversation":"项目群"}'
 ```
 
-期望：`[PASS] 企业微信 access_token（应用凭据校验）`，退出码 0。若返回 **60020**，doctor 会打印当前出口公网 IP 与「加入企业可信 IP」的操作步骤。
+**第二步：切真实模式**
 
-启动后端后，日志会提示当前能力：
-
+```bash
+python rpa_bridge.py --mode rpa         # 真实操作微信桌面端（需先装依赖 + 登录微信）
+# 不想被抢焦点：--no-switch（只读当前打开的会话，只能收这一个会话）
+# 没有未读徽标的会话也要扫：--scan-all
+# 4.x 建议固定自己的昵称，用来过滤「自己发的消息」：
+python rpa_bridge.py --mode rpa --self-name 你的微信昵称
 ```
-[unimsg] 运行模式: … | 企业微信=real(auto) 收✓ 发✓
+
+> **微信 4.x 用「按需拉取」接收**（自动轮询在 4.x 上注定读到 0 条，桥会直接关掉轮询）：
+>
+> 1. 先在微信里**打开要拉的会话**（4.x 没有控件树，外部无法替你切换会话）；
+> 2. LinkHub 收件箱 → 渠道选「微信」→ 点 **「从微信拉取当前会话」**；
+> 3. 填会话名（必须和微信里显示的一致）+ 你的昵称（可选，过滤自己发的话），点「开始拉取」。
+>
+> 桥会：置前微信 → 在消息区拖选（逐个试最可能有气泡的起点）→ `Ctrl+C` → 按「昵称/时间/正文」解析 → 去重 → 入库，
+> 结束后还原你的剪贴板和焦点。文件消息会按名字到 `msg/file/<YYYY-MM>/` 找工作副本，找到就能在 LinkHub 里下载。
+>
+> 命令行等价写法：
+>
+> ```bash
+> curl -X POST http://127.0.0.1:8787/pull -H "Content-Type: application/json" \
+>   -d '{"conversation":"项目群","selfName":"我的昵称"}'
+> ```
+>
+> 边界（会原样显示在界面的返回里）：只覆盖当前会话 + 可视区，执行期间会短暂抢前台。
+
+**第三步：自检与回写验证**
+
+```bash
+pnpm run doctor --platform=wechat
 ```
 
-拿到真实消息后再验证回写：
+期望：两条结论——`微信 RPA 桥（发送）` PASS（桥在 rpa 模式）；`微信 RPA 桥（接收）` PASS
+（`/health` 报 `receive.supported=true`）。若桥没起 / 还在 mock，会直接 FAIL 并给出启动命令，
+不会再出现「桥没动却报就绪」。退出码随 FAIL 变化。
+
+拿到真实消息后验证回写：
 
 ```bash
 curl -X POST -H "Authorization: Bearer dev-token" -H "Content-Type: application/json" \
   -d '{"text":"收到"}' http://127.0.0.1:3001/api/messages/<traceId>/reply
 curl -H "Authorization: Bearer dev-token" http://127.0.0.1:3001/api/messages/<traceId>
-# 看 delivery.mode 是否为 real、status 是否到 synced
+# 看 delivery.mode 是否为 real、platformReply 是否以 rpa: 开头、status 是否到 synced
 ```
 
-### 5.4 常见报错
+### 5.4 常见问题
 
 | 现象 | 原因 | 处理 |
 |---|---|---|
-| `60020 not allow to access from your ip` | 发信出口 IP 不在「企业可信 IP」 | 把 doctor 显示的出口 IP 加入应用「企业可信 IP」，保存后等约 1 分钟再重跑；换网络 / 换机器后出口 IP 会变，需要重新加 |
-| `40013 invalid corpid` | `WECOM_CORP_ID` 错误 | 用「我的企业 → 企业信息」里的企业ID，别和 AppID / AgentId 搞混 |
-| `40001 invalid credential` | `WECOM_SECRET` 错误或已重置 | 应用详情页「眼睛」重新复制 Secret，别点重置 |
-| `40014` / `41001` | access_token 无效 / 缺失 | 核对 `WECOM_BASE_URL` 与代理设置；doctor 每次都会换新 token，正常不应出现 |
-| `60011` | 应用无权限 / 不在可见范围 | 把成员 / 部门加入应用可见范围 |
-| 设置 API 接收时提示「URL 验证失败」 | 公网不可达 / Token / AESKey 不一致 | 确认 URL 公网可访问、Token 与 EncodingAESKey 完整复制（43 位）并重启 |
-| 收到回调但 401 | 签名校验失败 | 后台 Token / EncodingAESKey 与 `.env` 对齐；确认服务器时间正确 |
-| 能发不能收 | 缺 `WECOM_TOKEN` / `WECOM_AES_KEY` | 看 `/api/accounts` 的 `missing` / `warnings`，补齐后重启 |
+| 发送报「微信 RPA 发送失败：请确认 RPA 桥已启动」 | 桥没启动 / 端口不对 | 先启动 `rpa_bridge.py`；核对 `WECHAT_BRIDGE_URL` 与桥的 `--port` 一致 |
+| 发送报「RPA 桥当前是 mock 模式，本次没有真实操作微信」 | 桥是 `--mode mock` 起的 | 用 `--mode rpa` 重启桥；只想演示就把 `WECHAT_MODE` 设为 `mock`，界面会标「模拟发送」 |
+| 发送成功但对方没收到 | 微信没登录 / 窗口被遮挡 / 联系人名对不上 | 确认微信桌面端已登录并前台可见；「会话」填的是**微信里的好友昵称或群名**（RPA 按名称定位） |
+| 启动报「RPA 态缺少依赖」 | 没装 pyautogui 等 | `python -m pip install pyautogui pyperclip pywin32 uiautomation` |
+| 收不到新消息（连接页显示「真实接收还没就绪」） | 微信是 4.x（自绘无控件树，自动轮询不可用）、没装 `uiautomation`、或微信没打开 | `curl http://127.0.0.1:8787/health` 看 `client.kind`：`weixin4` 就改用「按需拉取」（收件箱 → 微信 → 从微信拉取当前会话）；`wechat3` 则 `pip install uiautomation` 后 `--mode rpa` 重启 |
+| 点「从微信拉取」报「拖选后剪贴板没有变化」 | 当前会话没消息 / 微信窗口被挡住 / 窗口布局异常 | 先在微信里确认这个会话有可见消息并让窗口露出来；桥会换 7 个起点重试，仍失败会如实报错而不是返回空结果 |
+| 拉取报「无法把微信窗口切到前台」 | Windows 前台锁定，后台进程抢不到焦点 | 手动点一下微信窗口，再点一次拉取 |
+| 只能收到当前会话 | 默认只切「有未读徽标」的会话；或启了 `--no-switch` | 去掉 `--no-switch`；必要时加 `--scan-all`（会更频繁切换会话） |
+| 中文日志乱码 | Windows 控制台 GBK | 桥启动时已切 UTF-8；仍乱码则设 `PYTHONIOENCODING=utf-8` |
+| 想紧急停止 | 键盘鼠标被自动操作 | 把鼠标猛甩到屏幕左上角（pyautogui FAILSAFE），或 Ctrl+C 停桥 |
 
-### 5.5 现实说明：企业可信 IP
+### 5.5 现实说明：能不能收，先看微信版本
 
-`60020` 的本质是**出口 IP 白名单**，与账号密码无关：
+桥的 `read_new_messages()` 已用 UI Automation 实现（查会话列表未读徽标 → 切会话 → 读消息列表 → 按气泡左右区分收发 → 稳定指纹去重 → 转发 webhook），**不再是空钩子**。它能不能真读到东西，取决于微信客户端是否暴露控件树：
 
-- 企业微信要求的不是「服务器内网 IP」，而是请求发到腾讯时看到的**公网出口 IP**；
-- 家用宽带 / 动态 IP 会变化，今天加白明天可能又 60020；
-- **电脑重启一般不会改变出口 IP**：电脑重启只是重新拿内网 DHCP 地址，公网出口在路由器 / 校园网或公司出口网关 / 运营商侧；本次实测 2026-11-03 → 11-04 出口 IP 保持不变。但下面这些情况会变：重启了路由器 / 光猫、校园网或公司网络重新认证、运营商重新分配地址、切换 Wi-Fi / 手机热点、开启或切换 VPN / 代理；
-- 正式部署建议用云服务器弹性公网 IP / 固定专线出口，把该 IP 固定加入可信 IP；
-- 走公司代理 / VPN 时，出口 IP 是代理的，需要加代理的 IP；
-- 保存可信 IP 后通常需要约 1 分钟生效，重跑 doctor 确认变 PASS；
-- **演示前先核对**：`pnpm run doctor` 每次都会打印「当前出口公网 IP」，与后台可信 IP 不一致就更新（本功能专为"IP 会不会变"这个问题加的）。
+| 微信版本 | 窗口类名 | 自动轮询 | 按需拉取 |
+|---|---|---|---|
+| 3.9.x | `WeChatMainWndForPC` | ✅ 可读（会话列表/消息列表都是 `ListControl`） | ✅ |
+| 4.x | `Qt51514QWindowIcon` | ❌ 自绘界面，UIA / MSAA 都是空壳 | ✅ 拖选复制（原文零误差） |
 
-> 当前项目状态：企微适配器（SHA1 验签、AES 加解密、XML 解析、GET 握手、`gettoken` → `message/send`）与 19 条单测已完成，`gettoken` 已实测 PASS；真实发送**卡在可信 IP** 这一步。这属于外部部署约束，不需要改代码。
+桥读不到时会在 `/health` 里如实上报 `receive.supported=false` + `receive.reason`，连接页据此显示「真实接收还没就绪」，**不会报 ready**。3.9 内部小版本若改了控件结构，只需调 `WechatUiaReader._lists()` / `_text_of()`，接口与后端链路不用动。
+
+**4.x 的按需拉取**为什么可行：微信的「选中复制」走系统剪贴板这条正规路径，复制出来的是**原文**（没有 OCR 误差）。桥会自动处理三件容易翻车的事：
+
+- 微信**只有按在消息气泡上**才进入选择模式，按在空白处拖选什么都不选 → 桥按「最可能有气泡」的顺序试几个起点；
+- 拉取前要确认**真的置前成功**（Windows 有前台锁定，静默失败会在别的窗口上拖选）→ 用 `AttachThreadInput` 绕开并逐次校验；
+- 消息区右侧有滚动条，贴着右边缘会拖成滚屏、剪贴板不动 → 右侧留足余量。
+
+同时请务必遵守：
+
+- 每条消息桥内已有 300–900ms 随机延迟，**严禁高频群发**；
+- 个人号有**账号风控风险**，只作补充通道，不做 7×24 稳定运行；
+- 微信改版 / 分辨率变化会导致控件定位失效，需要重新适配。
+
+> 当前项目状态：微信连接器（`connectors/wechat.ts`）+ 单测 + 本地 RPA 桥（MOCK/RPA 两态、`/send`、`/pull`、`/mock/inject`、UIA 入站轮询转发）均已完成；3.9.x 可自动接收，4.x 用**按需拉取**（拖选复制原文），两条路都已实测跑通（含附件下载）。
 
 ---
 
@@ -689,12 +738,8 @@ MAIL_WORK_FOLDERS=INBOX,Junk
 | 钉钉 | `40001` / `40014` | accessToken 相关错误 | 核对 `DINGTALK_BASE_URL`；确认应用已发布 |
 | 钉钉 | 机器人无权限 / 收不到消息 | 机器人能力未开、未发布、接收模式不是 Stream | 后台改接收模式 → 发布版本 → `DINGTALK_STREAM=true` → 重启 |
 | 钉钉 | 账号页「未找到 dws」/ 本人身份不可用 | 未装 dws、未登录、组织未开 CLI 访问 | 装 dws + 管理员开 CLI 访问 + `dws auth login`；见 §4.5 |
-| 企微 | `60020` | 出口 IP 不在「企业可信 IP」 | 把 doctor 显示的出口 IP 加白；用稳定公网出口 |
-| 企微 | `40013` | 企业ID 错误 | 用「我的企业 → 企业信息」的企业ID |
-| 企微 | `40001` | Secret 错误 / 已重置 | 应用详情「眼睛」重新复制 |
-| 企微 | `40014` / `41001` | access_token 无效 / 缺失 | 核对 `WECOM_BASE_URL` 与代理 |
-| 企微 | `60011` | 应用无权限 / 不在可见范围 | 调整应用可见范围 |
-| 企微 | URL 验证失败 | 公网不可达，或 Token / EncodingAESKey 不一致 | 核对 URL 公网可达、`WECOM_TOKEN` / `WECOM_AES_KEY` 完整 |
+| 微信 | 发送报「RPA 发送失败」 | 桥未启动 / 微信未登录 / 联系人名对不上 | 启动 `rpa_bridge.py`、登录微信桌面端、会话填微信里的昵称或群名；见 §5.4 |
+| 微信 | 收不到消息 | 微信是 4.x（自绘，无控件树）/ 没装 uiautomation / 主窗口没打开 | `curl 127.0.0.1:8787/health` 看 `client.kind` 与 `receive.reason`；4.x 用「按需拉取」；见 §5.5 |
 | 邮箱 | `Unsafe Login` | 服务商风控 | 用授权码；客户端已发 ID；仍失败换网络 / 联系服务商 |
 | 邮箱 | IMAP 登录失败 / auth failed | 授权码 / IMAP 开关问题 | 重新生成授权码，确认已开启 IMAP |
 | 邮箱 | SMTP `535` / `534` / `530` | 认证失败 | 授权码 / 应用专用密码 / 服务商基础认证限制 |
@@ -737,7 +782,7 @@ A：按顺序查：① 是否显式 `*_MODE=mock`；② `/api/accounts` 的 `mis
 A：消息详情页「回写失败」区域会直接显示 `failureReason`（形如「原因：…」），并提供「重试发送」按钮；完整错误仍在「全链路回放」的闭环日志与死信队列里。收到失败 WebSocket 推送时也会弹失败 toast（带一句可读原因）。
 
 **Q：账号页显示「真实接口 / 已配置」，为什么实际发不出去？**
-A：账号页只说明**变量填齐了**，不代表平台能连通——假 App ID、权限未开、租户策略（飞书 `21001`；**本机租户 2026-11-12 已解除，换租户仍可能**）、出口 IP（企微 `60020`）都会这样。以 `pnpm run doctor --platform=<平台>` 的 PASS / FAIL 为准；FAIL 会带错误码和修复建议。改完 `.env` 记得**重启后端**（账号页会提示需重启）。
+A：账号页只说明**变量填齐了**，不代表平台能连通——假 App ID、权限未开、租户策略（飞书 `21001`；**本机租户 2026-11-12 已解除，换租户仍可能**）、微信 RPA 桥未就绪都会这样。以 `pnpm run doctor --platform=<平台>` 的 PASS / FAIL 为准；FAIL 会带错误码和修复建议。改完 `.env` 记得**重启后端**（账号页会提示需重启）。
 
 **Q：doctor 显示 SKIP，是失败吗？**
 A：不是。SKIP 表示该平台当前未启用真实通道（`mode=mock` 且不是强制 `real`），doctor 按约定不发起真实探针。退出码只看 FAIL 与 Node 版本：全 PASS / SKIP → 0，有 FAIL → 1。
@@ -754,11 +799,11 @@ A：新的邮箱账号都要在网页端开启 IMAP/SMTP 并生成授权码；�
 **Q：为什么邮箱回信会进垃圾箱？**
 A：反垃圾行为不可预测（同一发件人不同轮次可能进 `Junk` 或 `INBOX`）。把 `MAIL_<KEY>_FOLDERS` 设为 `INBOX,Junk` 一起监听，`externalId` 会带目录名，不会和收件箱的 UID 撞车。
 
-**Q：企业微信为什么会 60020，加白后还报？**
-A：确认加的是**当前真实出口公网 IP**（公司代理 / VPN / 家庭宽带 / 云服务器各不相同），保存后等约 1 分钟；IP 变化后需要重新加。用 `pnpm run doctor --platform=wecom` 可看到当前出口 IP。
+**Q：微信为什么不需要 App ID / Secret / 可信 IP？**
+A：因为微信个人版**没有官方收发 API**，本项目走的是 RPA 补充路径——本地桥用键鼠模拟操作微信桌面端，不调用任何腾讯接口，自然没有凭据、回调验签、出口 IP 白名单这些概念。代价是它依赖本机微信环境、稳定性受窗口影响，只作补充通道。
 
-**Q：电脑重启后，企业微信可信 IP 会不会变？**
-A：**一般不会**。电脑重启只是重新拿内网 DHCP 地址，公网出口 IP 在路由器 / 校园网或公司出口网关 / 运营商侧，重启电脑不会让出口网关重拨；本次实测 2026-11-03 → 11-04 出口 IP 未变。会变的情况：重启路由器 / 光猫、校园网重新认证、运营商重新分配、切换 Wi-Fi / 手机热点、开或换 VPN / 代理。既然 `pnpm run doctor` 每次都会打印当前出口公网 IP，演示前扫一眼即可；变了就回后台更新可信 IP。要彻底免维护，就用带固定公网 IP 的云服务器部署后端（或把出口固定到该服务器）。
+**Q：微信能 7×24 稳定跑吗？**
+A：不建议。RPA 依赖微信窗口布局与分辨率，微信改版会失效；个人号频繁自动化还有**账号风控风险**。演示与轻量补充够用，生产级多平台聚合应优先官方 API 通道（飞书 / 钉钉）。
 
 **Q：飞书 21001 能靠改配置解决吗？**
 A：不能。21001 是租户级策略，已排除 Secret（10014）、IP 白名单、应用未发布、测试企业通道等因素；需要企业认证或换合规租户，换租户后只改 `FEISHU_APP_ID` / `FEISHU_APP_SECRET` 即可。**2026-11-12 本机租户已恢复正常（实测 `app_access_token` / `tenant_access_token` 均 `code:0`）**；其他租户仍可能遇到。

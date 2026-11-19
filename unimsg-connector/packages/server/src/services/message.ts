@@ -24,6 +24,12 @@ import { counters } from '../core/metrics';
 import { config, modeOf } from '../config';
 import { describeAttachmentsWithPreview } from './outbound';
 import { assertIdentityUsable, ensureIdentityProbed } from './identity';
+import {
+  AttachmentDownloadError,
+  downloadAttachment,
+  type AttachmentField,
+  type DownloadedAttachment,
+} from './attachmentDownload';
 
 export interface Broadcast {
   (event: { type: string; data?: unknown }): void;
@@ -200,6 +206,24 @@ export class MessageService {
       counters.deduped += 1;
       writeTrace(this.repo, existing, 'redelivered', '平台重复推送，幂等忽略');
       return { message: existing, duplicate: true };
+    }
+
+    /**
+     * 飞书本人轮询的「文件回推」额外兜底：
+     * LinkHub 自己通过 user token 发出的文件，平台 message_id 会记在 delivery.platformReply。
+     * 进程内先用 feishu 的 recentOutbound 精确跳过；如果后端在「发送成功 → 下一轮轮询」之间重启，
+     * 内存表会丢，这里再按 delivery.platformReply 查一次已发送消息，避免重启窗口内重复出站。
+     */
+    if (platform === Platform.FEISHU && incoming.direction === 'out') {
+      const alreadySent = this.repo.list({ platform: Platform.FEISHU }).find((m) => {
+        const replied = m.delivery?.platformReply;
+        return Boolean(replied && replied.split(',').some((id) => id.trim() === incoming.externalId));
+      });
+      if (alreadySent) {
+        counters.deduped += 1;
+        writeTrace(this.repo, alreadySent, 'redelivered', '本人文件回推命中已发送记录，重启后兜底去重');
+        return { message: alreadySent, duplicate: true };
+      }
     }
 
     this.repo.save(incoming);
@@ -477,9 +501,14 @@ export class MessageService {
       externalId: mailKey ? `${mailKey}:compose:${uid}` : `compose:${uid}`,
       sender: { id: 'linkhub', name: 'LinkHub 统一入口' },
       conversation: { id: conversationId, type: conversationType ?? 'group' },
-      type: 'text',
+      // 「同时加为待办」不是旁路：同一条消息记录就是待办本身（type=todo），
+      // 标题 / 截止时间手填；发送链路仍按文本投递，connector 只看 reply/body。
+      type: req.todo ? 'todo' : 'text',
       body: display,
       reply: req.text,
+      ...(req.todo ? { done: false } : {}),
+      ...(req.todo?.title ? { todoTitle: req.todo.title } : {}),
+      ...(req.todo?.dueAt ? { dueAt: req.todo.dueAt } : {}),
       ...(info.length > 0 ? { attachments: info } : {}),
       ...(mailKey
         ? { mailMeta: { account: mailKey, inReplyTo: '', subject: req.text.slice(0, 60) || 'LinkHub 文件' } }
@@ -503,6 +532,13 @@ export class MessageService {
         + `${info.length > 0 ? ` · 附件 ${info.length} 个` : ''}`
         + `${req.identity ? ` · 指定身份：${req.identity === 'user' ? '本人' : '机器人'}` : ''}`,
     );
+    // 手动待办单独留一条闭环事件：回放里能分清「自动识别成待办」与「用户手动加的」
+    if (req.todo) {
+      const todoParts = ['新建发送时手动加入待办'];
+      if (req.todo.title) todoParts.push(`标题：${req.todo.title}`);
+      if (req.todo.dueAt) todoParts.push(`截止：${req.todo.dueAt}`);
+      writeTrace(this.repo, msg, 'todo_added', todoParts.join(' · '));
+    }
     this.broadcast({ type: 'message.received', data: msg });
 
     let m = this.repo.update(msg.traceId, { status: MsgStatus.PROCESSING })!;
@@ -557,6 +593,7 @@ export class MessageService {
           platformReply: result.platformReply,
           at,
           ...(result.mode === 'real' && result.identity ? { identity: result.identity } : {}),
+          ...(result.verified !== undefined ? { verified: result.verified } : {}),
         },
       })!;
       const identityNote = result.identity === 'user'
@@ -573,6 +610,15 @@ export class MessageService {
           : `真实接口${identityNote}${result.platformReply ? ` · ${result.platformReply}` : ''}`,
       );
       this.broadcast({ type: 'message.updated', data: m });
+
+      // RPA 没有平台回执：只有桥明确 verified=true 才算核对过。
+      // false 表示「已提交到桥，但没核对是否真的到了目标会话」——保持 sent，
+      // 不能写 synced，也不能让前端显示成平台状态回流。
+      if (result.mode === 'real' && result.verified === false) {
+        writeTrace(this.repo, m, 'sent_unverified', 'RPA 已提交，但未核对目标会话/消息是否真正送达');
+        counters.sent += 1;
+        return;
+      }
 
       m = this.repo.update(id, { status: MsgStatus.SYNCED })!;
       writeTrace(
@@ -670,6 +716,28 @@ export class MessageService {
       }
     }
     return changed;
+  }
+
+  // ---------- 附件下载 ----------
+
+  /**
+   * 下载消息里的附件（按索引；field 区分原消息附件与回复附件）。
+   *
+   * 只接受 traceId + 索引，不接受客户端传 URL/文件名，避免 SSRF 与路径穿越；
+   * 真正的平台取回逻辑在 attachmentDownload 服务里（按消息身份选择 token）。
+   */
+  async downloadAttachment(
+    id: string,
+    index: number,
+    field: AttachmentField = 'attachments',
+  ): Promise<DownloadedAttachment> {
+    const m = this.repo.get(id);
+    if (!m) throw new AttachmentDownloadError('消息不存在', 404);
+    const list = field === 'replyAttachments' ? m.replyAttachments : m.attachments;
+    if (!Array.isArray(list) || index < 0 || index >= list.length) {
+      throw new AttachmentDownloadError('附件不存在（可能已被清理）', 404);
+    }
+    return downloadAttachment(m, list[index]!);
   }
 
   // ---------- 回流 ----------

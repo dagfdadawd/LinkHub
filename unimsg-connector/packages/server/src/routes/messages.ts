@@ -1,8 +1,9 @@
-import { Router } from 'express';
+import { Router, type Response } from 'express';
 import { Platform, MsgStatus, type IdentityRole } from '@unimsg/shared';
 import { MessageService } from '../services/message';
 import { listAccounts } from '../services/account';
 import { IdentityUnavailableError } from '../services/identity';
+import { AttachmentDownloadError, type DownloadedAttachment } from '../services/attachmentDownload';
 import { config } from '../config';
 import {
   InvalidOutboundRequest,
@@ -16,6 +17,27 @@ function parseIdentity(raw: unknown): { value?: IdentityRole; error?: string } {
   if (raw === undefined || raw === null || raw === '') return {};
   if (raw === 'bot' || raw === 'user') return { value: raw };
   return { error: 'identity 只能是 bot（机器人）或 user（本人账号）；不传则按平台当前策略' };
+}
+
+/**
+ * 附件下载的 Content-Disposition：
+ * 同时给 ASCII fallback 与 RFC 5987 的 UTF-8 文件名，中文文件名在 Chrome/Edge/Firefox 都能正确落盘。
+ */
+export function attachmentDisposition(filename: string): string {
+  const cleaned = filename.replace(/[\r\n"]/g, '_').trim() || '附件';
+  const ascii = cleaned.replace(/[^\x20-\x7e]/g, '_').replace(/\\/g, '_');
+  const encoded = encodeURIComponent(cleaned).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`;
+}
+
+/** 以附件形式输出二进制；禁止缓存，避免授权 token 变化后拿到旧文件 */
+export function sendDownloadedAttachment(res: Response, file: DownloadedAttachment): void {
+  res.setHeader('Content-Type', file.mimeType || 'application/octet-stream');
+  res.setHeader('Content-Length', String(file.buffer.byteLength));
+  res.setHeader('Content-Disposition', attachmentDisposition(file.filename));
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.end(file.buffer);
 }
 
 export function messagesRouter(svc: MessageService) {
@@ -40,6 +62,35 @@ export function messagesRouter(svc: MessageService) {
     const platform = typeof req.query.platform === 'string' ? (req.query.platform as Platform) : undefined;
     const status = typeof req.query.status === 'string' ? (req.query.status as MsgStatus) : undefined;
     res.json({ ok: true, data: svc.list({ platform, status }) });
+  });
+
+  /**
+   * 附件下载：GET /api/messages/:id/attachments/:index/download?field=replyAttachments
+   *
+   * - `:id` 传 traceId（与详情 / 回放一致）；
+   * - `field=replyAttachments` 时下载回复附件，默认原消息附件；
+   * - 只按索引取服务端已入库的附件元数据，不接受客户端 URL / 文件名。
+   */
+  r.get('/messages/:id/attachments/:index/download', async (req, res) => {
+    const index = Number(req.params.index);
+    if (!Number.isInteger(index) || index < 0) {
+      res.status(400).json({ ok: false, error: '附件索引不合法' });
+      return;
+    }
+    const field = req.query.field === 'replyAttachments' || req.query.field === 'reply'
+      ? 'replyAttachments'
+      : 'attachments';
+    try {
+      const file = await svc.downloadAttachment(req.params.id, index, field);
+      sendDownloadedAttachment(res, file);
+    } catch (e) {
+      if (e instanceof AttachmentDownloadError) {
+        res.status(e.status).json({ ok: false, error: e.message });
+        return;
+      }
+      const reason = e instanceof Error ? e.message : String(e);
+      res.status(502).json({ ok: false, error: `附件下载失败：${reason}` });
+    }
   });
 
   r.get('/messages/:id', (req, res) => {

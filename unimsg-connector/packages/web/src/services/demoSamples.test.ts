@@ -4,7 +4,7 @@ import { Platform } from '../types';
 
 describe('空态注入样例', () => {
   it('只覆盖有 webhook 的三个平台（邮箱是 IMAP 轮询，不能假装能推）', () => {
-    expect(INJECT_PLATFORMS).toEqual([Platform.FEISHU, Platform.DINGTALK, Platform.WECOM]);
+    expect(INJECT_PLATFORMS).toEqual([Platform.FEISHU, Platform.DINGTALK, Platform.WECHAT]);
     expect(INJECT_PLATFORMS).not.toContain(Platform.MAIL);
   });
 
@@ -17,14 +17,16 @@ describe('空态注入样例', () => {
     expect(JSON.parse(event.content as string)).toHaveProperty('text');
   });
 
-  it('钉钉/企微按各自的字段名发送', () => {
+  it('钉钉/微信按各自的字段名发送', () => {
     const ding = buildSample(Platform.DINGTALK, 0).body as Record<string, unknown>;
     expect(ding).toMatchObject({ msgtype: 'text' });
     expect((ding.text as { content: string }).content.length).toBeGreaterThan(0);
 
-    const wecom = buildSample(Platform.WECOM, 0).body as Record<string, unknown>;
-    expect(wecom).toMatchObject({ MsgType: 'text' });
-    expect(String(wecom.Content).length).toBeGreaterThan(0);
+    const wechat = buildSample(Platform.WECHAT, 0).body as Record<string, unknown>;
+    // 微信走 RPA 桥上报格式（WechatRawEvent），不是旧版 XML
+    expect(wechat).toMatchObject({ type: 'text' });
+    expect(String(wechat.text).length).toBeGreaterThan(0);
+    expect(String(wechat.externalId).length).toBeGreaterThan(0);
   });
 
   it('messageId 不重复，避免被服务端幂等去重吃掉', () => {

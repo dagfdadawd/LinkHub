@@ -15,6 +15,8 @@ import { messagesRouter } from './routes/messages';
 import { feishuOAuthCallbackRouter, feishuOAuthRouter } from './routes/feishuOAuth';
 import { dingtalkPersonalRouter } from './routes/dingtalkPersonal';
 import { onboardingRouter } from './routes/onboarding';
+import { wechatPullRouter } from './routes/wechatPull';
+import { wechatBridgeRouter } from './routes/wechatBridge';
 import { mailAccountsRouter } from './routes/mailAccounts';
 import { appConfigRouter } from './routes/appConfig';
 import { contactsRouter } from './routes/contacts';
@@ -87,8 +89,12 @@ export function createApp(svc: MessageService, options: CreateAppOptions = {}) {
 
   const app = express();
   app.use(corsWhitelistGuard(origins));
-  // 白名单模式只回显名单内的 Origin；未配置则沿用 `*`（本地演示/旧调用方零改动）
-  app.use(cors(origins ? { origin: origins } : {}));
+  // 白名单模式只回显名单内的 Origin；未配置则沿用 `*`（本地演示/旧调用方零改动）。
+  // 附件下载要读 Content-Disposition 里的中文文件名，跨端口运行时必须显式 expose。
+  app.use(cors({
+    ...(origins ? { origin: origins } : {}),
+    exposedHeaders: ['Content-Disposition'],
+  }));
   app.use(express.json({ limit: `${limitMb}mb` }));
 
   app.use('/api', healthRouter(svc)); // 公共
@@ -101,6 +107,8 @@ export function createApp(svc: MessageService, options: CreateAppOptions = {}) {
   app.use('/api', apiAuth, mailAccountsRouter()); // Bearer 鉴权：邮箱账号运行时导入（个人版）
   app.use('/api', apiAuth, appConfigRouter()); // Bearer 鉴权：本地应用配置（白号：GUI 填凭据/切模式）
   app.use('/api', apiAuth, contactsRouter()); // Bearer 鉴权：发送目标名录（会话名，只读）
+  app.use('/api', apiAuth, wechatPullRouter()); // Bearer 鉴权：微信 4.x「按需拉取」当前会话
+  app.use('/api', apiAuth, wechatBridgeRouter()); // Bearer 鉴权：本机 RPA 桥启动/停止/状态（A 形态）
 
   // 同源部署（Docker 单容器）：server 直接托管前端构建产物 + SPA 回退。
   // 只在 WEB_DIST 指向真实 index.html 时启用，本地 dev 走 Vite 5173 不受影响。

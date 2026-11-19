@@ -6,7 +6,9 @@ import {
   ArrowLeftOutlined,
   CheckOutlined,
   CopyOutlined,
+  DownloadOutlined,
   HistoryOutlined,
+  LoadingOutlined,
   MailOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
@@ -19,6 +21,7 @@ import {
 import { MsgStatus } from '../../types';
 import type { AttachmentInfo, OutboundAttachment, UnifiedMessage } from '../../types';
 import { formatBytes } from '../../utils/attachments';
+import { canDownloadAttachment, saveBlobAsFile } from '../../utils/download';
 import { formatSendError } from '../../utils/sendError';
 import { store } from '../../store';
 import { useAppState } from '../../hooks/useAppState';
@@ -58,8 +61,37 @@ function isOut(m: UnifiedMessage): boolean {
 /**
  * 附件列表：图片直接给缩略图（点开可放大），其它文件保持文件卡片。
  * 三处气泡共用同一个组件，避免「回复里的图」和「消息里的图」长得不一样。
+ *
+ * 下载：只对有平台资源引用（钉钉 fileId/mediaId、飞书 file_key、微信 localPath）的附件显示按钮；
+ * LinkHub 主动发送的文件 / 演示数据没有内容落库，不提供假下载。
  */
-function AttachmentList({ items, label }: { items: AttachmentInfo[]; label: string }) {
+function AttachmentList({
+  items,
+  label,
+  traceId,
+  field,
+}: {
+  items: AttachmentInfo[];
+  label: string;
+  traceId: string;
+  field: 'attachments' | 'replyAttachments';
+}) {
+  const { message: notice } = AntApp.useApp();
+  const [busy, setBusy] = useState<number | null>(null);
+
+  const handleDownload = async (index: number, attachment: AttachmentInfo) => {
+    if (busy !== null) return;
+    setBusy(index);
+    try {
+      const file = await store.downloadAttachment(traceId, index, field);
+      saveBlobAsFile(file.blob, file.filename || attachment.name);
+    } catch (e) {
+      notice.error(e instanceof Error ? e.message : '附件下载失败，请稍后重试');
+    } finally {
+      setBusy(null);
+    }
+  };
+
   return (
     <ul className="file-list" aria-label={label}>
       {items.map((a, i) => (
@@ -89,6 +121,23 @@ function AttachmentList({ items, label }: { items: AttachmentInfo[]; label: stri
                   : a.mimeType || '未知类型'}
             </span>
           </span>
+          {canDownloadAttachment(a) && (
+            <button
+              type="button"
+              className="file-list__download"
+              aria-label={`下载 ${a.name}`}
+              title={`下载 ${a.name}`}
+              disabled={busy !== null}
+              data-testid={`download-attachment-${field}-${i}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                void handleDownload(i, a);
+              }}
+            >
+              {busy === i ? <LoadingOutlined spin /> : <DownloadOutlined />}
+              <span>下载</span>
+            </button>
+          )}
         </li>
       ))}
     </ul>
@@ -359,7 +408,12 @@ export function DetailPanel({
             <div className="bubble bubble--out">
               <div className="message-body">{m.body}</div>
               {m.attachments && m.attachments.length > 0 && (
-                <AttachmentList items={m.attachments} label="附件" />
+                <AttachmentList
+                  items={m.attachments}
+                  label="附件"
+                  traceId={m.traceId}
+                  field="attachments"
+                />
               )}
             </div>
             <div className="bubble__meta bubble__meta--out">
@@ -438,7 +492,12 @@ export function DetailPanel({
               <div className="message-body">{m.body}</div>
 
               {m.attachments && m.attachments.length > 0 && (
-                <AttachmentList items={m.attachments} label="附件" />
+                <AttachmentList
+                  items={m.attachments}
+                  label="附件"
+                  traceId={m.traceId}
+                  field="attachments"
+                />
               )}
             </div>
             <div className="bubble__meta">
@@ -460,7 +519,12 @@ export function DetailPanel({
                 <div className="message-body">{m.reply}</div>
                 {/* 回复自带的附件挂在回复气泡里；挂在原消息上会变成「对方那句话带着我的文件」 */}
                 {m.replyAttachments && m.replyAttachments.length > 0 && (
-                  <AttachmentList items={m.replyAttachments} label="回复附件" />
+                  <AttachmentList
+                    items={m.replyAttachments}
+                    label="回复附件"
+                    traceId={m.traceId}
+                    field="replyAttachments"
+                  />
                 )}
               </div>
               {/* 回复气泡只在失败时需要说明；成功时不挂时间，避免时间轴看起来倒序

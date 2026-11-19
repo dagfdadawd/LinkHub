@@ -280,6 +280,8 @@ test('mapPersonalEventToMessage：文本 / 文件 / 群单聊 / 自己发的一�
   assert.equal(fileMsg!.type, 'file');
   assert.match(fileMsg!.body, /\[文件\] 周报\.pdf/);
   assert.equal(fileMsg!.attachments?.[0]?.name, '周报.pdf');
+  assert.equal(fileMsg!.attachments?.[0]?.mediaId, '@m1');
+  assert.equal(fileMsg!.attachments?.[0]?.resourceType, 'file');
 
   const imageMsg = mapPersonalEventToMessage({ ...base, messageId: 'om_img', content: JSON.stringify({ fileName: '图.png' }) });
   assert.equal(imageMsg!.type, 'image');
@@ -393,14 +395,45 @@ test('parseMediaContent：文件回推的 `[文件] 名称 fileId: …` 不再�
   assert.equal(parsed.body, '[文件] 灰烬之城 Ashen City.docx');
   assert.equal(parsed.attachment?.name, '灰烬之城 Ashen City.docx');
   assert.doesNotMatch(parsed.body, /fileId|dws drive download/);
+  // 下载凭据不能丢：正文里剥掉 fileId，但附件必须留着它
+  assert.equal(parsed.attachment?.fileId, '3NwLYZXWywdamn7wU0ovKQmZJkyEqBQm');
+  assert.equal(parsed.attachment?.resourceType, 'file');
 
   // 图片同样一套模板
   const image = parseMediaContent('[图片] 截图.png fileId: abc 注意：如需下载使用dws drive download命令下载');
   assert.equal(image?.type, 'image');
   assert.equal(image?.body, '[图片] 截图.png');
+  assert.equal(image?.attachment?.fileId, 'abc');
+  assert.equal(image?.attachment?.resourceType, 'image');
 
   // 普通文本消息不受影响
   assert.equal(parseMediaContent('这个文件我下午发你'), undefined);
+});
+
+test('downloadDriveFile：用 drive download --node <fileId> 取回文件', async () => {
+  let captured: string[] = [];
+  const client = new DingtalkPersonalClient({
+    runner: async (args) => {
+      captured = args;
+      return { code: 0, stdout: '{"ok":true}', stderr: '' } as DwsRunResult;
+    },
+  });
+
+  await client.downloadDriveFile({ fileId: 'file-123', outputPath: '/tmp/report.pdf' });
+  assert.deepEqual(captured, [
+    'drive', 'download',
+    '--node', 'file-123',
+    '--output', '/tmp/report.pdf',
+    '--format', 'json',
+  ]);
+
+  const failing = new DingtalkPersonalClient({
+    runner: async () => ({ code: 5, stdout: '', stderr: 'load access token: reading secure data file' }),
+  });
+  await assert.rejects(
+    () => failing.downloadDriveFile({ fileId: 'x', outputPath: '/tmp/x' }),
+    (e: unknown) => e instanceof DingtalkPersonalError && e.kind === 'not-logged-in',
+  );
 });
 
 test('classifyDwsFailure：上传接口 401 / 业务错误不再误判成「本人身份未登录」', () => {

@@ -15,6 +15,10 @@
  *  - 单会话失败只 warn（同类错误只报一次），不中断其他会话；权限/授权错误把中文修复提示
  *    写进身份视图 hint（契约 §3.2）。
  *
+ * 自己发出的消息：文本仍跳过（收件箱只收「别人找我」）；文件/图片/语音/视频入库并标
+ * direction=out，这样本人从飞书手机/桌面发出的文件也能在 LinkHub 里下载。
+ * LinkHub 自己刚发出的回推先用 message_id 精确识别，再用 echoRegistry 按附件名兜底去重。
+ *
  * 注意：轮询天然有 5–30s 延迟，且只能读到「用户本人可见」的会话，这两点在文档与 UI 如实标注。
  */
 import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
@@ -41,7 +45,7 @@ export const REQUEST_GAP_MS = 100;
 
 export interface FeishuUserReceiveState {
   version: typeof FEISHU_USER_STATE_VERSION;
-  /** 授权用户 open_id：用于过滤自己发的消息（拿不到时跳过过滤并告警） */
+  /** 授权用户 open_id：识别自己发的消息（文本跳过，文件/图片入库为 out；拿不到时降级不过滤） */
   selfOpenId?: string;
   /** `<chatId>` → 最后处理的 create_time（毫秒） */
   chats: Record<string, number>;
@@ -191,7 +195,7 @@ export interface PollUserOnceResult {
   added: number;
   /** 幂等查重命中条数 */
   duplicates: number;
-  /** 跳过（自己发的/撤回/系统/未知类型）条数 */
+  /** 跳过（自己的文本/回声/撤回/系统/未知类型）条数 */
   skipped: number;
   /**
    * 水位内「已经处理过」的消息条数：拉取按秒下取整，每轮都会把水位同一秒的
@@ -280,7 +284,7 @@ export async function pollFeishuUserOnce(deps: PollUserOnceDeps): Promise<PollUs
         const msg = mapFeishuUserMessage(raw, item.chat, deps.state.selfOpenId, { now });
         if (!msg) {
           result.skipped += 1;
-          // 自己发的/撤回/系统/未知类型：也算「处理过」，水位照常推进，
+          // 自己的文本/回声/撤回/系统/未知类型：也算「处理过」，水位照常推进，
           // 避免它们恰好是最新一条时每轮都被重新拉回来
           if (Number.isFinite(t) && t > maxMark) maxMark = t;
           continue;

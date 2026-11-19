@@ -76,7 +76,7 @@ function step(
 ): OnboardingStep {
   return {
     id,
-    label: { mail: '邮箱', dingtalk: '钉钉', feishu: '飞书', wecom: '企业微信' }[id],
+    label: { mail: '邮箱', dingtalk: '钉钉', feishu: '飞书', wechat: '微信' }[id],
     state,
     summary: `${id} 的现状说明`,
     hints: [],
@@ -91,12 +91,12 @@ function onboardingView(patch: Partial<OnboardingView> = {}): OnboardingView {
     dws: { available: true, version: 'v1.0.68', source: 'tools' },
     overall: { ready: 1, total: 4, needsAction: 3 },
     steps: [
-      step('wecom', 'ready', {
-        summary: '企业微信机器人通道已就绪',
-        hints: ['可信 IP 已配置'],
+      step('wechat', 'ready', {
+        summary: '微信 RPA 通道已就绪',
+        hints: ['RPA 桥已就绪'],
         actions: [
-          { id: 'wc-link', kind: 'link', label: '打开企业微信后台', url: 'https://work.weixin.qq.com/' },
-          { id: 'wc-copy', kind: 'copy', label: '复制可信 IP 说明', text: '把 LinkHub 服务器的出口 IP 加入企业微信可信 IP。' },
+          { id: 'wc-link', kind: 'link', label: '打开微信 RPA 说明', url: 'https://weixin.qq.com/' },
+          { id: 'wc-copy', kind: 'copy', label: '复制 RPA 启动说明', text: '启动 scripts/wechat-rpa/rpa_bridge.py 并登录微信桌面端。' },
         ],
       }),
       step('feishu', 'needs_user_auth', {
@@ -128,7 +128,7 @@ const EMPTY_APP_CONFIG = {
   platforms: {
     feishu: { fields: {}, missing: [] },
     dingtalk: { fields: {}, missing: [] },
-    wecom: { fields: {}, missing: [] },
+    wechat: { fields: {}, missing: [] },
   },
   llm: {},
   restartRequired: false,
@@ -195,11 +195,11 @@ afterEach(() => {
 });
 
 describe('连接账号页（授权中心）渲染', () => {
-  it('按 邮箱 → 钉钉 → 飞书 → 企微 排序，显示总进度、状态 Tag 与 dws 来源', async () => {
+  it('按 邮箱 → 钉钉 → 飞书 → 微信 排序，显示总进度、状态 Tag 与 dws 来源', async () => {
     renderPage();
 
     expect(await screen.findByText('已就绪 1 / 4')).toBeInTheDocument();
-    expect(screen.getByText(/按 邮箱 → 钉钉 → 飞书 → 企业微信 的顺序连接/)).toBeInTheDocument();
+    expect(screen.getByText(/按 邮箱 → 钉钉 → 飞书 → 微信 的顺序连接/)).toBeInTheDocument();
     expect(screen.getByText(/内置 tools 目录/)).toBeInTheDocument();
 
     const cards = Array.from(document.querySelectorAll('[data-testid^="connect-step-"]'));
@@ -207,7 +207,7 @@ describe('连接账号页（授权中心）渲染', () => {
       'connect-step-mail',
       'connect-step-dingtalk',
       'connect-step-feishu',
-      'connect-step-wecom',
+      'connect-step-wechat',
     ]);
     expect(within(cards[0] as HTMLElement).getByText('需本人授权')).toBeInTheDocument();
     expect(within(cards[1] as HTMLElement).getByText('需安装')).toBeInTheDocument();
@@ -215,17 +215,17 @@ describe('连接账号页（授权中心）渲染', () => {
     expect(within(cards[3] as HTMLElement).getByText('已就绪')).toBeInTheDocument();
     // 未就绪的卡片直接展开动作；已就绪卡片默认折叠（详情按钮在卡片头，动作按钮在 body）
     expect(within(cards[3] as HTMLElement).getByRole('button', { name: /查看详情/ })).toBeInTheDocument();
-    expect(within(cards[3] as HTMLElement).queryByRole('button', { name: /打开企业微信后台/ })).toBeNull();
+    expect(within(cards[3] as HTMLElement).queryByRole('button', { name: /打开微信 RPA 说明/ })).toBeNull();
   });
 
   it('已就绪卡片可折叠查看详情 + 刷新状态', async () => {
     renderPage();
-    const wecom = (await screen.findByTestId('connect-step-wecom')) as HTMLElement;
-    fireEvent.click(within(wecom).getByRole('button', { name: /查看详情/ }));
-    expect(within(wecom).getByText('可信 IP 已配置')).toBeInTheDocument();
-    expect(within(wecom).getByRole('button', { name: /打开企业微信后台/ })).toBeInTheDocument();
+    const wechat = (await screen.findByTestId('connect-step-wechat')) as HTMLElement;
+    fireEvent.click(within(wechat).getByRole('button', { name: /查看详情/ }));
+    expect(within(wechat).getByText('RPA 桥已就绪')).toBeInTheDocument();
+    expect(within(wechat).getByRole('button', { name: /打开微信 RPA 说明/ })).toBeInTheDocument();
 
-    fireEvent.click(within(wecom).getByRole('button', { name: /刷新状态/ }));
+    fireEvent.click(within(wechat).getByRole('button', { name: /刷新状态/ }));
     await waitFor(() => expect(hoisted.store.refreshOnboarding).toHaveBeenCalledTimes(2));
   });
 
@@ -259,7 +259,7 @@ describe('连接账号页（授权中心）渲染', () => {
     hoisted.store.refreshOnboarding.mockResolvedValue(
       onboardingView({
         overall: { ready: 0, total: 4, needsAction: 0 },
-        steps: (['mail', 'dingtalk', 'feishu', 'wecom'] as const).map((id) =>
+        steps: (['mail', 'dingtalk', 'feishu', 'wechat'] as const).map((id) =>
           step(id, 'mock', { summary: '演示模式：不会连接真实账号' }),
         ),
       }),
@@ -282,16 +282,16 @@ describe('连接账号页（授权中心）渲染', () => {
 describe('连接账号页动作分发', () => {
   it('link 动作：打开官方后台；被浏览器拦截时展示可点击链接与复制', async () => {
     renderPage();
-    const wecom = (await screen.findByTestId('connect-step-wecom')) as HTMLElement;
-    fireEvent.click(within(wecom).getByRole('button', { name: /查看详情/ }));
+    const wechat = (await screen.findByTestId('connect-step-wechat')) as HTMLElement;
+    fireEvent.click(within(wechat).getByRole('button', { name: /查看详情/ }));
 
     const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
-    fireEvent.click(within(wecom).getByRole('button', { name: /打开企业微信后台/ }));
-    expect(openSpy).toHaveBeenCalledWith('https://work.weixin.qq.com/', '_blank', 'noopener');
+    fireEvent.click(within(wechat).getByRole('button', { name: /打开微信 RPA 说明/ }));
+    expect(openSpy).toHaveBeenCalledWith('https://weixin.qq.com/', '_blank', 'noopener');
     expect(await screen.findByText('浏览器拦截了新窗口')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /work\.weixin\.qq\.com/ })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: /weixin\.qq\.com/ })).toHaveAttribute(
       'href',
-      'https://work.weixin.qq.com/',
+      'https://weixin.qq.com/',
     );
   }, 15000);
 
@@ -370,10 +370,10 @@ describe('白号改造：缺凭据 / 一登即用 / 邮箱验证', () => {
           detail: { missing: ['FEISHU_APP_ID', 'FEISHU_APP_SECRET'] },
           actions: [{ id: 'feishu-configure', kind: 'form', label: '填写飞书应用凭据' }],
         }),
-        step('wecom', 'needs_admin', {
-          summary: '缺少企微应用凭据',
-          detail: { missing: ['WECOM_CORP_ID'] },
-          actions: [{ id: 'wecom-configure', kind: 'form', label: '填写企业微信凭据' }],
+        step('wechat', 'needs_admin', {
+          summary: '缺少微信 RPA 桥配置',
+          detail: { missing: ['WECHAT_BRIDGE_URL'] },
+          actions: [{ id: 'wechat-configure', kind: 'form', label: '填写微信 RPA 桥地址' }],
         }),
       ],
     });
@@ -436,7 +436,7 @@ describe('白号改造：缺凭据 / 一登即用 / 邮箱验证', () => {
           }),
           step('dingtalk', 'mock', { actions: [] }),
           step('feishu', 'mock', { actions: [] }),
-          step('wecom', 'mock', { actions: [] }),
+          step('wechat', 'mock', { actions: [] }),
         ],
       }),
     );
@@ -485,7 +485,7 @@ describe('二轮 UI 复验：钉钉登录时序 / 未登录提示 / .env 锁定'
             ],
           }),
           step('feishu', 'needs_admin'),
-          step('wecom', 'needs_admin'),
+          step('wechat', 'needs_admin'),
         ],
       }),
     });
@@ -529,7 +529,7 @@ describe('二轮 UI 复验：钉钉登录时序 / 未登录提示 / .env 锁定'
             actions: [{ id: 'dingtalk-enable-personal-only', kind: 'api', label: '启用本人身份模式' }],
           }),
           step('feishu', 'needs_admin'),
-          step('wecom', 'needs_admin'),
+          step('wechat', 'needs_admin'),
         ],
       }),
     });
@@ -584,7 +584,7 @@ describe('二轮复验：身份热应用 / 飞书真实模式动作', () => {
           step('mail', 'needs_user_auth'),
           step('dingtalk', 'mock', { actions: [{ id: 'dingtalk-enable-personal-only', kind: 'api', label: '仅用本人身份（立即生效，无需重启）' }] }),
           step('feishu', 'needs_admin'),
-          step('wecom', 'needs_admin'),
+          step('wechat', 'needs_admin'),
         ],
       }),
     });
@@ -621,7 +621,7 @@ describe('二轮复验：身份热应用 / 飞书真实模式动作', () => {
             },
           ],
         }),
-        step('wecom', 'needs_admin'),
+        step('wechat', 'needs_admin'),
       ],
     });
     hoisted.store.refreshOnboarding.mockResolvedValue(feishuView);

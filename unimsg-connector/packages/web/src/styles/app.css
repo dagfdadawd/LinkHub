@@ -908,7 +908,7 @@ button {
 .inbox {
   height: 100%;
   display: grid;
-  /* 详情模式左栏宽度：要能放下 5 个渠道 Tab，360px 会把「企微/邮箱」挤出视野 */
+  /* 详情模式左栏宽度：要能放下 5 个渠道 Tab，360px 会把「微信/邮箱」挤出视野 */
   grid-template-columns: 440px minmax(0, 1fr);
   /* 关键：固定为一行并允许收缩，否则列表内容会把整行撑高、挤掉详情底部 */
   grid-template-rows: minmax(0, 1fr);
@@ -4713,6 +4713,31 @@ html.vt-morph .detail {
   font-size: 0.75rem;
 }
 
+/* 「同时加为待办」：勾选后才展开标题 / 截止时间两栏，不勾选不占阅读空间 */
+.compose-todo {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-10);
+  background: var(--surface-2);
+}
+
+.compose-todo .compose-field__hint {
+  margin-top: 4px;
+}
+
+.compose-todo__fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+  margin-top: 10px;
+}
+
+@media (max-width: 560px) {
+  .compose-todo__fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 /* ---------------- 本人身份（谁在收 / 谁在发） ----------------
    小白用户先看结论再看原因：两行「接收 / 发送」Tag + 一句人话说明。
    身份色相与 components/IdentityTag 一致：本人=绿、机器人=蓝、模拟=橙。 */
@@ -6042,6 +6067,38 @@ html.vt-morph .detail {
   color: var(--text);
 }
 
+.app-config-wechat-rpa {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--brand-line);
+  border-radius: var(--r-10);
+  background: var(--brand-soft);
+}
+
+.app-config-wechat-rpa__head,
+.app-config-wechat-rpa__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 0.75rem;
+  color: var(--text);
+}
+
+.app-config-wechat-rpa__head strong {
+  font-size: 0.8125rem;
+}
+
+.app-config-wechat-rpa__status {
+  font-size: 0.7188rem;
+  line-height: 1.55;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
 .app-config-warnings {
   margin: 0;
   padding-left: 16px;
@@ -6379,6 +6436,51 @@ html.vt-morph .detail {
   flex: 0 0 auto;
   font-size: 0.72rem;
   color: var(--text-3);
+}
+
+/* 附件下载：只在服务端有平台资源引用时出现（fileId / fileKey / mediaId） */
+.file-list__download {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-8);
+  background: var(--surface);
+  color: var(--text-2);
+  font-family: inherit;
+  font-size: 0.72rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    background-color var(--dur-fast) var(--ease-out);
+}
+
+.file-list__download:hover:not(:disabled) {
+  color: var(--brand-ink);
+  border-color: var(--brand-line);
+  background: var(--brand-soft);
+}
+
+.file-list__download:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+.file-list__download:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+/* 触屏 / 粗指针：26px 太窄，放大到 32px（与站内其他触屏按钮一致） */
+@media (hover: none), (pointer: coarse) {
+  .file-list__download {
+    height: 32px;
+    padding: 0 10px;
+  }
 }
 
 /* AI 辅助 */
@@ -6770,7 +6872,7 @@ html.vt-morph .detail {
   color: var(--brand);
 }
 
-.side-link__icon--glyph.is-wecom {
+.side-link__icon--glyph.is-wechat {
   background: color-mix(in srgb, var(--success) 12%, transparent);
   color: var(--success);
 }
@@ -8348,8 +8450,8 @@ html.vt-morph .detail {
   --glow-tint: var(--plat-dingtalk);
 }
 
-.side__glow--platform[data-platform='wecom'] {
-  --glow-tint: var(--plat-wecom);
+.side__glow--platform[data-platform='wechat'] {
+  --glow-tint: var(--plat-wechat);
 }
 
 .side__glow--platform[data-platform='mail'] {
@@ -8379,9 +8481,9 @@ html.vt-morph .detail {
   color: var(--plat-dingtalk);
 }
 
-.side-link__icon--glyph.is-wecom {
-  background: color-mix(in srgb, var(--plat-wecom) 16%, var(--panel-card));
-  color: var(--plat-wecom);
+.side-link__icon--glyph.is-wechat {
+  background: color-mix(in srgb, var(--plat-wechat) 16%, var(--panel-card));
+  color: var(--plat-wechat);
 }
 
 .side-link__icon--glyph.is-mail {
@@ -8572,7 +8674,7 @@ html.vt-morph .detail {
   /* 四个平台的自有颜色：图标底色与选中高光共用，避免「高光与图标撞色」 */
   --plat-feishu: #3370ff;
   --plat-dingtalk: #00b8d9;
-  --plat-wecom: #07c160;
+  --plat-wechat: #07c160;
   --plat-mail: #ff9500;
 }
 
@@ -8879,4 +8981,48 @@ html.vt-morph .detail {
   font-size: 0.95em;
   display: grid;
   place-items: center;
+}
+
+/* ---------------------------------------------------------------------------
+   微信「按需拉取」：微信 4.x 无可访问控件树，只能靠选中复制读取。
+   样式保持克制：一行按钮 + 一行灰字说明，不做强调色块。
+--------------------------------------------------------------------------- */
+.wechat-pull {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.wechat-pull__hint {
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+.wechat-pull-modal__lead {
+  margin: 0 0 16px;
+  font-size: 0.8125rem;
+  line-height: 1.7;
+  color: var(--text-2);
+}
+
+.wechat-pull-modal__label {
+  display: block;
+  margin: 12px 0 6px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.wechat-pull-modal__label:first-of-type {
+  margin-top: 0;
+}
+
+.wechat-pull-modal__note {
+  margin: 14px 0 0;
+  font-size: 0.75rem;
+  line-height: 1.6;
+  color: var(--text-3);
 }

@@ -4,7 +4,7 @@
 >
 > 本文是**平台配置 + LinkHub 操作**的完整说明。想先看离线效果，直接跳 [§7 离线演示](#7-离线演示用-fake-dws-模拟已登录不碰真实钉钉)。
 >
-> 相关文档：[README 身份模式](../README.md) · [quickstart.md](quickstart.md) · [swap-accounts.md](swap-accounts.md) · [demo-script.md](demo-script.md) · [deploy.md](deploy.md)
+> 相关文档：[reference.md 身份模式](reference.md) · [quickstart.md](quickstart.md) · [swap-accounts.md](swap-accounts.md) · [demo-script.md](demo-script.md) · [deploy.md](deploy.md)
 
 ---
 
@@ -12,7 +12,7 @@
 
 | 你想做什么 | 读哪几节 | 平台前提 |
 |---|---|---|
-| **个人版首次使用**（从图形向导进入） | [quickstart 路径 E](quickstart.md#path-e)、[§3.4 管理员事项](#34-管理员事项汇总授权中心可一键复制) | 邮箱可自助；飞书 / 企微需企业管理员开通，钉钉还要企业开 CLI 访问 |
+| **个人版首次使用**（从图形向导进入） | [quickstart 路径 E](quickstart.md#path-e)、[§3.4 管理员事项](#34-管理员事项汇总授权中心可一键复制) | 邮箱可自助；飞书 / 微信需企业管理员开通，钉钉还要企业开 CLI 访问 |
 | 只想离线看「本人身份」长什么样 | [§2](#2-能力总览)、[§7](#7-离线演示用-fake-dws-模拟已登录不碰真实钉钉) | 无（本地桩） |
 | 用**飞书**本人身份收发 | [§3 边界](#3-平台边界先读避免踩空)、[§4 配置](#4-飞书本人身份配置)、[§6 LinkHub 操作](#6-linkhub-内操作与状态标注) | 飞书自建应用 + 管理员开用户身份权限 |
 | 用**钉钉**本人身份收发 | [§3 边界](#3-平台边界先读避免踩空)、[§5 配置](#5-钉钉本人身份配置dws-cli)、[§6 LinkHub 操作](#6-linkhub-内操作与状态标注) | 本机装 dws + 企业管理员开启 CLI 访问 + 首次真人授权（本机推荐浏览器登录；远程/无浏览器用设备码） |
@@ -44,7 +44,7 @@
 |---|---|---|---|---|
 | 飞书 | ✅ 官方支持（`user_access_token` + `im/v1/messages`）；**2026-11-12 真实租户实测通过**：以本人身份发出后飞书侧 `sender.sender_type=user` | ⚠️ 官方无「个人消息推送事件」，用用户 token **轮询**本人所在会话的增量消息；**2026-11-12 真实租户实测通过**：单聊 + 群聊均以 `receivedAs=user` 入库（列会话需带 `types=p2p,group`） | 用户 OAuth 授权 → 轮询器 + 水位持久化 | **2026-11-12 真实端到端已通过**（本机租户 `21001` 已解除；接收仍是轮询 5–30s；单聊枚举依赖未公开参数 `types`，有降级兜底，见 §3.1） |
 | 钉钉 | ✅ 官方开源 CLI [`dws`](https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli) 的 `dws chat message send`（以当前登录用户身份发） | ✅ 同上，`dws event +listen-im` 个人事件订阅（Stream 长连接，NDJSON） | 子进程调用本机 `dws`，LinkHub 管理登录态 / 事件流 / 重启 | 代码 / 单测 / fake-dws 桩就绪；真实登录需企业开启 CLI 访问（见 §3.2） |
-| 企业微信 / 邮箱 | — | — | 不适用本人身份（平台无对应能力），保持现有机器人 / IMAP 通道 | 不变 |
+| 微信 / 邮箱 | — | — | 不适用本人身份（平台无对应能力），保持现有机器人 / IMAP 通道 | 不变 |
 
 机器人身份**保留**：飞书长连接 / Webhook、钉钉 Stream 机器人都还在，配置一个不删。任何平台都可以随时切回机器人（见 §9）。
 
@@ -60,7 +60,7 @@
 - **只能读本人可见的会话**：列会话 / 读消息都用授权用户的身份，**读不到你本人不所在的群、也读不到别人视角的消息**。这是"本人身份"的语义边界，不是缺陷。
 - **首轮默认不灌历史**：`FEISHU_USER_BACKFILL_HOURS=0` 时首轮只记录每个会话的水位基线，只入库之后的新消息；需要回看最近 N 小时可设 `24` 等。
 - **需要用户身份权限**：除发送所需的用户身份权限外，接收还需要「以用户身份获取单聊消息 / 群聊消息」与「查看群信息」（`im:chat:read`，列会话的硬前提；缺它列会话直接报 `99991679`）等权限（见 §4.1），由应用管理员开通并发布版本。
-- **企业认证 / 租户策略 `21001`（本机租户 2026-11-12 已解除，实测通过）**：部分租户（常见于未完成企业认证）换应用 `tenant_access_token` 会被平台策略直接拒绝，报 `21001 Access denied due to platform policy`。**本机租户已解除**：2026-11-12 14:16 用仓库 `.env` 真实凭据实测，`POST /open-apis/auth/v3/app_access_token/internal` 与 `/tenant_access_token/internal` 均返回 `code:0`（推断为完成企业认证 / 平台策略调整，未获官方确认）。**这不代表 `21001` 消失了**：它仍是飞书平台策略，换租户、换环境、平台策略变化都可能再现，本文保留历史排错记录（见 [README 实测记录](../README.md)），其他租户遇到时仍按「企业认证或换合规租户」处理，换 Secret / 改代码 / 加 IP 白名单都无效。本机租户的本人身份真实端到端已完成：收单聊 + 群聊、以本人身份发送，见 [验收记录](verification/feishu-personal-e2e-2026-11-12.md)。
+- **企业认证 / 租户策略 `21001`（本机租户 2026-11-12 已解除，实测通过）**：部分租户（常见于未完成企业认证）换应用 `tenant_access_token` 会被平台策略直接拒绝，报 `21001 Access denied due to platform policy`。**本机租户已解除**：2026-11-12 14:16 用仓库 `.env` 真实凭据实测，`POST /open-apis/auth/v3/app_access_token/internal` 与 `/tenant_access_token/internal` 均返回 `code:0`（推断为完成企业认证 / 平台策略调整，未获官方确认）。**这不代表 `21001` 消失了**：它仍是飞书平台策略，换租户、换环境、平台策略变化都可能再现，本文保留历史排错记录（见 [reference.md 实测记录](reference.md)），其他租户遇到时仍按「企业认证或换合规租户」处理，换 Secret / 改代码 / 加 IP 白名单都无效。本机租户的本人身份真实端到端已完成：收单聊 + 群聊、以本人身份发送，见 [验收记录](verification/feishu-personal-e2e-2026-11-12.md)。
 - **列会话必须带 `types=p2p,group` 才能看到单聊**：飞书公开文档对 `GET /open-apis/im/v1/chats` 的说明是「不包含单聊」，2026-11-12 真实令牌实测：不带 `types` 只返回 2 个群聊，加 `types=p2p,group` 返回 5 个会话（2 群 + 3 单聊）。该参数**未收录于公开 API 文档**（飞书官方 CLI 在用），存在被平台调整的风险；LinkHub 已做**进程内降级兜底**：平台一旦报参数错误（`232001` / invalid request parameter），自动永久退回不带 `types` 的纯群列表并告警——单聊收不到，但群聊接收不中断（见 §4.4、§4.6）。
 - **单实例单账号**：一次授权绑定一个飞书账号；换账号需重新授权（令牌文件按 App ID 校验，换 App 会要求重新授权）。
 
@@ -89,20 +89,20 @@
 
 ### 3.4 管理员事项汇总（授权中心可一键复制）
 
-白号（零凭据）首先遇到的不是「点一下登录」，而是**缺平台应用凭据**：飞书 / 企业微信必须由企业管理员创建应用并提供凭据；钉钉本人身份只需要管理员开启 **CLI 访问管理**（**不需要机器人应用**）。授权中心把每个平台的「缺什么、去哪开通、怎么填回 LinkHub」做成可复制清单（`GET /api/onboarding` 的 `actions[].text`，与本节一致，可整段发给管理员）。
+白号（零凭据）首先遇到的不是「点一下登录」，而是**缺平台应用凭据**：飞书必须由企业管理员创建应用并提供凭据（微信走 RPA 补充通道，无需管理员）；钉钉本人身份只需要管理员开启 **CLI 访问管理**（**不需要机器人应用**）。授权中心把每个平台的「缺什么、去哪开通、怎么填回 LinkHub」做成可复制清单（`GET /api/onboarding` 的 `actions[].text`，与本节一致，可整段发给管理员）。
 
 | 平台 | 管理员要做什么 | 官方后台 | 拿到凭据后填哪里 |
 |---|---|---|---|
 | 飞书 | 创建**企业自建应用** → 权限管理开通消息权限（清单列出具体 scope；本人接收另需 `im:message.p2p_msg:get_as_user` / `im:message.group_msg:get_as_user`）→ 安全设置添加**重定向 URL**（`http://localhost:<端口>/api/feishu/oauth/callback`，页面给出实际值）→ 事件订阅：**默认用长连接**（可免公网回调，此时 Verify Token / Encrypt Key 都可不填）；只有改用 HTTP 回调模式才必须填 Verification Token → **发布应用** | <https://open.feishu.cn/app> | 连接账号 → 飞书卡片 **「填写飞书应用凭据（App ID / App Secret）」**：App ID / App Secret（可选 Verify Token / Encrypt Key）→ 保存 → **重启 LinkHub**；或写 `.env` 的 `FEISHU_APP_ID` / `FEISHU_APP_SECRET` / `FEISHU_VERIFY_TOKEN` / `FEISHU_ENCRYPT_KEY` |
 | 钉钉 | **本人身份（推荐）**：管理员在钉钉开放平台开启 **「CLI 访问管理」**（无需创建机器人应用）——这是个人身份收发的唯一企业侧前提。**如还要机器人通道**：创建企业内部应用（Client ID / Secret / RobotCode）并配事件订阅 AES | <https://open-dev.dingtalk.com/> | 本人身份：无需填凭据，直接在连接账号 → 钉钉点 **「用钉钉本人账号登录（推荐，无需机器人应用）」**；机器人凭据可选填 **「填写钉钉应用凭据」** 或 `.env` 的 `DINGTALK_CLIENT_ID` / `_SECRET` / `_ROBOT_CODE` |
-| 企业微信 | 创建**自建应用**（CorpID / AgentId / Secret）→ 接收消息 Token / EncodingAESKey + 回调 URL（`/api/wecom/callback`，需公网可达）→ **企业可信 IP** 加入部署机公网出口 IP（否则发送报 `60020`） | <https://work.weixin.qq.com/> | 连接账号 → 企业微信卡片 **「填写企业微信凭据（Corp ID / Agent ID / Secret）」**（可选 Token / EncodingAESKey）→ 保存 → **重启 LinkHub**；或写 `.env` 的 `WECOM_*` |
+| 微信 | **不需要管理员**（RPA 补充通道）：微信个人版无官方收发 API。本机登录并打开**微信桌面端 3.9.x**（4.x 是 Qt 自绘界面、无控件树：自动轮询不可用，改用「按需拉取」）→ `pip install pyautogui pyperclip pywin32 uiautomation` → 启动 `scripts/wechat-rpa/rpa_bridge.py --mode rpa` | 无（不走平台后台） | 连接账号 → 微信卡片确认桥地址即可（默认 `http://127.0.0.1:8787`）；`.env` 设 `WECHAT_MODE=real` 才真实收发，默认 Mock |
 | 邮箱 | **不需要管理员**：自己到邮箱网页版开启 IMAP/SMTP 并生成授权码 | 各服务商设置页（页面给深链） | 连接账号 → 邮箱卡片 **「添加邮箱账号」**（地址 + 授权码 → 测试连接 → 保存账号） |
 
 > - **凭据填进 LinkHub 才算数**：管理员在平台后台开通 ≠ LinkHub 有凭据；页面保存的是本机 `linkhub-config.json`（`DATA_DIR/linkhub-config.json`，无 `DATA_DIR` 时 `unimsg-connector/.linkhub-config.json`，已 gitignore、权限收紧、**secret 只回末 4 位**）。**保存应用凭据后必须重启**才生效；只有「钉钉/飞书本人身份登录」是热应用（登录即可用，无需重启）。
 > - `.env` 里显式写过的键**优先**，页面不能覆盖（会提示「部分配置来自 .env，未被本次保存覆盖」）。
 > - **不要指望只点「刷新状态」**：刷新只重新读取当前状态，不会补凭据、也不会让缺配置的平台变成可用。
 > - 管理员清单是**纯文本**（无 Markdown 星号），可整段复制；飞书清单第 7 步按钮名是「填写飞书应用凭据（App ID / App Secret）」、第 8 步是「连接飞书本人账号」；钉钉清单里的终端命令是可移植写法 `tools\dws.exe auth login --recommend`。
-> - **白号口径**：2 项可自助（邮箱、钉钉）+ 2 项需管理员（飞书、企微）。白号实测证据见 [docs/qa/white-account/](qa/white-account/)（white-auditor-report / white-user-report / white-user-round2-report / white-api-round2-report 四份，均为只读审计报告）。
+> - **白号口径**：2 项可自助（邮箱、钉钉）+ 1 项需管理员（飞书）。白号实测证据见 [docs/qa/white-account/](qa/white-account/)（white-auditor-report / white-user-report / white-user-round2-report / white-api-round2-report 四份，均为只读审计报告）。
 
 ### 3.5 仅本人身份（无需机器人应用）
 
@@ -186,7 +186,7 @@ FEISHU_USER_BACKFILL_HOURS=0
 - 2026-11-12 真实租户实测的入库日志形如：`[feishu-user] 本人账号收到消息：单聊「LinkHub」 · 发送者=<脱敏名> · 类型=text`；群聊消息走同一通道，日志标「群聊」；
 - 首轮默认只立基线，**不会把历史消息灌进收件箱**；设 `FEISHU_USER_BACKFILL_HOURS=24` 才会回溯；
 - **水位同秒重复已收敛**：水位按「秒」下取整，飞书每轮会把水位同一秒的最后一条重新返回；LinkHub 在轮询里把 `create_time <= 水位` 的消息直接计为「已见过」跳过，不再重复 ingest——避免每轮重复写 `redelivered` trace 并触发全量落盘（返回字段 `alreadySeen`，日志形如「…重复 0 条，已见过 2 条」）；
-- 自己发出的消息会被**尽可能**过滤（自环保护），不会在自己的收件箱里再出现一条；**飞书拿不到本人 open_id 时会跳过过滤并告警**；
+- 自己发出的**文本**消息会被过滤（自环保护），不会在自己的收件箱里再出现一条；**自己发出的文件 / 图片 / 语音 / 视频会入库并标 `direction=out`**，这样本人从飞书手机/桌面发出的文件也能在 LinkHub 里看到并下载；LinkHub 自己刚发出的文件先用 `message_id` 精确识别，再用 `echoRegistry` 按附件名兜底去重，避免重复入库；**飞书拿不到本人 open_id 时会跳过过滤并告警**；
 - **双通道并存会重复入库（已知限制）**：机器人长连接（`FEISHU_STREAM=true`）与本人轮询同时开启时，在「机器人与本人同处的单聊」里同一条消息可能被两条通道各入库一次；2026-11-12 实测该单聊里本人发出的消息先被机器人长连接入库为 `receivedAs=bot`（同一 `externalId` 幂等，只留一条）。**建议演示时二选一**；
 - 权限不足时不会静默：账号页身份块 / 日志会给出所需权限与"重新授权"提示；
 - 水位文件损坏 / 丢失时会安全回退并**重建基线**，重启后从水位续传；但**断档期间的消息不会自动补回**——需要回填就把 `FEISHU_USER_BACKFILL_HOURS` 设为 `24` 等值后重启（会把该时段消息重新入库）。
@@ -322,7 +322,7 @@ DWS_SEND_TIMEOUT_MS=30000
 
 > **只配本人身份也可以（钉钉，推荐白号）**：不需要机器人应用凭据。最省事的路径是「连接账号 → 钉钉 →『用钉钉本人账号登录（推荐，无需机器人应用）』」——它会自动把身份切到 `user`（热应用、无需重启）并完成登录；也可以手动设 `DINGTALK_IDENTITY=user`（页面「仅用本人身份」或 `.env`，后者需重启）后再登录。飞书不同：必须先有 App 凭据（页面「填写飞书应用凭据」或 `.env`）才能发起 OAuth。
 
-> **不用改 .env 的图形化方式**：「平台账号」页右上或连接账号页的按钮 **「平台应用配置」** 打开弹窗：钉钉勾「仅用本人身份（无需机器人凭据）」→ 保存（**热应用、无需重启**）；机器人凭据 / 飞书 / 企微 / AI 模型填表 →「保存配置」（保存在本机 `linkhub-config.json`，**需要重启 LinkHub 生效**）。`.env` 显式写过的键优先，页面会提示「部分配置来自 .env，未被本次保存覆盖」。
+> **不用改 .env 的图形化方式**：「平台账号」页右上或连接账号页的按钮 **「平台应用配置」** 打开弹窗：钉钉勾「仅用本人身份（无需机器人凭据）」→ 保存（**热应用、无需重启**）；机器人凭据 / 飞书 / 微信 / AI 模型填表 →「保存配置」（保存在本机 `linkhub-config.json`，**需要重启 LinkHub 生效**）。`.env` 显式写过的键优先，页面会提示「部分配置来自 .env，未被本次保存覆盖」。
 
 原有的机器人配置（`DINGTALK_CLIENT_ID` / `DINGTALK_CLIENT_SECRET` / `DINGTALK_ROBOT_CODE` / `DINGTALK_STREAM`）**保留不动**，用于机器人兜底。
 
@@ -517,7 +517,7 @@ DINGTALK_IDENTITY=user
 
 | 项目 | 状态 |
 |---|---|
-| LinkHub 身份解析、飞书用户轮询、钉钉 dws 子进程、发送身份分流 | 已由单元测试 + 注入 fetch / 注入 runner 覆盖（本轮 server **466 tests 全过**、web 34 文件 / 304 tests 全过、`pnpm -r typecheck` 全过，见验收记录） |
+| LinkHub 身份解析、飞书用户轮询、钉钉 dws 子进程、发送身份分流、本人附件下载、飞书自发送文件入库 | 已由单元测试 + 注入 fetch / 注入 runner 覆盖（本轮附件下载相关 server **43 项全过**、`pnpm -r typecheck` 全过；web 与全量 server 条数以当前工作区实际输出为准） |
 | 飞书租户策略 `21001` | ✅ **2026-11-12 本机租户实测解除**：`POST /open-apis/auth/v3/app_access_token/internal` 与 `/tenant_access_token/internal` 均返回 `code:0`（此前 README 记录为 `21001 Access denied due to platform policy`，历史记录保留；`21001` 仍是平台策略，其他租户 / 环境仍可能遇到，见 §3.1） |
 | 飞书本人身份真实端到端（授权 → 轮询 → 入库 → 本人发送） | ✅ **2026-11-12 真实租户实测通过**（测试企业「LinkHub 测试」、应用 `LinkHub`（`cli_aa63738b78f81d0d`）、授权账号「八水合甲烷」）：真实 OAuth 授权 → 用户轮询收**单聊 + 群聊**（入库 `receivedAs=user`）→ `POST /api/messages/compose` 以本人身份返回 202 / `status=replied` → 飞书侧核对 `sender.sender_type=user`、`is_agent=false`（确认是真人本人，不是机器人）；独立测试实例 3101 与用户主应用 3001 各验证一次。详见 [验收记录](verification/feishu-personal-e2e-2026-11-12.md) |
 | 飞书单聊（p2p）会话发现 | ✅ **2026-11-12 真实令牌实测**：`GET /im/v1/chats` 不带 `types` 只返回 2 个群聊；带 `types=p2p,group` 返回 5 个会话（2 群 + 3 单聊），`types=p2p` 只返回 3 个单聊。该参数**未公开**（官方 CLI 在用），已做「被拒自动降级为纯群列表」兜底（`232001` / invalid request parameter） |
@@ -595,11 +595,11 @@ DINGTALK_IDENTITY=user
 
 ```json
 {
-  "modes": { "feishu": "mock", "dingtalk": "mock", "wecom": "mock", "mail": "mock" },
+  "modes": { "feishu": "mock", "dingtalk": "mock", "wechat": "mock", "mail": "mock" },
   "identities": {
     "feishu": { "send": "mock", "receive": "mock" },
     "dingtalk": { "send": "user", "receive": "user" },
-    "wecom": { "send": "mock", "receive": "mock" },
+    "wechat": { "send": "mock", "receive": "mock" },
     "mail": { "send": "mock", "receive": "mock" }
   }
 }
@@ -622,6 +622,6 @@ DINGTALK_IDENTITY=user
 }
 ```
 
-> 复现方式（不碰真实账号）：`pnpm --filter @unimsg/server start` 前设置 `SERVER_PORT=3099`、`DATA_DIR=<临时目录>`、`FEISHU_MODE=mock`、`WECOM_MODE=mock`、`MAIL_MODE=mock`、`MAIL_ENABLED=false`、`DINGTALK_STREAM=false`、`DINGTALK_IDENTITY=user`、`DWS_BIN=node scripts/fake-dws.mjs`、`FAKE_DWS_STATE_FILE=<临时文件>`、`LLM_PROVIDER=mock`；再用 `Authorization: Bearer <你的 API_TOKEN>` 调 `/api/accounts`。
+> 复现方式（不碰真实账号）：`pnpm --filter @unimsg/server start` 前设置 `SERVER_PORT=3099`、`DATA_DIR=<临时目录>`、`FEISHU_MODE=mock`、`WECHAT_MODE=mock`、`MAIL_MODE=mock`、`MAIL_ENABLED=false`、`DINGTALK_STREAM=false`、`DINGTALK_IDENTITY=user`、`DWS_BIN=node scripts/fake-dws.mjs`、`FAKE_DWS_STATE_FILE=<临时文件>`、`LLM_PROVIDER=mock`；再用 `Authorization: Bearer <你的 API_TOKEN>` 调 `/api/accounts`。
 
 > 文档与实现不一致时，以代码 / `.env.example` / 实际界面为准，并请提 issue 或反馈给维护者修正本文。

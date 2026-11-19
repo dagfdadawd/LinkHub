@@ -132,8 +132,8 @@ export function CommandPalette({
       { value: undefined, label: '全部平台' },
       { value: Platform.FEISHU, label: PLATFORM_META[Platform.FEISHU].name },
       { value: Platform.DINGTALK, label: PLATFORM_META[Platform.DINGTALK].name },
-      { value: Platform.WECOM, label: PLATFORM_META[Platform.WECOM].name },
       { value: Platform.MAIL, label: PLATFORM_META[Platform.MAIL].name },
+      { value: Platform.WECHAT, label: PLATFORM_META[Platform.WECHAT].name },
     ];
 
     platforms.forEach((p) => {

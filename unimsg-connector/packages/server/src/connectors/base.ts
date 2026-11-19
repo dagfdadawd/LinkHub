@@ -20,8 +20,8 @@ export function genTraceId(): string {
 export const sentBox: Record<string, unknown[]> = {
   [Platform.FEISHU]: [],
   [Platform.DINGTALK]: [],
-  [Platform.WECOM]: [],
   [Platform.MAIL]: [],
+  [Platform.WECHAT]: [],
 };
 
 export function mockSend(platform: Platform, payload: unknown): { ok: boolean; mode: 'mock' } {

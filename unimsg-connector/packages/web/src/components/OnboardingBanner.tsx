@@ -43,7 +43,7 @@ export function OnboardingBanner({
       <div className="onboard-banner__body">
         <strong className="onboard-banner__title">首次使用：先连接你自己的账号</strong>
         <span className="onboard-banner__text">
-          邮箱、钉钉、飞书、企业微信逐项连接；不用把机器人拉进群。
+          邮箱、钉钉、飞书、微信逐项连接；不用把机器人拉进群。
           {dynamicDetail}
         </span>
       </div>

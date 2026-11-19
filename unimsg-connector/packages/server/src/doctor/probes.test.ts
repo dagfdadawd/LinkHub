@@ -1,7 +1,7 @@
 /**
  * doctor 探针单测：绝不联网。
  *
- *  - HTTP 探针（飞书 / 钉钉 / 企微 / 出口 IP）：stub globalThis.fetch，断言 errcode → 中文建议映射；
+ *  - HTTP 探针（飞书 / 钉钉）：stub globalThis.fetch，断言 errcode → 中文建议映射；
  *    每个用例用 withStubFetch 的 finally 恢复真实 fetch；
  *  - 邮箱探针：注入假的 fetchNewMails / verifySmtpAuth（绝不真的连 IMAP/SMTP）；
  *  - 纯函数（错误分类 / host 解析 / 配置检查）直接断言。
@@ -16,13 +16,10 @@ import {
   explainFeishuError,
   explainImapError,
   explainSmtpError,
-  explainWecomError,
-  fetchEgressIp,
   hostOf,
   probeDingtalkToken,
   probeFeishuToken,
   probeMailAccount,
-  probeWecomToken,
   runProbes,
   probeLlm,
   type DingtalkProbeInput,
@@ -30,7 +27,6 @@ import {
   type LlmProbeInput,
   type PlatformProbeRuntime,
   type ProbeInput,
-  type WecomProbeInput,
   probeFeishuIdentity,
   probeDingtalkIdentity,
 } from './probes';
@@ -81,13 +77,6 @@ const DINGTALK: DingtalkProbeInput = {
   baseUrl: 'https://api.dingtalk.com',
 };
 
-const WECOM: WecomProbeInput = {
-  corpId: 'ww_test',
-  secret: 'wecom-secret-test',
-  agentId: '1000002',
-  baseUrl: 'https://qyapi.weixin.qq.com',
-};
-
 function mailAccount(over: Partial<MailAccount> = {}): MailAccount {
   return {
     key: 'qq',
@@ -120,8 +109,8 @@ function mockRuntime(
   return {
     [Platform.FEISHU]: { ...base },
     [Platform.DINGTALK]: { ...base },
-    [Platform.WECOM]: { ...base },
     [Platform.MAIL]: { ...base },
+    [Platform.WECHAT]: { ...base },
     ...over,
   };
 }
@@ -130,7 +119,6 @@ function probeInput(over: Partial<ProbeInput> = {}): ProbeInput {
   return {
     feishu: FEISHU,
     dingtalk: DINGTALK,
-    wecom: WECOM,
     mail: { accounts: [], enabled: false },
     llm: llmInput({ ready: false }),
     runtime: mockRuntime(),
@@ -301,95 +289,6 @@ test('钉钉配置检查：仅本人身份关闭机器人 Stream 是有意配置
   const bot = dingtalkConfigChecks({ ...base, personalReceive: false });
   assert.equal(bot.find((c) => c.id === 'dingtalk:stream')?.status, 'FAIL');
   assert.equal(dingtalkConfigChecks(base).find((c) => c.id === 'dingtalk:stream')?.status, 'FAIL');
-});
-
-// ---------------------------------------------------------------------------
-// 企业微信探针 + 出口 IP
-// ---------------------------------------------------------------------------
-
-test('企微探针：errcode=0 → PASS', async () => {
-  const outcome = await withStubFetch(
-    (url) => {
-      assert.ok(url.includes('/cgi-bin/gettoken'));
-      assert.ok(url.includes('corpid=ww_test'));
-      return jsonResponse({ errcode: 0, access_token: 'wc-token', expires_in: 7200 });
-    },
-    () => probeWecomToken(WECOM),
-  );
-  assert.equal(outcome.check.status, 'PASS');
-  assert.equal(outcome.egressIp, undefined);
-});
-
-test('企微探针：60020 → FAIL 并自动附上出口公网 IP（ipify）与「企业可信IP」步骤', async () => {
-  const outcome = await withStubFetch(
-    (url) => {
-      if (url.includes('/cgi-bin/gettoken')) {
-        return jsonResponse({ errcode: 60020, errmsg: 'not allow to access from your ip' });
-      }
-      if (url.includes('api.ipify.org')) return jsonResponse({ ip: '203.0.113.9' });
-      throw new Error(`未预期的请求：${url}`);
-    },
-    () => probeWecomToken(WECOM),
-  );
-  assert.equal(outcome.check.status, 'FAIL');
-  assert.equal(outcome.egressIp, '203.0.113.9');
-  assert.ok(outcome.check.detail.includes('60020'));
-  assert.ok(outcome.check.detail.includes('203.0.113.9'));
-  assert.ok((outcome.check.hint ?? '').includes('企业可信IP'));
-  assert.ok((outcome.check.hint ?? '').includes('203.0.113.9'));
-});
-
-test('企微探针：60020 且 ipify 失败时回退 ifconfig.me 取出口 IP', async () => {
-  const outcome = await withStubFetch(
-    (url) => {
-      if (url.includes('/cgi-bin/gettoken')) return jsonResponse({ errcode: 60020, errmsg: 'ip not allowed' });
-      if (url.includes('api.ipify.org')) return jsonResponse({ error: 'down' }, 503);
-      if (url.includes('ifconfig.me')) return textResponse('198.51.100.7\n');
-      throw new Error(`未预期的请求：${url}`);
-    },
-    () => probeWecomToken(WECOM),
-  );
-  assert.equal(outcome.egressIp, '198.51.100.7');
-  assert.ok(outcome.check.detail.includes('198.51.100.7'));
-});
-
-test('企微错误映射：40013 → WECOM_CORP_ID；40001 → WECOM_SECRET', async () => {
-  const r413 = await withStubFetch(
-    () => jsonResponse({ errcode: 40013, errmsg: 'invalid corpid' }),
-    () => probeWecomToken(WECOM),
-  );
-  assert.equal(r413.check.status, 'FAIL');
-  assert.ok(r413.check.detail.includes('40013'));
-  assert.ok((r413.check.hint ?? '').includes('WECOM_CORP_ID'));
-
-  assert.ok(explainWecomError(40001, 'invalid credential').hint.includes('WECOM_SECRET'));
-  assert.ok(explainWecomError(40014, 'invalid access_token').hint.includes('WECOM_BASE_URL'));
-});
-
-test('出口 IP 探测：两个接口都失败时返回 null（不阻断主流程）', async () => {
-  const ip = await withStubFetch(
-    () => textResponse('service unavailable', 503),
-    () => fetchEgressIp(100),
-  );
-  assert.equal(ip, null);
-});
-
-test('runProbes：alwaysFetchEgressIp 时即使全平台 SKIP 也采集出口 IP（供对照企微可信IP）', async () => {
-  const result = await withStubFetch(
-    (url) => {
-      if (url.includes('api.ipify.org')) return jsonResponse({ ip: '203.0.113.55' });
-      throw new Error(`未预期的请求：${url}`);
-    },
-    () => runProbes(probeInput(), { alwaysFetchEgressIp: true }),
-  );
-  assert.equal(result.egressIp, '203.0.113.55');
-  assert.ok(result.checks.length > 0);
-  assert.ok(result.checks.every((c) => c.status === 'SKIP'), '未启用真实通道时不应有探针请求');
-});
-
-test('runProbes：不传 alwaysFetchEgressIp 时不额外采集（默认行为兼容）', async () => {
-  const result = await runProbes(probeInput());
-  assert.equal(result.egressIp, undefined);
 });
 
 // ---------------------------------------------------------------------------
@@ -590,32 +489,6 @@ test('runProbes：钉钉 real → token + 机器人 + Stream 三条检查', asyn
   assert.ok(checks.every((c) => c.status === 'PASS'));
 });
 
-test('runProbes：企微 real 且 60020 → FAIL 且 egressIp 冒泡到结果根部', async () => {
-  const input = probeInput({
-    runtime: mockRuntime({
-      [Platform.WECOM]: {
-        policy: 'auto',
-        mode: 'real',
-        canSend: true,
-        canReceive: false,
-        missing: ['WECOM_TOKEN'],
-        warnings: [],
-      },
-    }),
-  });
-  const result = await withStubFetch(
-    (url) => {
-      if (url.includes('/cgi-bin/gettoken')) return jsonResponse({ errcode: 60020, errmsg: 'ip not allowed' });
-      if (url.includes('api.ipify.org')) return jsonResponse({ ip: '203.0.113.77' });
-      throw new Error(`未预期的请求：${url}`);
-    },
-    () => runProbes(input, { platformFilter: [Platform.WECOM] }),
-  );
-  assert.equal(result.egressIp, '203.0.113.77');
-  assert.equal(result.checks.length, 1);
-  assert.equal(result.checks[0].status, 'FAIL');
-  assert.ok(result.checks[0].detail.includes('203.0.113.77'));
-});
 
 // ---------------------------------------------------------------------------
 // 大模型探针：只发一条固定样例，确认鉴权、协议与 JSON 约束
@@ -776,4 +649,101 @@ test('probeDingtalkIdentity：dws 未安装 auto SKIP / user FAIL；未登录给
   assert.equal(linked[0]!.status, 'PASS');
   assert.match(linked[0]!.detail, /本人身份已登录/);
   assert.equal(linked[1]!.status, 'PASS');
+});
+
+// ---------------------------------------------------------------------------
+// 微信：real 模式必须真的探测桥（P0：不能"配了 real 就 SKIP/PASS"）
+// ---------------------------------------------------------------------------
+
+test('微信 real + 桥在 mock → FAIL，提示用 --mode rpa 重启', async () => {
+  await withStubFetch(
+    (url) => (/\/health$/.test(url)
+      ? jsonResponse({ ok: true, mode: 'mock' })
+      : textResponse('not found', 404)),
+    async () => {
+      const input = probeInput({
+        runtime: mockRuntime({
+          [Platform.WECHAT]: { policy: 'real', mode: 'real', canSend: true, canReceive: true, missing: [], warnings: [] },
+        }),
+        wechat: { bridgeUrl: 'http://127.0.0.1:8787' },
+      });
+      const { checks } = await runProbes(input, { platformFilter: [Platform.WECHAT] });
+      assert.equal(checks.length, 1);
+      assert.equal(checks[0]!.id, 'wechat:bridge');
+      assert.equal(checks[0]!.status, 'FAIL');
+      assert.match(checks[0]!.detail, /mock 模式/);
+      assert.match(String(checks[0]!.hint), /--mode rpa/);
+    },
+  );
+});
+
+test('微信 real + 桥在 rpa 且接收可用 → 发送/接收两条都 PASS', async () => {
+  await withStubFetch(
+    (url) => (/\/health$/.test(url)
+      ? jsonResponse({ ok: true, mode: 'rpa', receive: { implemented: true, supported: true } })
+      : textResponse('not found', 404)),
+    async () => {
+      const input = probeInput({
+        runtime: mockRuntime({
+          [Platform.WECHAT]: { policy: 'real', mode: 'real', canSend: true, canReceive: true, missing: [], warnings: [] },
+        }),
+        wechat: { bridgeUrl: 'http://127.0.0.1:8787' },
+      });
+      const { checks } = await runProbes(input, { platformFilter: [Platform.WECHAT] });
+      assert.deepEqual(checks.map((c) => c.id), ['wechat:bridge', 'wechat:receive']);
+      assert.ok(checks.every((c) => c.status === 'PASS'));
+    },
+  );
+});
+
+test('微信 real + 桥 rpa 但接收未就绪 → 发送 PASS / 接收 FAIL（如实区分）', async () => {
+  await withStubFetch(
+    (url) => (/\/health$/.test(url)
+      ? jsonResponse({
+        ok: true,
+        mode: 'rpa',
+        receive: { implemented: true, supported: false, reason: '未找到微信主窗口' },
+      })
+      : textResponse('not found', 404)),
+    async () => {
+      const input = probeInput({
+        runtime: mockRuntime({
+          [Platform.WECHAT]: { policy: 'real', mode: 'real', canSend: true, canReceive: true, missing: [], warnings: [] },
+        }),
+        wechat: { bridgeUrl: 'http://127.0.0.1:8787' },
+      });
+      const { checks } = await runProbes(input, { platformFilter: [Platform.WECHAT] });
+      assert.equal(checks[0]!.status, 'PASS');
+      assert.equal(checks[1]!.status, 'FAIL');
+      assert.match(checks[1]!.detail, /未找到微信主窗口/);
+    },
+  );
+});
+
+test('微信 4.x：接收项 SKIP（不是 FAIL），并指到按需拉取', async () => {
+  await withStubFetch(
+    (url) => (/\?|health$/.test(url) && /\/health/.test(url)
+      ? jsonResponse({
+        ok: true,
+        mode: 'rpa',
+        receive: { implemented: true, supported: false, reason: '微信 4.x 不暴露控件树' },
+        client: { kind: 'weixin4', uiaUsable: false, reason: '微信 4.x（Qt 自绘）' },
+      })
+      : textResponse('not found', 404)),
+    async () => {
+      const input = probeInput({
+        runtime: mockRuntime({
+          [Platform.WECHAT]: { policy: 'real', mode: 'real', canSend: true, canReceive: true, missing: [], warnings: [] },
+        }),
+        wechat: { bridgeUrl: 'http://127.0.0.1:8788' },
+      });
+      const { checks } = await runProbes(input, { platformFilter: [Platform.WECHAT] });
+      const send = checks.find((c) => c.id === 'wechat:bridge')!;
+      const recv = checks.find((c) => c.id === 'wechat:receive')!;
+      assert.equal(send.status, 'PASS');
+      assert.equal(recv.status, 'SKIP', '4.x 是"不适用"，不该报失败');
+      assert.match(recv.detail, /按需拉取/);
+      assert.match(String(recv.hint), /\/api\/wechat\/pull/);
+    },
+  );
 });

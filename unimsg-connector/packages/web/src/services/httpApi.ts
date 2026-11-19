@@ -32,15 +32,22 @@ import type {
   MailAccountInput,
   MailAccountTestResult,
   MailAccountView,
+  DownloadedFile,
   MessageApi,
   MessageFilter,
   OnboardingView,
   ReanalyzeResult,
   ReplyAck,
   TraceResult,
+  WechatPullRequest,
+  WechatPullResult,
+  WechatBridgeInfo,
+  WechatBridgeStartResult,
+  WechatBridgeStopResult,
 } from './api';
 import { APP_CONFIG_LLM_FIELD_KEYS, APP_CONFIG_PLATFORM_FIELD_KEYS } from './api';
 import { sortMessages } from '../utils/format';
+import { filenameFromContentDisposition } from '../utils/download';
 
 /** 后端业务错误：携带 HTTP 状态码，便于上层按 401/404 等分类处理 */
 export class ApiError extends Error {
@@ -180,6 +187,69 @@ export class HttpApi implements MessageApi {
     return body.data;
   }
 
+  async wechatPull(req: WechatPullRequest): Promise<WechatPullResult> {
+    // 拉取要置前微信、拖选、复制、转发，正常也要几秒，失败重试更久：
+    // 这里单独放宽超时，不走 request() 的 8s 默认值。
+    // 另外后端这里是桥的原始 JSON（不是 { ok, data } 信封），所以直接读响应体。
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 95_000);
+    try {
+      const resp = await fetch(`${this.baseUrl}/api/wechat/pull`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.token}`,
+        },
+        body: JSON.stringify(req),
+        signal: ctrl.signal,
+      });
+      const json = (await resp.json().catch(() => ({}))) as WechatPullResult & { error?: string };
+      if (json?.error) throw new ApiError(String(json.error), resp.status);
+      if (!resp.ok && !json?.conversation) {
+        throw new ApiError(`拉取失败（HTTP ${resp.status}）`, resp.status);
+      }
+      return json;
+    } catch (e) {
+      if (e instanceof ApiError) throw e;
+      if (e instanceof DOMException && e.name === 'AbortError') {
+        throw new ApiError('拉取超时：桥可能卡在置前/拖选，请确认微信窗口可用后重试', 0);
+      }
+      throw new ApiError(`拉取失败：${e instanceof Error ? e.message : '未知错误'}`, 0);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async wechatBridgeStatus(): Promise<WechatBridgeInfo> {
+    const body = await this.request<{ data?: WechatBridgeInfo }>('/api/wechat/bridge/status');
+    if (!body.data) throw new ApiError('后端未返回 RPA 桥状态', 0);
+    return body.data;
+  }
+
+  async startWechatBridge(): Promise<WechatBridgeStartResult> {
+    return this.wechatBridgeAction('/api/wechat/bridge/start');
+  }
+
+  async stopWechatBridge(): Promise<WechatBridgeStopResult> {
+    return this.wechatBridgeAction('/api/wechat/bridge/stop');
+  }
+
+  /** 桥启动/停止失败会返回 409 + data/error；这里保留 data 让界面能展示日志尾部 */
+  private async wechatBridgeAction<T extends { error?: string }>(path: string): Promise<T> {
+    const res = await fetch(`${this.baseUrl}${path}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${this.token}`,
+      },
+      body: '{}',
+      signal: AbortSignal.timeout(15_000),
+    });
+    const json = (await res.json().catch(() => ({}))) as { data?: T; error?: string };
+    if (json.data) return json.data;
+    throw new ApiError(json.error ?? `RPA 桥操作失败（HTTP ${res.status}）`, res.status);
+  }
+
   async mailAccounts(): Promise<MailAccountView[]> {
     const body = await this.request<{ data?: unknown }>('/api/mail/accounts');
     // 兼容 data 直接是数组 / data.accounts 两种后端返回
@@ -307,6 +377,48 @@ export class HttpApi implements MessageApi {
       body: JSON.stringify(ids && ids.length > 0 ? { ids } : {}),
     });
     return body.changed ?? 0;
+  }
+
+  /**
+   * 附件下载：必须带 Bearer，因此不能用 <a href> 裸链；取回 Blob 后由页面触发保存。
+   * 文件可能较大，超时单独放宽到 120s（普通 API 仍是 8s）。
+   */
+  async downloadAttachment(
+    traceId: string,
+    index: number,
+    field: 'attachments' | 'replyAttachments' = 'attachments',
+  ): Promise<DownloadedFile> {
+    const query = field === 'replyAttachments' ? '?field=replyAttachments' : '';
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 120_000);
+    let res: Response;
+    try {
+      res = await fetch(
+        `${this.baseUrl}/api/messages/${encodeURIComponent(traceId)}/attachments/${index}/download${query}`,
+        {
+          headers: { Authorization: `Bearer ${this.token}` },
+          signal: controller.signal,
+        },
+      );
+    } catch (e) {
+      if ((e as Error)?.name === 'AbortError') {
+        throw new ApiError('附件下载超时，请稍后重试', 0);
+      }
+      throw new ApiError('附件下载失败：无法连接后端服务', 0);
+    } finally {
+      clearTimeout(timer);
+    }
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => null) as { error?: string } | null;
+      if (res.status === 401) throw new ApiError('未授权：API Token 无效或缺失', 401);
+      if (res.status === 404) throw new ApiError(body?.error ?? '附件不存在', 404);
+      throw new ApiError(body?.error ?? `附件下载失败（HTTP ${res.status}）`, res.status);
+    }
+
+    const filename = filenameFromContentDisposition(res.headers.get('content-disposition'))
+      ?? `附件-${index + 1}`;
+    return { blob: await res.blob(), filename };
   }
 
   async trace(id: string): Promise<TraceResult> {
@@ -462,11 +574,11 @@ export function normalizeMailTestResult(body: unknown): MailAccountTestResult {
 // /api/app-config 归一化（后端字段可能演进：这里把多种包法统一成页面可渲染结构）
 // ---------------------------------------------------------------------------
 
-const APP_CONFIG_PLATFORMS: AppConfigPlatformId[] = ['feishu', 'dingtalk', 'wecom'];
+const APP_CONFIG_PLATFORMS: AppConfigPlatformId[] = ['feishu', 'dingtalk', 'wechat'];
 const PLATFORM_KEY_PREFIX: Record<AppConfigPlatformId, string[]> = {
   feishu: ['FEISHU_'],
   dingtalk: ['DINGTALK_'],
-  wecom: ['WECOM_'],
+  wechat: ['WECHAT_'],
 };
 
 function normalizeConfigSource(value: unknown): AppConfigSource {

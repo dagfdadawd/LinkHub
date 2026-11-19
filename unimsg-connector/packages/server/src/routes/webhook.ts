@@ -4,11 +4,12 @@
  */
 import express, { Request, Router } from 'express';
 import { Platform } from '@unimsg/shared';
+import { config } from '../config';
 import { connectors } from '../connectors/registry';
 import { InvalidPlatformEvent, isEmptyPlatformEvent, MessageService } from '../services/message';
 
 /**
- * 企微/钉钉用 XML 推消息，app 级的 express.json 不认这个 content-type，
+ * 钉钉（HTTP 回调模式）用 XML 推消息，app 级的 express.json 不认这个 content-type，
  * 这里再挂一层 express.text 把原始报文收进 req.body（JSON 请求会被原样跳过）。
  */
 const xmlAsText = express.text({
@@ -18,7 +19,7 @@ const xmlAsText = express.text({
 });
 
 /**
- * 部分平台把签名参数挂在 query 上（企微：msg_signature/timestamp/nonce），
+ * 部分平台把签名参数挂在 query 上（如钉钉的 msg_signature/timestamp/nonce），
  * 而 PlatformConnector.verify 只收 headers，所以把 query 并入 headers 传给连接器。
  */
 function signHeaders(req: Request): Record<string, string | string[] | undefined> {
@@ -35,11 +36,20 @@ function querySignature(req: Request): string {
     ?? (typeof req.query.sig === 'string' ? req.query.sig : 'mock');
 }
 
+/** 微信 RPA 桥只监听 127.0.0.1；real 模式下 webhook 也只收本机回环。 */
+export function isLoopbackAddress(addr?: string): boolean {
+  const value = (addr ?? '').trim().toLowerCase();
+  return value === '127.0.0.1'
+    || value === '::1'
+    || value === '::ffff:127.0.0.1'
+    || value === '::ffff:7f00:1';
+}
+
 export function webhookRouter(svc: MessageService) {
   const r = Router();
 
-  // GET 握手：企业微信配置回调 URL 时带 msg_signature/timestamp/nonce/echostr 来，
-  // 必须把 echostr 解密后的明文原样返回，否则企微判定 URL 验证失败。
+  // GET 握手：配置回调 URL 时会带签名参数与 echostr 来，
+  // 需要原样返回 challenge/明文，否则平台判定 URL 验证失败。
   r.get('/webhook/:platform', (req, res) => {
     const platform = req.params.platform as Platform;
     const connector = connectors[platform];
@@ -60,6 +70,15 @@ export function webhookRouter(svc: MessageService) {
     const connector = connectors[platform];
     if (!connector) {
       res.status(404).json({ ok: false, error: 'unknown platform' });
+      return;
+    }
+
+    // 微信 RPA 桥只监听本机；real 模式下不让 LAN/公网请求伪造微信消息。
+    // 固定 dev-rpa 签名写在源码里，不是秘密，必须再加来源限制。
+    if (platform === Platform.WECHAT
+      && config.runtime[Platform.WECHAT].mode === 'real'
+      && !isLoopbackAddress(req.socket.remoteAddress)) {
+      res.status(401).json({ ok: false, error: 'wechat webhook only accepts loopback in real mode' });
       return;
     }
 
@@ -96,11 +115,6 @@ export function webhookRouter(svc: MessageService) {
 
     try {
       const result = await svc.onPlatformEvent(platform, body);
-      // 企微回调要求返回明文 success，否则会重试
-      if (platform === Platform.WECOM) {
-        res.type('text/plain').send('success');
-        return;
-      }
       res.status(200).json({ ok: true, duplicate: result.duplicate ?? false });
     } catch (e) {
       // 畸形事件（缺 externalId 等）是「调用方的问题」→ 400；其余异常仍 500

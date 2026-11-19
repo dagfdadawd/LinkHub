@@ -113,7 +113,7 @@ test('全 Mock：收发都标「模拟」，不探测 dws、不起子进程', as
 
   const lines = identityStartupLines();
   assert.match(lines[0]!, /身份:/);
-  assert.match(lines[0]!, /企业微信=不适用/);
+  assert.match(lines[0]!, /微信=不适用/);
   assert.match(lines[0]!, /邮箱=不适用/);
 });
 
@@ -243,7 +243,7 @@ test('钉钉未登录 + DINGTALK_IDENTITY=user：发送校验中文报错，不�
       && /钉钉本人身份未连接/.test(e.message)
       && /连接本人账号/.test(e.message),
   );
-  assert.throws(() => assertIdentityUsable(Platform.WECOM, 'user'), IdentityUnavailableError);
+  assert.throws(() => assertIdentityUsable(Platform.WECHAT, 'user'), IdentityUnavailableError);
 });
 
 test('ensureIdentityProbed：缓存说未登录时会强制重探，登录完成后无需重启后端即可发送', async () => {

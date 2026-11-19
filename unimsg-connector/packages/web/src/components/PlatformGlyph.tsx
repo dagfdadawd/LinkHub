@@ -14,8 +14,8 @@ import { Platform } from '../types';
 const GLYPH: Record<Platform, typeof MailOutlined> = {
   [Platform.FEISHU]: SendOutlined,
   [Platform.DINGTALK]: ThunderboltOutlined,
-  [Platform.WECOM]: TeamOutlined,
   [Platform.MAIL]: MailOutlined,
+  [Platform.WECHAT]: TeamOutlined,
 };
 
 export function PlatformGlyph({ platform, size = 16 }: { platform: Platform; size?: number }) {

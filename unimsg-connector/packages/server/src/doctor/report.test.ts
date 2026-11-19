@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Platform } from '@unimsg/shared';
-import { explainFeishuError, explainWecomError } from './probes';
+import { explainFeishuError } from './probes';
 import {
   computeExitCode,
   displayWidth,
@@ -153,12 +153,12 @@ test('渲染：PASS / FAIL / SKIP 三种状态都可见，FAIL 带原因与建�
       checks: [
         check(),
         check({
-          id: 'wecom:token',
-          group: Platform.WECOM,
-          title: '企业微信 access_token（应用凭据校验）',
+          id: 'wechat:bridge',
+          group: Platform.WECHAT,
+          title: '微信 RPA 桥连通性',
           status: 'FAIL',
-          detail: '企业微信返回 60020：调用来源 IP 不在企业可信IP内',
-          hint: '把出口 IP 加入企业可信 IP 后重跑 doctor',
+          detail: '微信 RPA 桥不可达：请确认桥已启动、微信桌面端已登录',
+          hint: '启动 scripts/wechat-rpa/rpa_bridge.py 后重跑 doctor',
         }),
         check({ id: 'mail:skipped', group: Platform.MAIL, status: 'SKIP', detail: '未启用真实通道' }),
       ],
@@ -167,8 +167,8 @@ test('渲染：PASS / FAIL / SKIP 三种状态都可见，FAIL 带原因与建�
   assert.ok(text.includes('[PASS]'));
   assert.ok(text.includes('[FAIL]'));
   assert.ok(text.includes('[SKIP]'));
-  assert.ok(text.includes('企业微信返回 60020'));
-  assert.ok(text.includes('建议：把出口 IP 加入企业可信 IP 后重跑 doctor'));
+  assert.ok(text.includes('微信 RPA 桥不可达'));
+  assert.ok(text.includes('建议：启动 scripts/wechat-rpa/rpa_bridge.py 后重跑 doctor'));
   assert.ok(text.includes('PASS 1 / FAIL 1 / SKIP 1'));
   assert.ok(text.includes('退出码：1'));
 });
@@ -179,7 +179,7 @@ test('渲染：环境段的 .env 缺失与 MOCK 遗留警告会显示', () => {
       env: env({
         envFiles: [{ path: 'C:\\proj\\unimsg-connector\\.env', exists: false }],
         notes: ['未找到 .env：所有平台会按 auto 回退 Mock。'],
-        modeWarnings: ['MOCK 已废弃：建议删除该变量，改用 FEISHU_MODE / DINGTALK_MODE / WECOM_MODE / MAIL_MODE'],
+        modeWarnings: ['MOCK 已废弃：建议删除该变量，改用 FEISHU_MODE / DINGTALK_MODE / MAIL_MODE'],
       }),
     }),
   );
@@ -269,28 +269,6 @@ test('建议渲染：飞书 21001 的「租户策略/企业认证」提示出现
   assert.ok(text.includes('租户策略'));
 });
 
-test('建议渲染：企微 60020 的出口 IP 与「加入企业可信IP」步骤出现在报告里', () => {
-  const advice = explainWecomError(60020, 'not allow to access from your ip', { egressIp: '203.0.113.9' });
-  const text = renderTextReport(
-    report({
-      egressIp: '203.0.113.9',
-      checks: [
-        check({
-          group: Platform.WECOM,
-          id: 'wecom:token',
-          title: '企业微信 access_token（应用凭据校验）',
-          status: 'FAIL',
-          detail: advice.detail,
-          hint: advice.hint,
-        }),
-      ],
-    }),
-  );
-  assert.ok(text.includes('60020'));
-  assert.ok(text.includes('203.0.113.9'));
-  assert.ok(text.includes('企业可信IP'));
-  assert.ok(text.includes('应用管理'));
-});
 
 // ---------------------------------------------------------------------------
 // JSON 输出
@@ -300,7 +278,6 @@ test('JSON：结构合法、字段齐全、FAIL 时 ok=false 且 exitCode=1', ()
   const raw = renderJsonReport(
     report({
       checks: [check(), check({ id: 'mail:skipped', status: 'SKIP' }), check({ status: 'FAIL' })],
-      egressIp: '203.0.113.9',
     }),
   );
   const parsed = JSON.parse(raw);
@@ -308,7 +285,6 @@ test('JSON：结构合法、字段齐全、FAIL 时 ok=false 且 exitCode=1', ()
   assert.equal(parsed.version, 1);
   assert.equal(parsed.ok, false);
   assert.equal(parsed.exitCode, 1);
-  assert.equal(parsed.egressIp, '203.0.113.9');
   assert.deepEqual(parsed.summary, { pass: 1, fail: 1, skip: 1 });
   assert.ok(Array.isArray(parsed.platforms));
   assert.ok(Array.isArray(parsed.checks));
@@ -344,7 +320,6 @@ test('JSON：全部通过时 ok=true 且 exitCode=0', () => {
   assert.equal(parsed.ok, true);
   assert.equal(parsed.exitCode, 0);
   assert.equal(parsed.platformFilter, null);
-  assert.equal(parsed.egressIp, null);
 });
 
 // ---------------------------------------------------------------------------
@@ -353,7 +328,7 @@ test('JSON：全部通过时 ok=true 且 exitCode=0', () => {
 
 test('显示宽度：CJK 按 2 列、ASCII 按 1 列，padDisplay 能对齐中文表格', () => {
   assert.equal(displayWidth('飞书'), 4);
-  assert.equal(displayWidth('企业微信'), 8);
+  assert.equal(displayWidth('微信'), 4);
   assert.equal(displayWidth('feishu'), 6);
   assert.equal(padDisplay('飞书', 8), '飞书    ');
   assert.equal(padDisplay('feishu', 8), 'feishu  ');
@@ -367,7 +342,7 @@ test('结论：一个平台都没配（PASS 0 + 全部未配置）时不亮绿�
       platforms: [
         notConfigured(Platform.FEISHU, '飞书'),
         notConfigured(Platform.DINGTALK, '钉钉'),
-        notConfigured(Platform.WECOM, '企业微信'),
+        notConfigured(Platform.WECHAT, '微信'),
         notConfigured(Platform.MAIL, '邮箱'),
       ],
       checks: [check({ status: 'SKIP', detail: '未启用真实通道' })],
@@ -404,8 +379,8 @@ test('结论：复制模板的命令注明在 unimsg-connector/ 下执行（doct
 
 test('结论：--platform 过滤到单个未配置平台时，说“所选平台”而不是“四个平台”', () => {
   const only = platformReport({
-    platform: Platform.WECOM,
-    label: '企业微信',
+    platform: Platform.WECHAT,
+    label: '微信',
     configured: false,
     mode: 'mock',
     canSend: false,
@@ -415,14 +390,14 @@ test('结论：--platform 过滤到单个未配置平台时，说“所选平台
   const text = renderTextReport(
     report({
       platforms: [only],
-      platformFilter: [Platform.WECOM],
-      checks: [check({ group: Platform.WECOM, status: 'SKIP' })],
+      platformFilter: [Platform.WECHAT],
+      checks: [check({ group: Platform.WECHAT, status: 'SKIP' })],
       env: env({ mailAccountCount: 0, mailEnabled: false }),
     }),
   );
   assert.ok(text.includes('所选平台'), '应按过滤后的范围描述');
   assert.ok(!text.includes('四个平台'), '过滤单平台时不应再说四个平台');
-  assert.ok(text.includes('平台过滤：wecom'));
+  assert.ok(text.includes('平台过滤：wechat'));
 });
 
 test('结论：四平台均未配置但大模型探针 PASS 时，计数用真实 summary 而非写死的 0', () => {
@@ -433,7 +408,7 @@ test('结论：四平台均未配置但大模型探针 PASS 时，计数用真�
       platforms: [
         notConfigured(Platform.FEISHU, '飞书'),
         notConfigured(Platform.DINGTALK, '钉钉'),
-        notConfigured(Platform.WECOM, '企业微信'),
+        notConfigured(Platform.WECHAT, '微信'),
         notConfigured(Platform.MAIL, '邮箱'),
       ],
       checks: [

@@ -18,13 +18,17 @@ import { DrawerSection } from '../../components/DrawerSection';
 
 function TodoCard({ todo, onOpen }: { todo: UnifiedMessage; onOpen: (traceId: string) => void }) {
   const due = formatDue(todo.dueAt);
+  /** 手动加的待办标题优先；没有则回退消息正文 —— 正文不被覆盖，回放里仍看得到原话 */
+  const title = todo.todoTitle?.trim() || todo.body;
+  /** 新建发送时顺手加的待办方向是 out：不是别人发来的，显示「我发起」更准确 */
+  const who = todo.direction === 'out' ? '我发起' : todo.sender.name;
 
   return (
     <article
       className={`surface-card surface-card--hover todo-card${todo.done ? ' is-done' : ''}`}
       role="button"
       tabIndex={0}
-      aria-label={`${todo.sender.name}：${todo.body}`}
+      aria-label={`${who}：${title}`}
       onClick={() => onOpen(todo.traceId)}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
@@ -44,13 +48,14 @@ function TodoCard({ todo, onOpen }: { todo: UnifiedMessage; onOpen: (traceId: st
 
       <div className="todo-card__main">
         <div className="todo-card__title">
-          <span className="todo-card__sender">{todo.sender.name}</span>
+          <span className="todo-card__sender">{who}</span>
           <PlatformTag platform={todo.platform} small />
           <span className="todo-card__time">{formatRelative(todo.createdAt)}</span>
         </div>
-        <p className="todo-card__body">{todo.body}</p>
+        <p className="todo-card__body">{title}</p>
         <div className="todo-card__foot">
           <StatusBadge status={todo.status} small />
+          {todo.direction === 'out' && <span className="chip chip--type">手动添加</span>}
           {due && !todo.done && (
             <span className={`todo-card__due todo-card__due--${due.tone}`}>
               <ClockCircleOutlined aria-hidden="true" /> {due.text}

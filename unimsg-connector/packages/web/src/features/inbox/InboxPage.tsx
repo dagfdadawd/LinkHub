@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { App as AntApp, Button, Input, Popover, Select, Skeleton } from 'antd';
-import { CloseOutlined, FilterOutlined, SearchOutlined } from '@ant-design/icons';
+import { App as AntApp, Button, Input, Modal, Popover, Select, Skeleton } from 'antd';
+import { CloseOutlined, FilterOutlined, SearchOutlined, SyncOutlined } from '@ant-design/icons';
 import { useAppState } from '../../hooks/useAppState';
 import { useHotkeys } from '../../hooks/useHotkeys';
 import { store, services } from '../../store';
@@ -87,6 +87,18 @@ export function InboxPage() {
   const [onboarded, setOnboarded] = useState(() => isOnboarded());
   /** 首启 3 步引导是否已「知道了」（据此决定空态是否显示注入示例，避免双重引导） */
   const [firstRunDismissed, setFirstRunDismissed] = useState(() => readFirstRunDismissed());
+
+  /**
+   * 微信「按需拉取」对话框（微信 4.x 没有可访问性控件树，只能拖选复制）。
+   * 会话名由人确认：4.x 从外部读不到当前会话标题，猜一个名字会导致消息挂错会话。
+   */
+  const [pullOpen, setPullOpen] = useState(false);
+  const [pulling, setPulling] = useState(false);
+  const [pullConv, setPullConv] = useState(() => localStorage.getItem('linkhub.wechat.pullConv') ?? '');
+  const [pullSelf, setPullSelf] = useState(() => localStorage.getItem('linkhub.wechat.selfName') ?? '');
+  const [pullType, setPullType] = useState<'p2p' | 'group'>(
+    () => (localStorage.getItem('linkhub.wechat.pullType') === 'group' ? 'group' : 'p2p'),
+  );
 
   useEffect(() => {
     // 纯前端演示模式不需要拉授权中心（Mock 会如实返回演示状态，但横幅不显示）
@@ -225,6 +237,42 @@ export function InboxPage() {
       toast.success(`已注入一条${PLATFORM_META[target].name}消息`);
     } catch (e) {
       toast.error(`注入失败：${e instanceof Error ? e.message : '未知错误'}`);
+    }
+  };
+
+  /** 微信 4.x 按需拉取：把当前会话可视区的消息拉进来（拖选复制，拿原文，零 OCR 误差） */
+  const handleWechatPull = async () => {
+    const conversation = pullConv.trim();
+    if (!conversation) {
+      toast.error('请先填会话名：要和微信里显示的完全一致（4.x 从外部读不到当前会话标题）');
+      return;
+    }
+    const selfName = pullSelf.trim();
+    setPulling(true);
+    try {
+      const r = await services.api.wechatPull({
+        conversation,
+        conversationType: pullType,
+        ...(selfName ? { selfName } : {}),
+      });
+      localStorage.setItem('linkhub.wechat.pullConv', conversation);
+      localStorage.setItem('linkhub.wechat.pullType', pullType);
+      if (selfName) localStorage.setItem('linkhub.wechat.selfName', selfName);
+      await store.refresh();
+      const parts = [`解析 ${r.parsed} 条`, `新增 ${r.forwarded} 条`];
+      if (r.duplicates) parts.push(`已存在 ${r.duplicates} 条`);
+      if (r.failed?.length) parts.push(`失败 ${r.failed.length} 条`);
+      toast.success(`已从「${conversation}」拉取：${parts.join(' · ')}`);
+      if (r.conversationVerified === false) {
+        toast.warning('4.x 读不到当前会话标题，请确认微信里打开的就是目标会话；挂错会话请删除后重拉');
+      }
+      if (r.warning) toast.warning(r.warning);
+      if (r.failed?.length) toast.error(`有 ${r.failed.length} 条未入库：${r.failed[0]?.error ?? ''}`);
+      setPullOpen(false);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '拉取失败');
+    } finally {
+      setPulling(false);
     }
   };
 
@@ -400,7 +448,7 @@ export function InboxPage() {
 
   return (
     <div className="inbox-page">
-      {/* 个人版首启：先去「连接账号」把邮箱/钉钉/飞书/企微连上（点过即不再打扰） */}
+      {/* 个人版首启：先去「连接账号」把邮箱/钉钉/飞书/微信连上（点过即不再打扰） */}
       {showOnboarding && (
         <OnboardingBanner
           onOpen={openConnect}
@@ -457,6 +505,19 @@ export function InboxPage() {
               value={state.filters.platform}
               onChange={(platform) => store.setFilters({ platform })}
             />
+
+            {/* 微信 4.x：没有可访问性控件树，只能「按需拉取」（拖选复制）。
+                只在选中微信渠道时出现，不打扰其它平台的常规使用。 */}
+            {state.filters.platform === Platform.WECHAT && (
+              <div className="wechat-pull">
+                <Button size="small" icon={<SyncOutlined />} onClick={() => setPullOpen(true)}>
+                  从微信拉取当前会话
+                </Button>
+                <span className="wechat-pull__hint">
+                  4.x 无可访问控件树，靠选中复制读原文；只覆盖当前打开的会话
+                </span>
+              </div>
+            )}
 
             <div className="list-filters">
               <div className="list-quick" role="group" aria-label="阅读状态筛选">
@@ -584,6 +645,60 @@ export function InboxPage() {
           )}
         </section>
       </div>
+
+      <Modal
+        open={pullOpen}
+        title="从微信拉取当前会话"
+        okText="开始拉取"
+        cancelText="取消"
+        confirmLoading={pulling}
+        onOk={() => void handleWechatPull()}
+        onCancel={() => setPullOpen(false)}
+        destroyOnHidden
+      >
+        <div className="wechat-pull-modal">
+          <p className="wechat-pull-modal__lead">
+            微信 4.x 不暴露控件树，读不到消息列表。桥会：把微信窗口置前 → 在消息区拖选 →
+            Ctrl+C → 解析原文。拉取期间会短暂抢焦点，结束后自动还原剪贴板与焦点。
+          </p>
+          <label className="wechat-pull-modal__label" htmlFor="wechat-pull-conv">
+            会话名（必填，要和微信里显示的一致）
+          </label>
+          <Input
+            id="wechat-pull-conv"
+            value={pullConv}
+            onChange={(e) => setPullConv(e.target.value)}
+            placeholder="例如：项目群 / 张三"
+            maxLength={60}
+          />
+          <label className="wechat-pull-modal__label" htmlFor="wechat-pull-type">
+            会话类型（群聊不选会被存成单聊）
+          </label>
+          <Select
+            id="wechat-pull-type"
+            value={pullType}
+            onChange={(v) => setPullType(v)}
+            style={{ width: '100%' }}
+            options={[
+              { value: 'p2p', label: '单聊（联系人）' },
+              { value: 'group', label: '群聊' },
+            ]}
+          />
+          <label className="wechat-pull-modal__label" htmlFor="wechat-pull-self">
+            你的微信昵称（可选，用来过滤自己发的消息）
+          </label>
+          <Input
+            id="wechat-pull-self"
+            value={pullSelf}
+            onChange={(e) => setPullSelf(e.target.value)}
+            placeholder="例如：阿彬（不填则自己发的也可能被当成入站）"
+            maxLength={60}
+          />
+          <p className="wechat-pull-modal__note">
+            只拉「当前在微信里打开的那个会话」的可视区消息；滚出屏幕的历史拉不到。
+          </p>
+        </div>
+      </Modal>
     </div>
   );
 }

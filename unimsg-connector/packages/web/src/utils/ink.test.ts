@@ -66,9 +66,9 @@ describe('标签墨色在自家浅底上必须 ≥4.5', () => {
 
   it('色点仍用品牌原色（图形对比只需 3:1，保留识别度）', () => {
     expect(PLATFORM_META.feishu.color).toBe('#3370ff');
-    expect(PLATFORM_META.wecom.color).toBe('#07c160');
+    expect(PLATFORM_META.wechat.color).toBe('#09bb07');
     // 原色当文字是不达标的——这正是要分成两个字段的原因
-    expect(contrastRatio(PLATFORM_META.wecom.color, PLATFORM_META.wecom.soft)).toBeLessThan(4.5);
+    expect(contrastRatio(PLATFORM_META.wechat.color, PLATFORM_META.wechat.soft)).toBeLessThan(4.5);
   });
 });
 

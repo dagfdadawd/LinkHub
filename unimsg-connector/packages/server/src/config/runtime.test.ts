@@ -24,7 +24,7 @@ function creds(): PlatformCredentials {
   return {
     feishu: { appId: '', appSecret: '', verifyToken: '', encryptKey: '', stream: false, baseUrl: 'https://open.feishu.cn' },
     dingtalk: { appKey: '', appSecret: '', robotCode: '', aesToken: '', aesKey: '', stream: false, baseUrl: 'https://api.dingtalk.com' },
-    wecom: { corpId: '', agentId: '', secret: '', token: '', aesKey: '', baseUrl: 'https://qyapi.weixin.qq.com' },
+    wechat: { bridgeUrl: 'http://127.0.0.1:8787' },
   };
 }
 
@@ -169,7 +169,8 @@ test('mode：没配凭据时 auto → 全部 mock，且不出现"假装真实"',
   for (const p of Object.values(Platform)) {
     assert.equal(rt[p].mode, 'mock', `${p} 应为 mock`);
     assert.equal(rt[p].policy, 'auto');
-    assert.equal(rt[p].configured, false);
+    // 微信 RPA 的桥地址有默认值，天然「已就绪」，但仍强制 mock——这里只对需要凭据的平台断言未配置
+    if (p !== Platform.WECHAT) assert.equal(rt[p].configured, false);
   }
 });
 
@@ -184,7 +185,7 @@ test('mode：只配钉钉 → 钉钉 real，其余 mock（可替换性的关键�
   assert.equal(rt[Platform.DINGTALK].canSend, true, 'ROBOT_CODE 缺省等于 Client ID');
   assert.deepEqual(rt[Platform.DINGTALK].missing, [], 'Stream 模式不需要 HTTP 回调用 AES Token/Key');
   assert.equal(rt[Platform.FEISHU].mode, 'mock');
-  assert.equal(rt[Platform.WECOM].mode, 'mock');
+  assert.equal(rt[Platform.WECHAT].mode, 'mock');
   assert.equal(rt[Platform.MAIL].mode, 'mock');
   assert.match(rt[Platform.DINGTALK].reason, /真实接口/);
 });
@@ -221,14 +222,12 @@ test('mode：显式 mock 即使有凭据也走本地模拟（绝不偷偷打真�
   assert.match(rt[Platform.FEISHU].reason, /显式指定/);
 });
 
-test('mode：显式 real 但缺凭据 → real + missing 清单，由发送守卫显式报错', () => {
-  const rt = runtimeOf({ WECOM_MODE: 'real' });
-  const wecom = rt[Platform.WECOM];
-  assert.equal(wecom.mode, 'real');
-  assert.equal(wecom.configured, false);
-  assert.ok(wecom.missing.includes('WECOM_CORP_ID'));
-  assert.ok(wecom.missing.includes('WECOM_SECRET'));
-  assert.ok(wecom.missing.includes('WECOM_AGENT_ID'));
+test('mode：微信 auto 恒为 mock（桥地址有默认值，不能因“凭据齐全”误判真实）；显式 real 才 real', () => {
+  const auto = runtimeOf({});
+  assert.equal(auto[Platform.WECHAT].mode, 'mock', 'auto 下微信默认走模拟，必须显式 real 才操作真实微信');
+
+  const forced = runtimeOf({ WECHAT_MODE: 'real' });
+  assert.equal(forced[Platform.WECHAT].mode, 'real');
 });
 
 test('mode：旧 MOCK=true / false 仍可用但会提示废弃', () => {
@@ -294,16 +293,22 @@ test('capability：飞书显式 HTTP 回调（FEISHU_STREAM=false）且缺 Verif
   assert.ok(f.missing.includes('FEISHU_VERIFY_TOKEN'));
 });
 
-test('capability：企微回调凭据齐全 → 收✓；缺少 AgentId 时不能发并进 missing', () => {
-  const base = { WECOM_CORP_ID: 'ww1', WECOM_SECRET: 's', WECOM_TOKEN: 't', WECOM_AES_KEY: 'k' };
-  const noAgent = runtimeOf(base);
-  assert.equal(noAgent[Platform.WECOM].canReceive, true);
-  assert.equal(noAgent[Platform.WECOM].canSend, false);
-  assert.ok(noAgent[Platform.WECOM].missing.includes('WECOM_AGENT_ID'));
+test('capability：微信默认 mock —— 配了桥地址也不谎报能收（P0）', () => {
+  const rt = runtimeOf({});
+  assert.equal(rt[Platform.WECHAT].configured, true, '桥地址有默认值，视为配置齐全');
+  assert.equal(rt[Platform.WECHAT].mode, 'mock', '默认 auto 对微信解析为 mock：不会操作真实微信');
+  assert.equal(rt[Platform.WECHAT].canSend, true);
+  assert.equal(rt[Platform.WECHAT].canReceive, false, 'mock 不采集真实微信消息，不能报"能收"');
+  assert.equal(rt[Platform.WECHAT].missing.length, 0);
+  assert.ok(rt[Platform.WECHAT].warnings.some((w) => w.includes('不采集真实微信消息')));
+});
 
-  const full = runtimeOf({ ...base, WECOM_AGENT_ID: '1000002' });
-  assert.equal(full[Platform.WECOM].mode, 'real');
-  assert.equal(full[Platform.WECOM].canSend, true);
+test('capability：微信显式 real —— 配置上收发可用，真实能力由桥探针判定', () => {
+  const rt = runtimeOf({ WECHAT_MODE: 'real' });
+  assert.equal(rt[Platform.WECHAT].mode, 'real');
+  assert.equal(rt[Platform.WECHAT].canSend, true);
+  assert.equal(rt[Platform.WECHAT].canReceive, true, 'real 模式下配置层面允许接收');
+  assert.ok(rt[Platform.WECHAT].warnings.some((w) => w.includes('RPA 桥的运行态')));
 });
 
 test('capability：邮箱有账号 → 收发均 ✓；MAIL_ENABLED=false 时只发不收', () => {

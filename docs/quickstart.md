@@ -2,9 +2,9 @@
 
 > 目标：**不配任何平台账号，也能看到完整闭环**；以后换成自己的账号只改 `.env`，不改代码。
 > 从交付包根目录开始，先 `cd unimsg-connector`；下文命令都在该目录下执行（仓库根目录没有 `package.json`，在根目录跑 `pnpm` 会报错）。
-> README 顶部也有同样的一张「30 秒选路径」表，两边内容一致。
+> 根目录 [README.md](../README.md) 顶部有「30 秒跑起来」入口与文档导航，两边内容一致。
 >
-> **Windows 用户更省事**：直接双击仓库根目录的 `start.bat`（或 `start-docker.bat` 走 Docker），脚本会自动完成下面的依赖安装、环境变量配置、启动后端与前端、打开浏览器；停止用 `start.bat stop`；改完代码 / `.env` 想重启用 `start.bat restart`（只停 LinkHub 自己的旧进程，不误杀别的程序）；想知道端口被谁占着用 `start.bat ports`。详见 [README 的「Windows 一键启动」小节](../README.md)。
+> **Windows 用户更省事**：直接双击仓库根目录的 `start.bat`（或 `start-docker.bat` 走 Docker），脚本会自动完成下面的依赖安装、环境变量配置、启动后端与前端、打开浏览器；停止用 `start.bat stop`；改完代码 / `.env` 想重启用 `start.bat restart`（只停 LinkHub 自己的旧进程，不误杀别的程序）；想知道端口被谁占着用 `start.bat ports`。详见 [reference.md 的「Windows 一键启动」小节](reference.md)。
 >
 > **账号配置只在 `unimsg-connector/.env`**，该文件被 `.gitignore` 排除，**clone / pull / 同步队友代码都不会带过来**，换工作区后会静默退回全 Mock。若发现「我明明配过」，把旧工作区的 `.env` 复制过来，或双击 `setup-accounts.bat` 重新填，再用 `start.bat doctor` 自检。
 
@@ -13,7 +13,7 @@
 | 你想做什么 | 走哪条路 | 预计耗时 |
 |---|---|---|
 | **只想看效果**（零账号、零平台配置） | [路径 A：零账号演示](#path-a) | 约 5 分钟 |
-| **要换成自己的账号**（飞书 / 钉钉 / 企微 / 邮箱任选一个即可） | [路径 B：换账号](#path-b) | 约 10 分钟 |
+| **要换成自己的账号**（飞书 / 钉钉 / 微信 / 邮箱任选一个即可） | [路径 B：换账号](#path-b) | 约 10 分钟 |
 | **个人版首次使用**（普通用户，用自己的账号收发） | [路径 E：连接账号授权中心](#path-e) | 邮箱约 2 分钟；钉钉 / 飞书需本人授权 5–10 分钟（管理员项另计） |
 | **要用本人账号收发**（推荐，免把机器人拉进每个群） | [路径 D：连接本人账号](#path-d) | 飞书约 10 分钟；钉钉约 10–15 分钟（企业先开 CLI 访问；本机浏览器登录，远程 / 容器用设备码） |
 | **要现场演示 / 交付给评审 / 部署** | [路径 C：演示与交付](#path-c) | 按场景 5–30 分钟 |
@@ -52,7 +52,7 @@ pnpm --filter @unimsg/web dev        # 约 2 秒；浏览器打开 http://127.0.
 | 起后端 | `server listening ... :3001` + `运行模式: ...=mock(auto)`（无 `.env` 时全部 Mock） | 约 2 秒 |
 | 起前端 | 5173 页面打开，左下角显示「Mock 数据 / 前端演示模式 · 未接后端」（侧栏底部短标识「演示」），收件箱有内置演示消息 | 约 2 秒 |
 
-> 真实后端 + 空收件箱时，首页会显示客户化的「3 步上手」引导：主 CTA **「去连接账号」**、次 CTA **「先体验演示（注入示例消息）」**，开发者命令收进折叠区；也可以直接点空态里的「注入飞书示例 / 注入钉钉示例 / 注入企业微信示例」按钮注入一条示例消息（走真实入站链路，不会真的发到平台）。
+> 真实后端 + 空收件箱时，首页会显示客户化的「3 步上手」引导：主 CTA **「去连接账号」**、次 CTA **「先体验演示（注入示例消息）」**，开发者命令收进折叠区；也可以直接点空态里的「注入飞书示例 / 注入钉钉示例 / 注入微信示例」按钮注入一条示例消息（走真实入站链路，不会真的发到平台）。
 
 > **两种「看效果」方式别混用**：不配 `VITE_API_BASE` 时前端用内置 Mock 数据；一旦存在 `packages/web/.env` 且写了 `VITE_API_BASE`，前端就会去连后端。
 > 如果页面出现「数据加载异常」，多半是目录里带着别人的 `packages/web/.env`：先改名/删除它再重启前端（交付包默认不带这个文件）。
@@ -88,7 +88,8 @@ cp .env.example .env                 # Windows PowerShell：Copy-Item .env.examp
 #          本人身份收发：保持 FEISHU_IDENTITY=auto，在账号页点「连接本人账号」
 #    钉钉：DINGTALK_CLIENT_ID / DINGTALK_CLIENT_SECRET / DINGTALK_ROBOT_CODE / DINGTALK_STREAM=true
 #          本人身份收发：保持 DINGTALK_IDENTITY=auto，本机安装并登录 dws（见路径 D）
-#    企微：WECOM_CORP_ID / WECOM_AGENT_ID / WECOM_SECRET（要收消息再加 WECOM_TOKEN / WECOM_AES_KEY）
+#    微信：WECHAT_MODE=real（真实收发才写；默认 mock）+ WECHAT_BRIDGE_URL（默认 127.0.0.1:8787，一般不用改）
+#          另需本机登录微信桌面端 3.9.x 并启动 scripts/wechat-rpa/rpa_bridge.py（4.x 自绘界面读不到消息，只能发）
 #    邮箱：MAIL_QQ_ADDRESS / MAIL_QQ_AUTH_CODE（授权码，不是登录密码；可配多个账号）
 # 3) 先自检，再重启后端
 pnpm run doctor
@@ -107,7 +108,7 @@ pnpm --filter @unimsg/server start
   - 注意：四个平台**都没填凭据**时，结论是「⚠ 尚未配置任何平台」而不是「✔ 自检通过」（退出码仍为 0）——这是提醒你去填账号，不是自检失败。
   - 不知道命令在哪：账号页真实模式的卡片上就有可复制的 `pnpm run doctor --platform=<平台>`（提示语「变量齐了 ≠ 平台能连通」）。
 
-两个平台的外部限制要提前知道：飞书历史上可能报 `21001`（**本机租户 2026-11-12 已解除**；换租户 / 换环境仍需企业认证 / 合规租户）、企微可能报 `60020`（出口 IP 要加入「企业可信 IP」）。doctor 会给中文修复建议；逐平台步骤见 [swap-accounts.md](swap-accounts.md)。
+外部限制要提前知道：飞书历史上可能报 `21001`（**本机租户 2026-11-12 已解除**；换租户 / 换环境仍需企业认证 / 合规租户）。微信走 RPA 通道、无官方 API 限制，但需本机**微信桌面端 3.9.x**（4.x 是 Qt 自绘界面、不暴露控件树：自动轮询不可用，可「按需拉取」）与桥就绪。doctor 会给中文修复建议；逐平台步骤见 [swap-accounts.md](swap-accounts.md)。
 改完 `.env` 必须**重启后端**；改了前端 `.env` 必须**重启 Vite**。账号页会在 `.env` 修改时间晚于服务启动时间时提示「.env 已修改，需要重启后端才生效」，看到就重启，不要反复改拼写。
 
 <a id="path-d"></a>
@@ -171,13 +172,13 @@ curl -H "Authorization: Bearer dev-token" http://127.0.0.1:3001/api/accounts
 > **重要变化**：平台应用凭据可以在页面里填了——「连接账号」页的 **「填写…应用凭据」** 会保存到本机 `linkhub-config.json`，**保存后需要重启后端 / 重开 App 才生效**；只有「钉钉/飞书本人身份登录」是热应用的（登录后立即生效，不用重启）。`.env` 里显式写过的值优先，页面不能覆盖（会提示）。
 
 1. **先跑起来**：桌面版双击启动；命令行版在 `unimsg-connector/` 下 `pnpm --filter @unimsg/server start` + `pnpm --filter @unimsg/web dev`。首次打开收件箱顶部会出现横幅 **「首次使用：先连接你自己的账号」**：点 **「去连接账号」** 进入连接页；也可以点 **「先体验演示」** 先注入示例消息看闭环；点 **「稍后再说」** 后横幅不再打扰（之后仍可从左侧导航 **「连接账号」** 进入）。
-2. **页面先看一遍**：顶部进度 **「已就绪 x / 4」**（白号是 `0 / 4`，待处理数 = 未就绪数），四张卡按 **邮箱 → 钉钉 → 飞书 → 企业微信** 排列。白号口径：**2 项可自助（邮箱、钉钉）+ 2 项需管理员（飞书、企业微信）**，不是四个平台都需要管理员。状态 Tag 含义：
+2. **页面先看一遍**：顶部进度 **「已就绪 x / 4」**（白号是 `0 / 4`，待处理数 = 未就绪数），四张卡按 **邮箱 → 钉钉 → 飞书 → 微信** 排列。白号口径：**3 项可自助（邮箱、钉钉、微信）+ 1 项需管理员（飞书）**，不是四个平台都需要管理员。状态 Tag 含义：
 
 | 状态 Tag | 含义 | 白号时你会看到 |
 |---|---|---|
 | **已就绪** | 该平台已配置且通道真实可用 | 一开始没有 |
 | **需本人授权** | 应用/软件已就绪，等你本人登录授权 | 钉钉登录后、飞书凭据配好后会出现 |
-| **需管理员** | 缺平台应用凭据，或通道仍为模拟 | 缺飞书/企微凭据时；已登录钉钉但通道还是模拟时 |
+| **需管理员** | 缺平台应用凭据，或通道仍为模拟 | 缺飞书应用凭据时；已登录钉钉但通道还是模拟时 |
 | **需安装** | 缺本机依赖（钉钉 `dws`） | 包内没内置 dws 时 |
 | **演示模式** | 该平台被显式设为 Mock（如 `.env` 写了 `*_MODE=mock`） | 只有你主动设 Mock 才会出现 |
 | **异常** | 读取该平台状态失败 | 很少 |
@@ -202,14 +203,14 @@ curl -H "Authorization: Bearer dev-token" http://127.0.0.1:3001/api/accounts
    - 重启后卡片变 **「需本人授权」** → 点 **「连接飞书本人账号」** → 浏览器里用本人飞书账号授权 → 回来自动刷新为「已就绪」（本人接收是轮询，5–30s 延迟、只读本人可见会话）。
    - 手填 `.env` 等价键：`FEISHU_APP_ID` / `FEISHU_APP_SECRET` / `FEISHU_VERIFY_TOKEN` / `FEISHU_ENCRYPT_KEY`（`.env` 优先于页面配置）。
    - 卡住：卡片不显示「连接飞书本人账号」= 凭据还没生效（确认已重启、缺哪些键见卡片 hints）；授权报错按 personal-identity §4.6；租户 `21001` 属平台策略。
-6. **企业微信（个人无法自行开通）**：需要企业管理员创建**自建应用**（Corp ID / Agent ID / Secret）、配置接收消息 Token / EncodingAESKey 与回调 URL、并把部署机公网出口 IP 加入 **「企业可信 IP」**（否则发送报 `60020`）。拿到凭据后 → 企业微信卡片 **「填写企业微信凭据（Corp ID / Agent ID / Secret）」** → 保存 → **重启后端** → 卡片「已就绪」。
+6. **微信（RPA 补充通道，无需管理员）**：微信个人版没有官方收发 API，按赛题 Supplemental 的 RPA 路径接入。你需要：Windows 上登录并打开**微信桌面端 3.9.x**（4.x 自绘界面不暴露控件树，读不到消息，只能发）→ `pip install pyautogui pyperclip pywin32 uiautomation` → 启动本地桥 `python scripts/wechat-rpa/rpa_bridge.py --mode rpa` → `.env` 设 `WECHAT_MODE=real`。**不需要任何平台凭据**；桥地址默认 `http://127.0.0.1:8787` 一般不用改。详见 [swap-accounts.md §5](swap-accounts.md)。
 7. **生效方式对照（白号最容易搞错）**：
 
 | 你改了什么 | 怎么生效 |
 |---|---|
 | 钉钉 / 飞书 **本人身份登录/授权** | **热应用立即生效**，不用重启；接收通道自动启停 |
 | 身份策略 / 「仅用本人身份」开关（`identity.*`） | **热应用立即生效**，不用重启（`PUT /api/app-config` 返回 `hotApplied:true`） |
-| 页面「填写…应用凭据」（飞书 / 钉钉 / 企微 / AI 模型） | **保存后必须重启后端 / 重开 App**；页面会显示「需要重启」。AI 模型：协议类型填 `openai`（火山方舟 / DeepSeek / 通义等都填这个）、模型名填控制台里的**模型 ID** 且该模型已开通；重启后旧消息不会自动重算，在详情页点「重新生成」即可用新配置验证 |
+| 页面「填写…应用凭据」（飞书 / 钉钉 / 微信 / AI 模型） | **保存后必须重启后端 / 重开 App**；页面会显示「需要重启」。AI 模型：协议类型填 `openai`（火山方舟 / DeepSeek / 通义等都填这个）、模型名填控制台里的**模型 ID** 且该模型已开通；重启后旧消息不会自动重算，在详情页点「重新生成」即可用新配置验证 |
 | 直接改 `.env` | **必须重启**（后端只在启动时读 `.env`） |
 | 邮箱添加/删除账号、启用真实邮箱 | 热加载，不用重启；下一轮轮询开始收信 |
 | 页面配置被 `.env` 显式值挡住 | 页面会提示「部分配置来自 .env，未被本次保存覆盖」——要改 `.env` 并重启 |
@@ -221,7 +222,7 @@ curl -H "Authorization: Bearer dev-token" http://127.0.0.1:3001/api/accounts
    - 卡片「已就绪」只代表本机后端探测到的真实状态；**重启后仍显示「演示模式」说明是显式 `*_MODE=mock`，需要去掉并再重启**。
 9. **回退 / 换账号**：不想连某平台就让它保持演示模式，不影响其它平台；换邮箱/钉钉/飞书账号回本页重新添加或重新授权；想直接改 `.env` 的路径见 [swap-accounts.md §0.1](swap-accounts.md)。
 
-> 依据：白号首次使用审计与两轮复测证据见 [docs/qa/white-account/](qa/white-account/)（white-auditor-report / white-user-report / white-user-round2-report / white-api-round2-report；只读审计报告，未修改）。平台能力边界（飞书轮询/可见范围、钉钉 CLI 访问、企微可信 IP、`21001` 等）见 [personal-identity.md §3](personal-identity.md#3-平台边界先读避免踩空)。
+> 依据：白号首次使用审计与两轮复测证据见 [docs/qa/white-account/](qa/white-account/)（white-auditor-report / white-user-report / white-user-round2-report / white-api-round2-report；只读审计报告，未修改）。平台能力边界（飞书轮询/可见范围、钉钉 CLI 访问、微信 RPA 依赖、`21001` 等）见 [personal-identity.md §3](personal-identity.md#3-平台边界先读避免踩空)。
 <a id="path-c"></a>
 ## 路径 C：现场演示 / 交付评审 / 部署
 
@@ -229,9 +230,10 @@ curl -H "Authorization: Bearer dev-token" http://127.0.0.1:3001/api/accounts
 - 打包交付 → [delivery-checklist.md](delivery-checklist.md)（`pnpm run deliver` + 交付前后自检）
 - 完整真实接入（后台点什么、填哪些变量、常见报错）→ [swap-accounts.md](swap-accounts.md)
 - 本人账号收发（飞书 OAuth / 钉钉 dws、平台限制、回退、排错）→ [personal-identity.md](personal-identity.md)
-- 承诺 vs 实现、已知边界与风险 → [README.md](../README.md) 的「设计文档承诺 vs 当前实现」与 [risk-register.md](risk-register.md)
+- 承诺 vs 实现、已知边界与风险 → [reference.md](reference.md) 的「设计文档承诺 vs 当前实现」与 [risk-register.md](risk-register.md)
+- 环境变量全表、API 一览、测试记录、目录结构 → [reference.md](reference.md)
 
-部署三条底线：企微回调需要公网可达；**飞书推荐用长连接（`FEISHU_STREAM=true`）免公网回调**（详见 [swap-accounts.md](swap-accounts.md) §3）；企微发信出口 IP 必须在「企业可信 IP」；生产必须改强随机 `API_TOKEN`（`NODE_ENV=production` 且仍是默认 `dev-token` 会拒绝启动；也**不要**把它留空，空值会回退默认 `dev-token` 并告警、**仍强制鉴权**）。
+部署三条底线：**飞书推荐用长连接（`FEISHU_STREAM=true`）免公网回调**（详见 [swap-accounts.md](swap-accounts.md) §3）；微信走本机 RPA 桥、无需公网；生产必须改强随机 `API_TOKEN`（`NODE_ENV=production` 且仍是默认 `dev-token` 会拒绝启动；也**不要**把它留空，空值会回退默认 `dev-token` 并告警、**仍强制鉴权**）。
 本人身份另有两条底线：飞书**重定向 URL 必须与 `FEISHU_REDIRECT_URI` 完全一致**（协议 / 域名 / 端口 / 路径 / 斜杠）；钉钉 **dws 必须安装在 LinkHub 运行的环境中并完成登录**（容器部署需在容器内登录，详见 [deploy.md](deploy.md)）。
 
 ## 常见卡点一张表
@@ -250,7 +252,7 @@ curl -H "Authorization: Bearer dev-token" http://127.0.0.1:3001/api/accounts
 | 接口 401 / 页面提示未授权 | 前端 `VITE_API_TOKEN` 与后端 `API_TOKEN` 不一致 | 两处改成同一个值（默认 `dev-token`），重启后端与 Vite |
 | 前端显示「数据加载异常」 | 后端没起、地址/端口不对、或 `packages/web/.env` 指向旧地址 | 先 `curl http://127.0.0.1:3001/api/health` 确认后端；核对 `VITE_API_BASE`；改完重启 Vite |
 | 页面提示 403「Origin 不在 CORS 白名单」 | `.env` 配了 `CORS_ORIGINS` 但没含前端地址 | 把 `http://127.0.0.1:5173` 加进 `CORS_ORIGINS`，或清空该变量 |
-| 群里 @ 了机器人，收件箱却没消息 | 钉钉/企微**只推送「@机器人」的群消息**，普通群消息平台不推送；且群里必须加的是「企业内部应用机器人」，自定义 Webhook 机器人只能发不能收 | 在群里 **@机器人** 发一句；终端出现 `[stream] 收到钉钉消息：群聊「…」` 就说明通了；没有这行 = 平台没推（检查机器人是否属于同一个应用、版本已发布、消息接收模式 = Stream） |
+| 群里 @ 了机器人，收件箱却没消息 | **钉钉**只推送「@机器人」的群消息，普通群消息平台不推送；且群里必须加的是「企业内部应用机器人」，自定义 Webhook 机器人只能发不能收（微信 RPA 直接读窗口、不依赖 @；3.9.x 可自动轮询，4.x 需用「按需拉取」） | 在群里 **@机器人** 发一句；终端出现 `[stream] 收到钉钉消息：群聊「…」` 就说明通了；没有这行 = 平台没推（检查机器人是否属于同一个应用、版本已发布、消息接收模式 = Stream） |
 | 群里明明有机器人在回话，收件箱却是空的 | 那个在回话的可能是**钉钉自带的「AI小钉」/群助手**，不是本项目的应用机器人（第三方接不进平台自带助手） | 群设置 → 机器人 → 添加机器人 → 选「企业内部应用机器人」→ 选中本项目应用；再 **@这个机器人** 发消息，终端应出现 `[stream] 收到钉钉消息：群聊「…」` |
 | 账号页飞书 / 钉钉身份显示「未连接 / 机器人」 | 本人身份没连接，或 `auto` 下回退机器人 | 看身份块下方 `hint`：飞书点「连接本人账号」；钉钉先 `dws auth status --readonly --format json`；未登录时点「连接本人账号」，弹窗内用「用浏览器登录（推荐）」或设备码登录 |
 | 飞书本人接收要等 5–30 秒 | 本人接收是**轮询**（默认 20s 一轮），不是推送 | 正常现象；可调小 `FEISHU_USER_RECEIVE_SECONDS`（最小 5），接口调用量会随之增加 |

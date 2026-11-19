@@ -63,12 +63,12 @@ describe('FirstRunGuide 客户化（白号 P0-1/P1-5）', () => {
     expect(screen.getByRole('button', { name: /先体验演示（注入示例消息）/ })).toBeInTheDocument();
 
     // 四平台当前通道：Mock 统一叫「演示模式」，不再出现「Mock 模拟」混用
-    for (const platform of [Platform.FEISHU, Platform.DINGTALK, Platform.WECOM, Platform.MAIL]) {
+    for (const platform of [Platform.FEISHU, Platform.DINGTALK, Platform.WECHAT, Platform.MAIL]) {
       expect(screen.getByTestId(`first-run-mode-${platform}`)).toBeInTheDocument();
     }
     expect(screen.getByTestId('first-run-mode-feishu')).toHaveTextContent('飞书 · 真实接口');
     expect(screen.getByTestId('first-run-mode-dingtalk')).toHaveTextContent('钉钉 · 演示模式');
-    expect(screen.getByTestId('first-run-mode-wecom')).toHaveTextContent('企业微信 · 演示模式');
+    expect(screen.getByTestId('first-run-mode-wechat')).toHaveTextContent('微信 · 演示模式');
     expect(screen.getByTestId('first-run-mode-mail')).toHaveTextContent('邮箱 · 真实接口');
 
     // 开发者命令默认折叠，不在首屏直接铺开（展开后才可见）
@@ -81,7 +81,7 @@ describe('FirstRunGuide 客户化（白号 P0-1/P1-5）', () => {
     // 不再把内部变量名直接铺给客户（折叠进「需要管理员配置」）
     const visibleText = document.body.textContent ?? '';
     expect(visibleText).not.toContain('FEISHU_APP_ID');
-    expect(visibleText).not.toContain('WECOM_SECRET');
+    expect(visibleText).not.toContain('WECHAT_BRIDGE_URL');
     const adminDetails = screen.getByTestId('first-run-admin-config');
     expect(adminDetails.textContent).toContain('需要管理员配置（2 个平台）');
     expect(adminDetails.textContent).toContain('另有 2 项可自己登录/添加');
