@@ -61,11 +61,10 @@ async function listFeishu(): Promise<DirectoryResult> {
       source: '飞书本人账号可见的会话（含单聊与群聊）',
     };
   } catch (e) {
-    return unavailable(
-      Platform.FEISHU,
-      `飞书会话名录不可用：${e instanceof Error ? e.message : String(e)}。`
-        + '需要先在「平台账号」页完成飞书本人账号授权。',
-    );
+    const msg = e instanceof Error ? e.message : String(e);
+    // 未授权这类错误自带「去哪点哪」的指引，别再追加一遍，否则同一句授权说明会出现两次
+    const hint = msg.includes('授权') ? '' : '需要先在「平台账号」页完成飞书本人账号授权。';
+    return unavailable(Platform.FEISHU, `飞书会话名录不可用：${msg}${hint}`);
   }
 }
 

@@ -28,5 +28,8 @@ tools/
 .linkhub-mail-accounts.json
 # 本地账号库（注册的账号 + 会话令牌，含口令哈希；无 DATA_DIR 时落在仓库根，绝不进仓库）
 .linkhub-users.json
+# 同上，含手工改动前的备份副本（.bak/.old/时间戳等），避免口令哈希被误提交
+.linkhub-users.json.*
+.linkhub-users.*.json
 # 本地应用配置（GUI 填写的平台凭据/模式，含 App Secret，绝不进仓库；有 DATA_DIR 时在 DATA_DIR 下）
 .linkhub-config.json

@@ -311,6 +311,8 @@ export interface HealthInfo {
    * 只有路径与修改时间，绝不包含内容；不存在 / 旧后端时缺失或 null。
    */
   settingsFile?: { path: string; mtime: string | null } | null;
+  /** 各平台当前运行模式（real | mock）：缺省时按「未接入」处理，不据此弹告警 */
+  modes?: Record<string, string>;
 }
 
 export interface TraceResult {

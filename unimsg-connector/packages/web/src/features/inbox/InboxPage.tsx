@@ -200,7 +200,12 @@ export function InboxPage() {
       const issues: Array<{ platform: string; reason: string }> = [];
       for (const dir of list) {
         if (!dir?.available) {
-          if (dir?.reason) issues.push({ platform: String(dir.platform), reason: dir.reason });
+          // 只有飞书「本来就有会话名录能力」，读不到才是真问题（多半是本人账号未授权）。
+          // 钉钉 / 微信的「只能发给已有会话」是该平台的常态能力，不是故障，
+          // 放进这个横幅会变成每次打开收件箱都弹的假告警，所以这里只收飞书。
+          if (dir?.platform === Platform.FEISHU && dir?.reason) {
+            issues.push({ platform: String(dir.platform), reason: dir.reason });
+          }
           continue;
         }
         for (const item of dir.items) {
@@ -443,16 +448,15 @@ export function InboxPage() {
    * 名录不可用提示：钉钉/飞书的名字来自平台接口，登录态过期时只能显示「群聊」。
    * 静默降级会让用户以为程序坏了，所以直接把原因和该做什么摆出来。
    */
-  const directoryBanner = directoryIssues.length > 0 ? (
+  // 飞书只有在真实模式下才有「本人会话名录」这回事；mock 模式根本不读平台，
+  // 此时提示「未授权」只会变成每次进收件箱都弹的假告警，所以按模式收口。
+  const directoryBanner = directoryIssues.length > 0 && state.health?.modes?.feishu === 'real' ? (
     <div className="list-notice" role="status">
-      <div className="list-notice__title">会话名暂时读不到</div>
+      <div className="list-notice__title">飞书会话名暂时读不到</div>
       <div className="list-notice__body">
         {directoryIssues.map((it) => (
           <div key={it.platform}>{it.reason}</div>
         ))}
-        <div className="list-notice__hint">
-          钉钉：双击 D:\LinkHub-push\login-dingtalk.bat（右键以管理员身份运行），完成后刷新本页。
-        </div>
       </div>
     </div>
   ) : null;
