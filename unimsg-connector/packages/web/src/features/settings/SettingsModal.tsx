@@ -35,7 +35,7 @@ import {
 } from './preferences';
 
 const MAX_AVATAR_BYTES = 300 * 1024;
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.1.0';
 
 /**
  * 构建时间（vite define 注入）。看「设置 → 关于」这里就能判断浏览器里跑的是不是最新代码：

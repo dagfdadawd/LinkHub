@@ -1,6 +1,6 @@
 {
   "name": "linkhub-desktop",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "LinkHub 桌面版（Electron 壳 + 内嵌本地服务），打包为 Windows 便携 App",
   "main": "main.cjs",

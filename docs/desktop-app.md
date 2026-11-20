@@ -9,8 +9,8 @@
 
 | 形态 | 产物 | 适用环境 | 本机（Windows 11 + 智能应用控制） |
 |---|---|---|---|
-| **轻量版（推荐）** | `LinkHub-Lite-1.0.0-win-x64.zip`（约 34 MB，解压即用） | 所有 Windows 10/11 | ✅ 可直接运行 |
-| **Electron 完整版** | `LinkHub-1.0.0-win-x64.zip`（约 111 MB，含独立 exe 与原生窗口） | 普通 Windows（**未开启**智能应用控制） | ⚠️ 系统会拦截：`应用程序控制策略已阻止此文件` |
+| **轻量版（推荐）** | `LinkHub-Lite-1.1.0-win-x64.zip`（约 34 MB，解压即用） | 所有 Windows 10/11 | ✅ 可直接运行 |
+| **Electron 完整版** | `LinkHub-1.1.0-win-x64.zip`（约 111 MB，含独立 exe 与原生窗口） | 普通 Windows（**未开启**智能应用控制） | ⚠️ 系统会拦截：`应用程序控制策略已阻止此文件` |
 
 **为什么本机推荐轻量版**：这台 Windows 11 开启了「智能应用控制（Smart App Control）」强制模式，
 它只允许**有数字签名/有信誉**的可执行文件。Electron 官方运行时（electron.exe）**没有数字签名**，
@@ -29,7 +29,7 @@ Electron 生态在开启该功能的机器上普遍如此。
 
 ## 1. 使用方式（轻量版）
 
-1. 解压 `LinkHub-Lite-1.0.0-win-x64.zip`（或直接使用桌面上的 `LinkHub-App` 文件夹）；
+1. 解压 `LinkHub-Lite-1.1.0-win-x64.zip`（或直接使用桌面上的 `LinkHub-App` 文件夹）；
 2. 双击 **`启动 LinkHub.vbs`**（桌面已建好 `LinkHub` 快捷方式，双击即可）；
 3. 首次启动会自动创建配置，窗口打开后先看**首次使用引导**：收件箱顶部横幅「首次使用：先连接你自己的账号」→ 点 **「去连接账号」** 进入 **「连接账号」** 页（左侧导航也有），按 **邮箱 → 钉钉 → 飞书 → 企业微信** 逐项连接（详见 [quickstart.md 路径 E](quickstart.md#path-e)）；点「先体验演示」会先注入一条示例消息（不连真实平台）；点「稍后再说」后不再打扰，需要时可从左侧「连接账号」或「平台账号」页右上「打开「连接账号」向导」再进：
    - 不填任何凭据 = 四平台自动 Mock（演示模式），可完整走通「接收 → 处理 → 回写 → 回流 → 回放」演示；
@@ -104,9 +104,9 @@ pnpm app:build               # 构建 Electron 完整版（首次会从 npmmirro
 ```
 unimsg-connector/desktop/dist/
   LinkHub-Lite/                          # 轻量版程序目录（可直接双击）
-  LinkHub-Lite-1.0.0-win-x64.zip         # 轻量版便携包
+  LinkHub-Lite-1.1.0-win-x64.zip         # 轻量版便携包
   LinkHub/                               # Electron 版程序目录
-  LinkHub-1.0.0-win-x64.zip              # Electron 版便携包
+  LinkHub-1.1.0-win-x64.zip              # Electron 版便携包
 ```
 
 构建脚本做的事（`desktop/scripts/build.mjs`）：
