@@ -13,7 +13,7 @@
  *  - 后端已要求登录（本机已有账号）时，已登录用户访问 /login 直接回收件箱；
  *  - 注册策略由后端下发：本机已有账号且没配邀请码时，注册入口置灰并说明原因。
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { App as AntApp, Alert, Button, Form, Input } from 'antd';
 import { ArrowRightOutlined, KeyOutlined, LockOutlined, UserOutlined } from '@ant-design/icons';
@@ -64,6 +64,14 @@ export function LoginPage() {
   const [mode, setMode] = useState<Mode>('login');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string>();
+  /**
+   * 登录失败时让输入框摇一下（阻尼振荡，像被推了一把后收住）。
+   *
+   * 用布尔量 + animationend 复位，而不是把动画名写进 className 再靠 key 重挂载：
+   * 重挂载会让输入框失焦，用户刚敲的内容虽然还在值里，光标却没了。
+   */
+  const [shaking, setShaking] = useState(false);
+  const shakeFrame = useRef<number>();
   const [status, setStatus] = useState<AuthStatus>();
   /** 注册/重置成功后必须先看到恢复码（只显示这一次），点「已保存」才继续 */
   const [recovery, setRecovery] = useState<PendingRecovery | null>(() => readPendingRecovery());
@@ -101,6 +109,25 @@ export function LoginPage() {
     if (prefillUsername) form.setFieldsValue({ username: prefillUsername });
   }, [prefillUsername, form]);
 
+  /**
+   * 触发一次摇动。
+   *
+   * 先摘掉再加回：同名 animation 直接重设 className 不会重播，
+   * 隔一帧再做一次「移除 → 添加」，连续失败才能每次都摇起来。
+   */
+  function triggerShake(): void {
+    setShaking(false);
+    if (shakeFrame.current) cancelAnimationFrame(shakeFrame.current);
+    shakeFrame.current = requestAnimationFrame(() => setShaking(true));
+  }
+
+  useEffect(
+    () => () => {
+      if (shakeFrame.current) cancelAnimationFrame(shakeFrame.current);
+    },
+    [],
+  );
+
   async function handleSubmit(values: {
     username: string;
     password: string;
@@ -112,6 +139,7 @@ export function LoginPage() {
     setError(undefined);
     if (mode !== 'login' && values.password !== values.confirmPassword) {
       setError('两次输入的口令不一致');
+      triggerShake();
       return;
     }
     setSubmitting(true);
@@ -163,6 +191,7 @@ export function LoginPage() {
     } catch (e) {
       const text = e instanceof Error ? e.message : '操作失败，请稍后重试';
       setError(text);
+      triggerShake();
     } finally {
       setSubmitting(false);
     }
@@ -280,7 +309,12 @@ export function LoginPage() {
           layout="vertical"
           onFinish={handleSubmit}
           requiredMark={false}
-          className="auth-form"
+          className={`auth-form${error ? ' is-invalid' : ''}${shaking ? ' is-shaking' : ''}`}
+          /* 一开始改动就撤掉红框与提示：错误已经看过了，再挂着只会让人以为改坏了 */
+          onValuesChange={() => setError(undefined)}
+          onAnimationEnd={(e) => {
+            if (e.animationName === 'auth-shake') setShaking(false);
+          }}
         >
           <Form.Item
             name="username"
@@ -454,9 +488,6 @@ export function LoginPage() {
           </div>
         )}
 
-        <p className="auth-foot">
-          口令使用 scrypt 加盐哈希存储，服务端不保存明文。
-        </p>
       </div>
     </div>
   );
