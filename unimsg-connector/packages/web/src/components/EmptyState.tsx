@@ -1,4 +1,4 @@
-import { Button, Empty } from 'antd';
+import { Empty } from 'antd';
 import { InboxOutlined } from '@ant-design/icons';
 import type { ReactNode } from 'react';
 
@@ -26,13 +26,5 @@ export function EmptyState({
         {action}
       </Empty>
     </div>
-  );
-}
-
-export function EmptyAction({ onClick, children }: { onClick: () => void; children: ReactNode }) {
-  return (
-    <Button size="small" onClick={onClick}>
-      {children}
-    </Button>
   );
 }

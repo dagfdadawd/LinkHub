@@ -1456,7 +1456,7 @@ button {
 .ai-card__source {
   margin-left: 2px;
   padding: 0 6px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   border: 1px solid var(--border);
   font-size: 0.6563rem;
   line-height: 1.6;

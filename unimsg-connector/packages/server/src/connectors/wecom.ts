@@ -18,7 +18,7 @@ import {
   type SendResult, type OutboundAttachment,
 } from '@unimsg/shared';
 import { config } from '../config';
-import { genTraceId, mockSend, verifyMock, inferType, inferDueAt, isMock, assertRealSendable } from './base';
+import { genTraceId, mockSend, verifyMock, inferType, inferDueAt, isMock, assertRealSendable, headerValue } from './base';
 import { safeEqual, wecomDecrypt, wecomEncrypt, wecomSign } from './crypto';
 import { buildXml, parseXml, type XmlObject } from './wecomXml';
 import { postJson, postMultipart, wecomAccessToken } from './real';
@@ -40,14 +40,6 @@ function toFields(payload: unknown): XmlObject {
   if (typeof payload === 'string') return payload.trim() ? parseXml(payload) : {};
   if (payload && typeof payload === 'object') return payload as XmlObject;
   return {};
-}
-
-function headerValue(
-  headers: Record<string, string | string[] | undefined> | undefined,
-  name: string,
-): string {
-  const v = headers?.[name];
-  return Array.isArray(v) ? (v[0] ?? '') : (v ?? '');
 }
 
 /** 签名四要素里的 timestamp/nonce：企微放在 query 上，webhook 路由已并入 headers。 */

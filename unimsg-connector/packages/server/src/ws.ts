@@ -2,7 +2,7 @@
  * WebSocket 实时推送：新消息、状态变更即时下发前端。
  * 握手校验与 REST 同一个 API_TOKEN，避免“连上就能看所有消息”。
  */
-import { WebSocketServer } from 'ws';
+import { WebSocketServer, WebSocket } from 'ws';
 import type { Server } from 'node:http';
 import { config } from './config';
 
@@ -31,6 +31,6 @@ export function wsBroadcast(event: WsEvent): void {
   if (!wss) return;
   const payload = JSON.stringify(event);
   for (const client of wss.clients) {
-    if (client.readyState === 1) client.send(payload);
+    if (client.readyState === WebSocket.OPEN) client.send(payload);
   }
 }

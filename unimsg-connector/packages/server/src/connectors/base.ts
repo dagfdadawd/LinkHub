@@ -17,6 +17,12 @@ export function genTraceId(): string {
   return randomUUID();
 }
 
+/** HTTP 头取单值：头可能是 string | string[]，数组取第一个，其余原样（缺失回空串） */
+export function headerValue(headers: Record<string, string | string[] | undefined> | undefined, name: string): string {
+  const v = headers?.[name];
+  return Array.isArray(v) ? (v[0] ?? '') : (v ?? '');
+}
+
 export const sentBox: Record<string, unknown[]> = {
   [Platform.FEISHU]: [],
   [Platform.DINGTALK]: [],

@@ -12,6 +12,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { UnifiedMessage, TraceEntry, Platform, MsgStatus } from '@unimsg/shared';
+import { externalKey } from '../core/idempotency';
 
 export interface DlqEntry {
   platform: Platform;
@@ -95,7 +96,7 @@ export class InMemoryRepository implements MessageRepository {
 
   save(msg: UnifiedMessage): void {
     this.byId.set(msg.traceId, msg);
-    this.byExternal.set(`${msg.platform}:${msg.externalId}`, msg.traceId);
+    this.byExternal.set(externalKey(msg.platform, msg.externalId), msg.traceId);
     if (!this.traces.has(msg.traceId)) this.traces.set(msg.traceId, []);
     this.persist();
   }
@@ -105,7 +106,7 @@ export class InMemoryRepository implements MessageRepository {
   }
 
   findByExternal(platform: Platform, externalId: string): UnifiedMessage | undefined {
-    const id = this.byExternal.get(`${platform}:${externalId}`);
+    const id = this.byExternal.get(externalKey(platform, externalId));
     return id ? this.byId.get(id) : undefined;
   }
 

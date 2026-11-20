@@ -9,6 +9,7 @@
  */
 import { UnifiedMessage } from '@unimsg/shared';
 import { config } from '../config';
+import { delay } from './rateLimiter';
 
 export const INTENTS = ['待办', '咨询', '通知', '未分类'] as const;
 export type Intent = (typeof INTENTS)[number];
@@ -50,10 +51,6 @@ const SYSTEM_PROMPT = [
 ].join('');
 
 const MAX_ATTEMPTS = 2;
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
 
 /** Retry-After 支持秒数与 HTTP 日期；封顶 2s，避免现场演示被长时间挂住 */
 function retryAfterMs(res: Response): number {
@@ -187,7 +184,7 @@ export class LlmService {
       if (res.status === 429 || res.status === 503) {
         reason = `http_${res.status}`;
         if (attempt < MAX_ATTEMPTS) {
-          await sleep(retryAfterMs(res));
+          await delay(retryAfterMs(res));
           continue;
         }
         return { ok: false, reason };

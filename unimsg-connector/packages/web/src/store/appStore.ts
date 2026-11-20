@@ -113,11 +113,7 @@ export class AppStore {
     this.set({ initialized: true });
 
     try {
-      const [messages, accounts, health] = await Promise.all([
-        this.api.list(),
-        this.api.accounts(),
-        this.api.health(),
-      ]);
+      const [messages, accounts, health] = await this.fetchAll();
       this.set({ messages, accounts, health, loading: false, error: null });
     } catch (e) {
       this.set({ loading: false, error: e instanceof Error ? e.message : '加载失败' });
@@ -211,15 +207,16 @@ export class AppStore {
   /** 静默重拉全量数据（断线重连后的状态兜底；失败则保持现有数据） */
   private async reload(): Promise<void> {
     try {
-      const [messages, accounts, health] = await Promise.all([
-        this.api.list(),
-        this.api.accounts(),
-        this.api.health(),
-      ]);
+      const [messages, accounts, health] = await this.fetchAll();
       this.set({ messages, accounts, health });
     } catch {
       // 静默失败：保持现有数据，等待下一次实时推送
     }
+  }
+
+  /** 全量拉取（消息 + 账号 + 健康指标）：init 与静默重拉共用同一组调用与顺序 */
+  private fetchAll(): Promise<[UnifiedMessage[], AccountInfo[], HealthInfo]> {
+    return Promise.all([this.api.list(), this.api.accounts(), this.api.health()]);
   }
 
   private onRealtime(event: { type: string; data?: UnifiedMessage }): void {

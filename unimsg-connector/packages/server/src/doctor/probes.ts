@@ -909,10 +909,6 @@ export function skipProbe(platform: Platform, runtime: PlatformProbeRuntime): Ch
   };
 }
 
-/**
- * 执行全部探针（只读）。
- * 仅对 mode=real 或 policy=real 的平台执行；其余输出 SKIP 并说明原因。
- */
 // ---------------------------------------------------------------------------
 // 大模型探针
 // ---------------------------------------------------------------------------
@@ -992,6 +988,10 @@ export async function probeLlm(input: LlmProbeInput, timeoutMs = LLM_PROBE_TIMEO
   return { ...base, status: 'FAIL', detail: `真实调用失败：${reason}`, hint: llmFailureHint(reason) };
 }
 
+/**
+ * 执行全部探针（只读）。
+ * 仅对 mode=real 或 policy=real 的平台执行；其余输出 SKIP 并说明原因。
+ */
 export async function runProbes(input: ProbeInput, options: RunProbesOptions = {}): Promise<RunProbesResult> {
   const checks: CheckResult[] = [];
   let egressIp: string | undefined;
