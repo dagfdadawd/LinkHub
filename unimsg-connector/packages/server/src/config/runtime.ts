@@ -220,7 +220,7 @@ export function inferMailProvider(address: string, explicit?: string): string {
   const raw = (explicit ?? '').trim();
   if (raw) {
     const p = normalizeProvider(raw);
-    return p in MAIL_PROVIDER_PRESETS ? p : p; // 未知名字保留，用于提示"未识别"
+    return p; // 未知名字保留，用于提示"未识别"
   }
   const domain = address.includes('@') ? address.split('@').pop()!.trim().toLowerCase() : '';
   return PROVIDER_ALIASES[domain] ?? 'custom';
@@ -380,11 +380,7 @@ export function createMailAccountFromInput(input: MailAccountInput): MailAccount
  */
 export function parseMailAccounts(env: NodeJS.ProcessEnv): MailAccountsParseResult {
   const issues: MailAccountIssue[] = [];
-  const explicit = (env.MAIL_ACCOUNTS ?? '')
-    .split(/[,;\s]+/)
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .filter((s) => s.toLowerCase() !== 'auto');
+  const explicit = csv(env.MAIL_ACCOUNTS, []).filter((s) => s.toLowerCase() !== 'auto');
 
   let keys: string[];
   if (explicit.length > 0) {

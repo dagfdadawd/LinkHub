@@ -17,8 +17,12 @@ import net from 'node:net';
 import tls from 'node:tls';
 import os from 'node:os';
 import type { MailAccount } from '../../config';
+import { upgradeStartTls } from './tlsUpgrade';
 
 const TIMEOUT_MS = 20_000;
+
+/** STARTTLS 升级参数：两个调用点（构造器默认 / connect 明文链路）共用同一份 */
+const SMTP_TLS_OPTS = { alpn: 'smtp', timeoutLabel: 'SMTP STARTTLS 升级超时' };
 
 /** 会话使用的 socket 类型：net.Socket 与 tls.TLSSocket 都满足（单测可传假 socket） */
 export type SmtpSocket = net.Socket;
@@ -119,7 +123,7 @@ export class SmtpSession {
   constructor(sock: SmtpSocket, opts: { tls?: boolean; upgrade?: (plain: SmtpSocket) => Promise<SmtpSocket> } = {}) {
     this.sock = sock;
     this.tlsActive = opts.tls ?? false;
-    this.upgradeFn = opts.upgrade ?? ((plain) => upgradeStartTls(plain, ''));
+    this.upgradeFn = opts.upgrade ?? ((plain) => upgradeStartTls(plain, '', SMTP_TLS_OPTS));
     this.attach(sock);
   }
 
@@ -134,7 +138,7 @@ export class SmtpSession {
       tls: false,
       upgrade: upgrade
         ? (plain) => upgrade(plain, account.smtpHost)
-        : (plain) => upgradeStartTls(plain, account.smtpHost),
+        : (plain) => upgradeStartTls(plain, account.smtpHost, SMTP_TLS_OPTS),
     });
   }
 
@@ -294,27 +298,6 @@ function dialPlain(account: MailAccount): Promise<SmtpSocket> {
     sock.once('error', (e) => {
       clearTimeout(timer);
       reject(e);
-    });
-  });
-}
-
-/** 在已连接的明文 socket 上升级 TLS（tls.connect({ socket })），握手成功才返回 */
-function upgradeStartTls(plain: SmtpSocket, servername: string): Promise<SmtpSocket> {
-  return new Promise((resolve, reject) => {
-    const secure = tls.connect({ socket: plain, servername, ALPNProtocols: ['smtp'] });
-    const timer = setTimeout(() => {
-      secure.destroy();
-      reject(new Error('SMTP STARTTLS 升级超时'));
-    }, TIMEOUT_MS);
-    const onError = (e: Error) => {
-      clearTimeout(timer);
-      reject(e);
-    };
-    secure.once('error', onError);
-    secure.once('secureConnect', () => {
-      clearTimeout(timer);
-      secure.removeListener('error', onError);
-      resolve(secure);
     });
   });
 }

@@ -233,6 +233,15 @@ export function verify(payload: unknown, sig: string): boolean {
   return typeof token === 'string' && token === expected;
 }
 
+/** 发送成功后登记回执：message_id 推入回执列表，并注册自环识别（见 recentOutbound） */
+function pushReceipt(data: any, receipts: string[]): void {
+  if (data.data?.message_id) {
+    const id = String(data.data.message_id);
+    receipts.push(id);
+    rememberOutboundMessageId(id);
+  }
+}
+
 /**
  * 发送：文本走 im/v1/messages（text），文件走「im/v1/files 上传 → im/v1/messages（file）」。
  * 文本与文件可同一笔发送；任一步失败即整笔抛错，由中枢置 failed 并写死信队列，
@@ -262,11 +271,7 @@ export async function send(msg: UnifiedMessage, attachments: OutboundAttachment[
   if (text) {
     const data = await postJson(sendUrl, payload, auth);
     if (data.code !== 0) throw new Error(`飞书文本发送失败: ${data.code} ${data.msg ?? ''}`);
-    if (data.data?.message_id) {
-      const id = String(data.data.message_id);
-      receipts.push(id);
-      rememberOutboundMessageId(id);
-    }
+    pushReceipt(data, receipts);
   }
 
   for (const a of attachments) {
@@ -288,11 +293,7 @@ export async function send(msg: UnifiedMessage, attachments: OutboundAttachment[
       auth,
     );
     if (data.code !== 0) throw new Error(`飞书文件消息发送失败: ${data.code} ${data.msg ?? ''}`);
-    if (data.data?.message_id) {
-      const id = String(data.data.message_id);
-      receipts.push(id);
-      rememberOutboundMessageId(id);
-    }
+    pushReceipt(data, receipts);
   }
 
   return { ok: true, mode: 'real', platformReply: receipts.join(',') || undefined, identity };

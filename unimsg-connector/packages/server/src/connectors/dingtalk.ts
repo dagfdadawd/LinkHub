@@ -18,7 +18,7 @@ import {
   type SendResult, type OutboundAttachment,
 } from '@unimsg/shared';
 import { config } from '../config';
-import { genTraceId, mockSend, verifyMock, inferType, inferDueAt, isMock, assertRealSendable } from './base';
+import { genTraceId, mockSend, verifyMock, inferType, inferDueAt, isMock, assertRealSendable, headerValue } from './base';
 import { dingtalkDecrypt, dingtalkSign, safeEqual } from './crypto';
 import { dingtalkAccessToken, postJson, postMultipart } from './real';
 import { DingtalkPersonalError, dingtalkPersonalClient, type DwsSendTarget } from './dingtalkPersonal';
@@ -28,11 +28,6 @@ import { decodeAttachment, describeAttachments, isOutboundComposed } from '../se
 
 /** 媒体上传固定在 oapi 老域名（新域名只有机器人发消息/下载，没有 upload） */
 const DINGTALK_MEDIA_UPLOAD_URL = 'https://oapi.dingtalk.com/media/upload';
-
-function header(headers: Record<string, string | string[] | undefined> | undefined, name: string): string {
-  const v = headers?.[name];
-  return Array.isArray(v) ? (v[0] ?? '') : (v ?? '');
-}
 
 /**
  * 会话映射：钉钉回调里群聊是 conversationType='2'（文档为字符串），
@@ -142,8 +137,8 @@ export function verify(
   const { aesToken, aesKey } = config.platforms.dingtalk;
   if (!aesToken || !aesKey) return false;
 
-  const timestamp = header(headers, 'timestamp');
-  const sign = header(headers, 'sign');
+  const timestamp = headerValue(headers, 'timestamp');
+  const sign = headerValue(headers, 'sign');
   if (!timestamp || !sign) return false;
   if (Math.abs(Date.now() - Number(timestamp)) > 60 * 60 * 1000) return false;
 

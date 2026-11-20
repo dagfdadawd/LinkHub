@@ -15,6 +15,7 @@
 import net from 'node:net';
 import tls from 'node:tls';
 import type { MailAccount } from '../../config';
+import { upgradeStartTls } from './tlsUpgrade';
 
 const TIMEOUT_MS = 20_000;
 
@@ -45,7 +46,8 @@ export class ImapSession {
   constructor(sock: net.Socket, opts: ImapSessionOptions = {}) {
     this.sock = sock;
     const upgrade = opts.upgrade;
-    this.upgradeFn = upgrade ?? ((plain) => upgradeStartTls(plain, opts.servername ?? ''));
+    this.upgradeFn = upgrade ??
+      ((plain) => upgradeStartTls(plain, opts.servername ?? '', { alpn: 'imap', timeoutLabel: 'IMAP STARTTLS 升级超时' }));
     this.attach(sock);
   }
 
@@ -217,27 +219,6 @@ export class ImapSession {
     this.sock.end();
     this.sock.destroy();
   }
-}
-
-/** 在已连接的明文 socket 上升级 TLS（tls.connect({ socket })），握手成功才返回 */
-function upgradeStartTls(plain: net.Socket, servername: string): Promise<net.Socket> {
-  return new Promise((resolve, reject) => {
-    const secure = tls.connect({ socket: plain, servername, ALPNProtocols: ['imap'] });
-    const timer = setTimeout(() => {
-      secure.destroy();
-      reject(new Error('IMAP STARTTLS 升级超时'));
-    }, TIMEOUT_MS);
-    const onError = (e: Error) => {
-      clearTimeout(timer);
-      reject(e);
-    };
-    secure.once('error', onError);
-    secure.once('secureConnect', () => {
-      clearTimeout(timer);
-      secure.removeListener('error', onError);
-      resolve(secure);
-    });
-  });
 }
 
 function quote(s: string): string {

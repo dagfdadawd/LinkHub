@@ -9,7 +9,7 @@
  * 于是「一登录实时通道就被 1008 踢掉」，页面永远停在离线、新消息只能靠手动刷新。
  * 两条通道必须同时认；广播也必须按归属过滤，否则修好鉴权后会立刻变成跨账号推送泄漏。
  */
-import { WebSocketServer, type WebSocket } from 'ws';
+import { WebSocketServer, WebSocket } from 'ws';
 import type { Server } from 'node:http';
 import { config } from './config';
 import { loginRequired, resolveApiToken } from './middlewares/auth';
@@ -73,7 +73,7 @@ export function wsBroadcast(event: WsEvent): void {
   const payload = JSON.stringify(event);
   const owner = eventOwner(event);
   for (const client of wss.clients) {
-    if (client.readyState !== 1) continue;
+    if (client.readyState !== WebSocket.OPEN) continue;
     const userId = socketUserId.get(client);
     // 登录连接只收自己的消息；带 ownerId 的事件绝不发给别的账号
     if (owner && userId && userId !== owner) continue;
@@ -86,7 +86,7 @@ export function wsStats(): { total: number; authenticated: number } {
   let total = 0;
   let authenticated = 0;
   for (const client of wss?.clients ?? []) {
-    if (client.readyState !== 1) continue;
+    if (client.readyState !== WebSocket.OPEN) continue;
     total += 1;
     if (socketUserId.get(client)) authenticated += 1;
   }

@@ -277,18 +277,7 @@ export class MockApi implements DemoApi {
         );
         return;
       }
-      this.patch(
-        id,
-        { status: MsgStatus.SENT, delivery: { mode: 'mock', at: new Date().toISOString() } },
-        'sent',
-        '模拟发送（未调用真实平台）',
-      );
-      window.setTimeout(() => {
-        this.patch(id, { status: MsgStatus.SYNCED }, 'synced');
-        this.metrics.sent += 1;
-        // Mock 模拟发送单独计数：页面上与真实发送区分展示
-        this.metrics.sentMock = (this.metrics.sentMock ?? 0) + 1;
-      }, this.options.syncDelay);
+      this.pushSentThenSynced(id);
     }, this.options.sendDelay);
 
     return { message: replied, taskId: id };
@@ -361,19 +350,7 @@ export class MockApi implements DemoApi {
     this.patch(traceId, { status: MsgStatus.PROCESSING }, 'processing');
     const replied = this.patch(traceId, { status: MsgStatus.REPLIED }, 'replied');
 
-    window.setTimeout(() => {
-      this.patch(
-        traceId,
-        { status: MsgStatus.SENT, delivery: { mode: 'mock', at: new Date().toISOString() } },
-        'sent',
-        '模拟发送（未调用真实平台）',
-      );
-      window.setTimeout(() => {
-        this.patch(traceId, { status: MsgStatus.SYNCED }, 'synced');
-        this.metrics.sent += 1;
-        this.metrics.sentMock = (this.metrics.sentMock ?? 0) + 1;
-      }, this.options.syncDelay);
-    }, this.options.sendDelay);
+    window.setTimeout(() => this.pushSentThenSynced(traceId), this.options.sendDelay);
 
     return { message: replied, taskId: traceId };
   }
@@ -938,6 +915,22 @@ export class MockApi implements DemoApi {
   /** 演示「发送失败 → DLQ」分支 */
   armNextSendFailure(): void {
     this.failNextSend = true;
+  }
+
+  /** sent →（syncDelay 后）synced 的模拟推进：reply 与 compose 共用，不动调用方的 sendDelay 定时 */
+  private pushSentThenSynced(id: string): void {
+    this.patch(
+      id,
+      { status: MsgStatus.SENT, delivery: { mode: 'mock', at: new Date().toISOString() } },
+      'sent',
+      '模拟发送（未调用真实平台）',
+    );
+    window.setTimeout(() => {
+      this.patch(id, { status: MsgStatus.SYNCED }, 'synced');
+      this.metrics.sent += 1;
+      // Mock 模拟发送单独计数：页面上与真实发送区分展示
+      this.metrics.sentMock = (this.metrics.sentMock ?? 0) + 1;
+    }, this.options.syncDelay);
   }
 
   private patch(
