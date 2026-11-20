@@ -86,6 +86,8 @@ export interface WechatRawEvent {
   /** 消息正文 */
   text?: string;
   body?: string;
+  /** 消息方向；按需拉取保留自己的消息时桥会显式上报 out */
+  direction?: 'in' | 'out';
   /** 消息类型 */
   type?: 'text' | 'image' | 'file';
   /** 附件文件名（旧版桥只给名字，没有本地路径时无法下载） */
@@ -147,6 +149,7 @@ export function receive(raw: unknown): UnifiedMessage {
   if (!body && src.fileName) body = `[文件] ${basename(src.fileName)}`;
 
   const convName = (src.conversation || src.conversationName || '').trim();
+  const outgoing = src.direction === 'out';
   const now = new Date().toISOString();
   // 「按需拉取」会把微信里显示的消息时间（拖选复制文本里的时间行）一起带上来；
   // 能解析就用它，否则退回收到时刻。不能让所有历史消息都显示成"刚刚"。
@@ -163,11 +166,12 @@ export function receive(raw: unknown): UnifiedMessage {
       : undefined,
     type,
     body,
-    // RPA 读到的是真人真实收发，标记为本人账号接收；mock 演示由 demoSamples 另走 mock
-    receivedAs: 'user',
-    direction: 'in',
+    // RPA 读到的是真人真实收发；自己发的消息标 out，UI 渲染在右侧且不计未读。
+    // mock 演示由 demoSamples 另走 mock。
+    ...(outgoing ? {} : { receivedAs: 'user' as const }),
+    direction: outgoing ? 'out' : 'in',
     attachments,
-    status: MsgStatus.RECEIVED,
+    status: outgoing ? MsgStatus.SENT : MsgStatus.RECEIVED,
     createdAt: at,
     updatedAt: now,
   };

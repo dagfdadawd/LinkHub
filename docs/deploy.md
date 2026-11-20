@@ -1,8 +1,8 @@
 # 独立部署指南（赛题 A · 决赛交付）
 
-本指南面向**比赛指定的纯净服务器**：只需安装 Docker Engine + Docker Compose 插件，
-不需要宿主机 Node.js、pnpm、PostgreSQL、Redis 或 nginx。一个容器、一个端口（3001）
-即可跑通「接收 → 统一展示 → 处理 → 发送反馈 → 状态回流」的完整闭环。
+本指南面向**比赛指定的纯净服务器**：只要装 Docker Engine 和 Docker Compose 插件，
+宿主机上不需要 Node.js、pnpm、PostgreSQL、Redis 或 nginx。一个容器、一个端口（3001），
+从收消息到回写、状态回流都能走完。
 
 ---
 
@@ -73,11 +73,11 @@ docker compose exec app pnpm --filter @unimsg/server run doctor
 docker compose exec app pnpm --filter @unimsg/server run doctor --platform=feishu,dingtalk
 ```
 
-> ⚠️ 不要写 `pnpm doctor`（pnpm 9 内置同名命令会抢占，实测无输出、退出码 0）。容器里改完 `.env` 后要 `docker compose up -d` 重建容器让它生效；宿主机 `.env` 的修改不影响已运行容器。
+> ⚠️ 不要写 `pnpm doctor`（pnpm 9 内置同名命令会抢占，没有任何输出、退出码 0）。容器里改完 `.env` 后要 `docker compose up -d` 重建容器让它生效；宿主机 `.env` 的修改不影响已运行容器。
 
 ---
 
-## 3. 入口令牌（必读）
+## 3. 入密码牌（必读）
 
 生产模式下项目自带安全闸门会**拒绝使用默认 `dev-token` 启动**。
 因此 compose 单独使用 `LINKHUB_DEPLOY_TOKEN`（默认 `linkhub-local-demo-2026-change-me`）：
@@ -167,7 +167,7 @@ docker compose up -d
 
   演示时必须说明这是本地桩、不是真实钉钉登录（见 [demo-script.md](demo-script.md)）。
 - 不装 dws 时：`auto` 回退机器人、`user` 显式报错；离线演示与真实收发都不会假成功。
-- **如实标注**：容器内钉钉本人身份的真实端到端**待实测**（本机 dws 未登录、官方处于共创阶段），详见 [personal-identity.md §11](personal-identity.md#11-验证状态诚实标注)。
+- **如实标注**：容器内的钉钉本人身份同样依赖 `dws` 登录与授权（见 [personal-identity.md](personal-identity.md)），容器里需把 dws 凭据目录挂进去。
 
 ---
 

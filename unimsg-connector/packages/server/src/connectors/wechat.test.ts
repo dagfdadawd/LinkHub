@@ -95,6 +95,21 @@ test('receive：文本事件 → 统一消息，externalId 保幂等键', () => 
   assert.ok(m.createdAt && m.updatedAt);
 });
 
+test('receive：按需拉取自己的消息标 out，不标成本人接收', () => {
+  const m = receive({
+    externalId: 'wx-self',
+    from: '我自己',
+    senderId: 'myself',
+    conversation: '项目群',
+    type: 'text',
+    text: '收到',
+    direction: 'out',
+  });
+  assert.equal(m.direction, 'out');
+  assert.equal(m.status, MsgStatus.SENT);
+  assert.equal(m.receivedAs, undefined);
+});
+
 test('receive：文件事件把文件名写进正文并生成附件元数据', () => {
   const m = receive({ externalId: 'wx-f', from: '李四', type: 'file', fileName: '方案.pptx', text: '' });
   assert.equal(m.type, 'file');

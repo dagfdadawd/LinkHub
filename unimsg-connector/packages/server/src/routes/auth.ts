@@ -6,14 +6,14 @@
  * 限流按「动作 + 来源 IP + 用户名」分桶：
  *  - 登录失败只影响该用户名，不会把同一出口 IP 下所有人一起锁死；
  *  - 注册只统计失败次数，成功会清零（旧实现成功也计数，10 次后正常用户也注册不了）；
- *  - 重置口令使用独立桶，登录被限不会连带找回口令。
- * 响应里绝不返回口令哈希或盐。
+ *  - 重置密码使用独立桶，登录被限不会连带找回密码。
+ * 响应里绝不返回密码哈希或盐。
  */
 import { Router, type Request, type Response } from 'express';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { userStore, UserStoreError } from '../services/users';
 import { loginRequired } from '../middlewares/auth';
-import { config } from '../config';
+import { config, type RegistrationMode } from '../config';
 import type { MessageService } from '../services/message';
 
 // 账号库单例已经下沉到 services/users（避免 routes/auth ⇄ middlewares/auth 循环依赖）。
@@ -91,29 +91,30 @@ export interface RegistrationPolicy {
 }
 
 /**
- * 注册准入（安全默认）：
- *  - 纯内存账号库（单测 / 未落盘）不限制；
- *  - `AUTH_REGISTRATION=open` 始终允许；`closed` 始终拒绝；
- *  - `auto`（默认）：本机还没有账号时允许创建第一个账号；
- *    已有账号后默认关闭，只有配置了 `AUTH_SIGNUP_CODE` 时才凭邀请码注册。
+ * 注册准入（纯函数，便于单测）：**默认无门槛**。
+ *
+ * 产品口径：这台机器是「自己的消息中心」，多开几个账号（家人、工作号、测试号）
+ * 不该需要运维改配置。所以 auto 与 open 等价：随时可以再注册一个账号。
+ *
+ *  - `closed`：显式关闭（例如对外暴露在公网、只想保留既有账号）；
+ *  - 配了 `AUTH_SIGNUP_CODE`：加一道邀请码，作为可选的加固手段；
+ *  - 其余情况：直接放行，不看已有账号数量（旧实现「本机有账号就关闭」是这里的分歧点）。
  */
-export function registrationPolicy(): RegistrationPolicy {
-  if (!config.usersFile) return { open: true, requireCode: false };
-  if (config.authRegistrationMode === 'open') return { open: true, requireCode: false };
-  if (config.authRegistrationMode === 'closed') {
+export function resolveRegistrationPolicy(
+  mode: RegistrationMode,
+  signupCode: string,
+): RegistrationPolicy {
+  if (mode === 'closed') {
     return { open: false, requireCode: false, reason: '本机已关闭自助注册（AUTH_REGISTRATION=closed）' };
   }
-  try {
-    if (userStore().count() === 0) return { open: true, requireCode: false };
-  } catch {
-    return { open: false, requireCode: false, reason: '账号库读取失败，暂时禁止注册（请检查 users.json）' };
-  }
-  if (config.authSignupCode) return { open: true, requireCode: true };
-  return {
-    open: false,
-    requireCode: false,
-    reason: '本机已有账号，自助注册已关闭；如需添加成员，请设置 AUTH_SIGNUP_CODE 后重启 LinkHub',
-  };
+  if (signupCode) return { open: true, requireCode: true };
+  return { open: true, requireCode: false };
+}
+
+/** 读进程配置后的注册准入；纯内存账号库（单测 / 未落盘）永远放行 */
+export function registrationPolicy(): RegistrationPolicy {
+  if (!config.usersFile) return { open: true, requireCode: false };
+  return resolveRegistrationPolicy(config.authRegistrationMode, config.authSignupCode);
 }
 
 /** 邀请码按哈希常数时间比较，避免逐字符比较泄露前缀 */
@@ -243,10 +244,10 @@ export function authRouter(svc?: MessageService): Router {
     }
   });
 
-  /** 忘记口令：用注册时发的恢复码重置（不需要旧口令），成功后返回**新的**恢复码 */
+  /** 忘记密码：用注册时发的恢复码重置（不需要旧密码），成功后返回**新的**恢复码 */
   r.post('/auth/reset-password', (req: Request, res: Response) => {
     const username = String(req.body?.username ?? '').trim();
-    // 独立桶：登录被限流不应连带把「找回口令」也锁死
+    // 独立桶：登录被限流不应连带把「找回密码」也锁死
     const key = `reset|${clientKey(req)}|${username.toLowerCase()}`;
     const retry = blockedSeconds(key, LOGIN_FAIL_LIMIT);
     if (retry !== null) {
@@ -268,7 +269,7 @@ export function authRouter(svc?: MessageService): Router {
         res.status(e.status).json({ ok: false, error: e.message });
         return;
       }
-      res.status(500).json({ ok: false, error: e instanceof Error ? e.message : '重置口令失败' });
+      res.status(500).json({ ok: false, error: e instanceof Error ? e.message : '重置密码失败' });
     }
   });
 
@@ -282,7 +283,7 @@ export function authRouter(svc?: MessageService): Router {
     res.json({ ok: true, data: { user, sessionCount: userStore().countSessions(user.id) } });
   });
 
-  /** 改口令：需要当前会话；成功后该账号所有会话（含本机）全部作废，必须重新登录 */
+  /** 改密码：需要当前会话；成功后该账号所有会话（含本机）全部作废，必须重新登录 */
   r.post('/auth/password', (req: Request, res: Response) => {
     const token = bearer(req);
     const user = token ? userStore().resolveSession(token) : undefined;
@@ -302,7 +303,7 @@ export function authRouter(svc?: MessageService): Router {
         res.status(e.status).json({ ok: false, error: e.message });
         return;
       }
-      res.status(500).json({ ok: false, error: e instanceof Error ? e.message : '修改口令失败' });
+      res.status(500).json({ ok: false, error: e instanceof Error ? e.message : '修改密码失败' });
     }
   });
 

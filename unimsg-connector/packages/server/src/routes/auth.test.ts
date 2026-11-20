@@ -1,6 +1,6 @@
 /**
  * 账号体系（注册/登录/会话）的 HTTP 契约测试。全程 127.0.0.1 回环，不触网。
- * 重点验证：口令不落明文、会话令牌能访问受保护业务接口、登出即失效。
+ * 重点验证：密码不落明文、会话令牌能访问受保护业务接口、登出即失效。
  */
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -48,7 +48,7 @@ beforeEach(() => {
   resetAuthRateLimit();
 });
 
-test('注册：返回用户与会话令牌，且不泄露口令哈希/盐', async () => {
+test('注册：返回用户与会话令牌，且不泄露密码哈希/盐', async () => {
   await withApp(async ({ base }) => {
     const res = await fetch(`${base}/api/auth/register`, json({
       username: '张三', password: 'secret123', displayName: '张三（产品）',
@@ -67,7 +67,7 @@ test('注册：返回用户与会话令牌，且不泄露口令哈希/盐', asyn
   });
 });
 
-test('注册：用户名重复返回 409，口令过短返回 400', async () => {
+test('注册：用户名重复返回 409，密码过短返回 400', async () => {
   await withApp(async ({ base }) => {
     const first = await fetch(`${base}/api/auth/register`, json({ username: 'lisi', password: 'abc123' }));
     assert.equal(first.status, 201);
@@ -78,11 +78,11 @@ test('注册：用户名重复返回 409，口令过短返回 400', async () => 
     const weak = await fetch(`${base}/api/auth/register`, json({ username: 'wangwu', password: '123' }));
     assert.equal(weak.status, 400);
     const body: any = await weak.json();
-    assert.match(body.error, /口令至少/);
+    assert.match(body.error, /密码至少/);
   });
 });
 
-test('登录：口令错误与用户不存在给同一句提示（不暴露账号是否存在）', async () => {
+test('登录：密码错误与用户不存在给同一句提示（不暴露账号是否存在）', async () => {
   await withApp(async ({ base }) => {
     await fetch(`${base}/api/auth/register`, json({ username: 'zhaoliu', password: 'abc123' }));
 
@@ -137,7 +137,7 @@ async function registerUser(base: string, username: string, password = 'secret12
   return { token: body.data.token as string, user: body.data.user };
 }
 
-test('忘记口令：用恢复码重置；恢复码错 401，重置后旧会话作废', async () => {
+test('忘记密码：用恢复码重置；恢复码错 401，重置后旧会话作废', async () => {
   await withApp(async ({ base }) => {
     const reg = await (await fetch(`${base}/api/auth/register`, json({
       username: 'recovery-user', password: 'secret123',
@@ -164,7 +164,7 @@ test('忘记口令：用恢复码重置；恢复码错 401，重置后旧会话�
     const me = await fetch(`${base}/api/auth/me`, { headers: { Authorization: `Bearer ${token}` } });
     assert.equal(me.status, 401);
 
-    // 新口令可登录
+    // 新密码可登录
     const login = await fetch(`${base}/api/auth/login`, json({ username: 'recovery-user', password: 'newpass123' }));
     assert.equal(login.status, 200);
   });
@@ -197,7 +197,7 @@ test('会话令牌不落明文：库文件里查不到可用的令牌字符串',
 
   const raw = readFileSync(file, 'utf8');
   assert.equal(raw.includes(token), false, '明文令牌不应出现在库文件');
-  assert.equal(raw.includes('secret123'), false, '明文口令不应出现在库文件');
+  assert.equal(raw.includes('secret123'), false, '明文密码不应出现在库文件');
   // 但令牌确实可用
   assert.equal(store.resolveSession(token)?.username, 'hash-check');
   // 哈希后的令牌在库里
@@ -206,11 +206,11 @@ test('会话令牌不落明文：库文件里查不到可用的令牌字符串',
   assert.match(parsed.sessions[0].tokenHash, /^[a-f0-9]{64}$/);
 });
 
-test('改口令：原口令错 401；成功后退掉全部会话，旧令牌立即失效', async () => {
+test('改密码：原密码错 401；成功后退掉全部会话，旧令牌立即失效', async () => {
   await withApp(async ({ base }) => {
     const { token } = await registerUser(base, 'pwd-user');
 
-    // 原口令错
+    // 原密码错
     const wrong = await fetch(`${base}/api/auth/password`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', Authorization: `Bearer ${token}` },
@@ -218,7 +218,7 @@ test('改口令：原口令错 401；成功后退掉全部会话，旧令牌立�
     });
     assert.equal(wrong.status, 401);
 
-    // 新口令太短
+    // 新密码太短
     const short = await fetch(`${base}/api/auth/password`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', Authorization: `Bearer ${token}` },
@@ -240,7 +240,7 @@ test('改口令：原口令错 401；成功后退掉全部会话，旧令牌立�
     const me = await fetch(`${base}/api/auth/me`, { headers: { Authorization: `Bearer ${token}` } });
     assert.equal(me.status, 401);
 
-    // 旧口令不能登录，新口令可以
+    // 旧密码不能登录，新密码可以
     const oldLogin = await fetch(`${base}/api/auth/login`, json({ username: 'pwd-user', password: 'secret123' }));
     assert.equal(oldLogin.status, 401);
     const newLogin = await fetch(`${base}/api/auth/login`, json({ username: 'pwd-user', password: 'newpass123' }));
@@ -302,11 +302,36 @@ test('登录限流按「IP + 用户名」分桶：锁住一个账号不连坐同
   });
 });
 
-test('注册准入：本机已有账号且未配置邀请码时，注册被拒绝（纯内存库不参与限制）', async () => {
-  // 该用例直接验证策略函数：有账号 + auto + 无邀请码 → 关闭；
-  // 路由层在真实账号库（usersFile 非空）上才会调用它。
+/** 注册准入是纯函数，四种组合都能直接验，不必起服务、也不受账号库影响 */
+test('注册准入：默认无门槛（auto/open 都放行，不看已有账号数量）', async () => {
+  const { resolveRegistrationPolicy } = await import('./auth');
+  assert.deepEqual(resolveRegistrationPolicy('auto', ''), { open: true, requireCode: false });
+  assert.deepEqual(resolveRegistrationPolicy('open', ''), { open: true, requireCode: false });
+});
+
+test('注册准入：closed 才关，配了邀请码才要码', async () => {
+  const { resolveRegistrationPolicy } = await import('./auth');
+  const closed = resolveRegistrationPolicy('closed', '');
+  assert.equal(closed.open, false);
+  assert.ok(closed.reason, '关闭时要给出原因，前端直接展示');
+
+  // 邀请码是可选加固：设了就要求带上，但仍然开放
+  assert.deepEqual(resolveRegistrationPolicy('auto', 'S3cret'), { open: true, requireCode: true });
+});
+
+test('注册准入：纯内存账号库永远放行（单测互相不干扰）', async () => {
   const { registrationPolicy } = await import('./auth');
-  const policy = registrationPolicy();
-  // 单测使用纯内存账号库（usersFile 为空），策略应保持开放，避免测试互相干扰
-  assert.equal(policy.open, true);
+  assert.equal(registrationPolicy().open, true);
+});
+
+test('多开账号：同一台机器可以连续注册多个账号，第二个不再被拦', async () => {
+  await withApp(async ({ base }) => {
+    const first = await registerUser(base, 'alice');
+    assert.equal(first.user.username, 'alice');
+    const second = await registerUser(base, 'bob');
+    assert.equal(second.user.username, 'bob');
+    // 两个账号各自拿到不同的用户 id 与不同的会话令牌，互不覆盖
+    assert.notEqual(first.user.id, second.user.id);
+    assert.notEqual(first.token, second.token);
+  });
 });

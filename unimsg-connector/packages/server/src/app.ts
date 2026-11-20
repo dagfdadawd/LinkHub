@@ -21,7 +21,7 @@ import { wechatBridgeRouter } from './routes/wechatBridge';
 import { mailAccountsRouter } from './routes/mailAccounts';
 import { appConfigRouter } from './routes/appConfig';
 import { contactsRouter } from './routes/contacts';
-import { apiAuth } from './middlewares/auth';
+import { apiAuth, ownerOnly } from './middlewares/auth';
 import { config } from './config';
 
 /**
@@ -110,8 +110,10 @@ export function createApp(svc: MessageService, options: CreateAppOptions = {}) {
   app.use('/api', apiAuth, mailAccountsRouter()); // Bearer 鉴权：邮箱账号运行时导入（个人版）
   app.use('/api', apiAuth, appConfigRouter()); // Bearer 鉴权：本地应用配置（白号：GUI 填凭据/切模式）
   app.use('/api', apiAuth, contactsRouter()); // Bearer 鉴权：发送目标名录（会话名，只读）
-  app.use('/api', apiAuth, wechatPullRouter()); // Bearer 鉴权：微信 4.x「按需拉取」当前会话
-  app.use('/api', apiAuth, wechatBridgeRouter()); // Bearer 鉴权：本机 RPA 桥启动/停止/状态（A 形态）
+  // 微信 RPA 操作的是「本机微信窗口」，和平台凭据一样属于机器级能力：
+  // 读状态可以给所有登录用户看，但拉取/启停桥只允许机器主人。
+  app.use('/api', apiAuth, ownerOnly(svc), wechatPullRouter());
+  app.use('/api', apiAuth, ownerOnly(svc), wechatBridgeRouter());
 
   // 同源部署（Docker 单容器）：server 直接托管前端构建产物 + SPA 回退。
   // 只在 WEB_DIST 指向真实 index.html 时启用，本地 dev 走 Vite 5173 不受影响。

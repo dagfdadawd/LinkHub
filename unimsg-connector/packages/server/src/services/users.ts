@@ -3,12 +3,12 @@
  *
  * 赛题要求「消息接收 → 统一展示 → 处理 → 发送反馈」的完整闭环，而闭环的起点是
  * 「用户怎么成为你的用户，我和他怎么区分」——这一层就是那位评委要问的答案：
- *  - 每个账号有独立用户名 + 口令（scrypt 加盐哈希，绝不存明文）；
+ *  - 每个账号有独立用户名 + 密码（scrypt 加盐哈希，绝不存明文）；
  *  - 登录后颁发会话令牌（随机 32 字节），前端后续所有请求用它；
  *  - 会话落盘，服务重启后不需要重新登录（7 天过期）。
  *
  * 存储刻意做成单文件 JSON：和现有仓储一致（无外部数据库依赖，纯净服务器零依赖启动）。
- * 口令哈希用 node:crypto 的 scrypt，不引入第三方加密库。
+ * 密码哈希用 node:crypto 的 scrypt，不引入第三方加密库。
  */
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
@@ -29,7 +29,7 @@ export interface PublicUser {
 interface StoredUser extends PublicUser {
   salt: string;
   passwordHash: string;
-  /** 恢复码的哈希：忘记口令时用它重置，明文只在注册时显示一次 */
+  /** 恢复码的哈希：忘记密码时用它重置，明文只在注册时显示一次 */
   recoveryHash?: string;
   recoverySalt?: string;
 }
@@ -56,13 +56,13 @@ const USERNAME_RE = /^[a-zA-Z0-9_\u4e00-\u9fa5.-]{2,32}$/;
 
 /**
  * 与真实账号等价的假盐：用户不存在时也跑一次 scrypt，
- * 让「不存在」与「口令错」耗时接近，避免靠响应时间枚举用户名。
+ * 让「不存在」与「密码错」耗时接近，避免靠响应时间枚举用户名。
  */
 const DUMMY_SALT = '00000000000000000000000000000000';
 
 /**
- * 口令规范化：去掉首尾空白后再校验/存储。
- * 目的：避免「注册时多敲一个空格」导致之后永远登不上，也拒绝纯空白口令。
+ * 密码规范化：去掉首尾空白后再校验/存储。
+ * 目的：避免「注册时多敲一个空格」导致之后永远登不上，也拒绝纯空白密码。
  */
 function normalizePassword(raw: string | undefined): string {
   return (raw ?? '').trim();
@@ -71,10 +71,10 @@ function normalizePassword(raw: string | undefined): string {
 function assertPassword(raw: string | undefined): string {
   const password = normalizePassword(raw);
   if (password.length < MIN_PASSWORD) {
-    throw new UserStoreError(`口令至少 ${MIN_PASSWORD} 位（首尾空格不计）`);
+    throw new UserStoreError(`密码至少 ${MIN_PASSWORD} 位（首尾空格不计）`);
   }
   if (password.length > MAX_PASSWORD) {
-    throw new UserStoreError(`口令不能超过 ${MAX_PASSWORD} 位`);
+    throw new UserStoreError(`密码不能超过 ${MAX_PASSWORD} 位`);
   }
   return password;
 }
@@ -208,8 +208,8 @@ export class UserStore {
   }
 
   /**
-   * 注册：用户名唯一，口令长度受限；返回公开用户信息 + **一次性恢复码明文**。
-   * 恢复码只有这里能拿到一次（库里只存哈希），丢了只能改口令、无法找回。
+   * 注册：用户名唯一，密码长度受限；返回公开用户信息 + **一次性恢复码明文**。
+   * 恢复码只有这里能拿到一次（库里只存哈希），丢了只能改密码、无法找回。
    */
   register(input: { username: string; password: string; displayName?: string }): {
     user: PublicUser;
@@ -245,7 +245,7 @@ export class UserStore {
     return { user: this.toPublic(user), recoveryCode };
   }
 
-  /** 登录：口令错与用户不存在返回同一句提示，避免撞库探测 */
+  /** 登录：密码错与用户不存在返回同一句提示，避免撞库探测 */
   login(
     input: { username: string; password: string; ip?: string },
   ): { user: PublicUser; token: string } {
@@ -255,7 +255,7 @@ export class UserStore {
     // 先算校验结果再判断用户是否存在：不存在时 verifyOrBurn 也会跑一次 scrypt 拉齐耗时
     const credentialOk = this.verifyOrBurn(user, password);
     if (!user || !credentialOk) {
-      throw new UserStoreError('用户名或口令不正确', 401);
+      throw new UserStoreError('用户名或密码不正确', 401);
     }
     // 登录审计：记录最近一次成功登录的时间与来源
     user.lastLoginAt = new Date().toISOString();
@@ -308,7 +308,7 @@ export class UserStore {
   }
 
   /**
-   * 改口令：校验旧口令 → 换新盐/新哈希 → **作废该账号的全部会话**（含当前这条）。
+   * 改密码：校验旧密码 → 换新盐/新哈希 → **作废该账号的全部会话**（含当前这条）。
    * 返回作废的会话数，调用方据此提示"需要重新登录"。
    */
   changePassword(input: {
@@ -319,11 +319,11 @@ export class UserStore {
     const user = this.users.find((u) => u.id === input.userId);
     if (!user) throw new UserStoreError('账号不存在', 404);
     if (!this.verify(user, normalizePassword(input.oldPassword))) {
-      throw new UserStoreError('原口令不正确', 401);
+      throw new UserStoreError('原密码不正确', 401);
     }
     const next = assertPassword(input.newPassword);
     if (next === normalizePassword(input.oldPassword)) {
-      throw new UserStoreError('新口令不能与原口令相同');
+      throw new UserStoreError('新密码不能与原密码相同');
     }
 
     user.salt = randomBytes(16).toString('hex');
@@ -334,11 +334,11 @@ export class UserStore {
   }
 
   /**
-   * 忘记口令：用注册时发的恢复码重置，不需要旧口令。
+   * 忘记密码：用注册时发的恢复码重置，不需要旧密码。
    * 成功后同样作废全部会话，调用方应引导重新登录。
    *
    * **必须把新的恢复码返回给调用方**：旧恢复码在这一步已经被作废，
-   * 如果不回传，用户下次再忘记口令就永久没有找回路径了（旧实现只返回 revoked）。
+   * 如果不回传，用户下次再忘记密码就永久没有找回路径了（旧实现只返回 revoked）。
    */
   resetPassword(input: {
     username: string;

@@ -163,14 +163,14 @@ pnpm --filter @unimsg/web test     # 8 个文件 / 48 条用例
 | 维度 | 开发环境（评审演示） | 生产环境 |
 | --- | --- | --- |
 | 数据源 | 前端 Mock 或 `*_MODE=auto`（无凭据自动 Mock），零外部依赖 | `*_MODE=real`（或 auto + 真实凭据）+ PostgreSQL/Redis |
-| 入口令牌 | `VITE_API_TOKEN=dev-token`（与后端 `API_TOKEN` 一致） | 改为用户登录后签发的短期 token / 同域 Cookie，**不要**把长期令牌打进前端 bundle |
+| 入密码牌 | `VITE_API_TOKEN=dev-token`（与后端 `API_TOKEN` 一致） | 改为用户登录后签发的短期 token / 同域 Cookie，**不要**把长期令牌打进前端 bundle |
 | 部署 | 前后端分端口直连，后端 `cors()` 放行 | Nginx 同源反代 `/api` + `/ws`，`VITE_API_BASE=/`，关闭宽松 CORS |
 | 密钥 | 平台 / LLM / OCR 密钥**只在服务端** `config.ts` 读取 | 同上，且走密钥管理服务；前端永远不接触 |
 | 指标 | 进程内计数（`/api/health`） | 换 Prometheus / 共享存储，多实例下才准确 |
 | 探活 | 依赖 TCP close 触发重连 | 后端补 ping/pong 帧，前端做应用层心跳 |
 
 > ⚠️ **安全红线**：`VITE_` 前缀的变量会被打进前端构建产物，任何人都可从 bundle 中读到。
-> 这里只允许放**业务入口令牌**（性质类似公开 API Token），
+> 这里只允许放**业务入密码牌**（性质类似公开 API Token），
 > 飞书 / 钉钉 / 微信 / LLM / OCR 的真实 `*_SECRET` / `*_KEY` **绝不能**加 `VITE_` 前缀或写进前端。
 
 ---

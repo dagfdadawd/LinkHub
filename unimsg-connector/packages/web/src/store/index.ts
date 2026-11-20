@@ -34,7 +34,11 @@ function buildWsUrl(base: string, token: string): string {
 function createServices(): { api: MessageApi; realtime: RealtimeClient } {
   if (useRealBackend) {
     const httpBase = rawBase.replace(/\/+$/, ''); // '' → 相对路径 /api/*（同源）
-    const realtime = new WsRealtime(() => buildWsUrl(rawBase, currentToken(apiToken)));
+    // 登录前不握手：否则 dev-token 会被服务端 1008 拒绝，控制台先刷一串 401/WS 失败。
+    // AuthGate 确认放行（已有会话或本机不要求登录）后再 reconnectNow。
+    const realtime = new WsRealtime(() => buildWsUrl(rawBase, currentToken(apiToken)), {
+      autoConnect: false,
+    });
     // 会话令牌优先（登录后），未登录回退部署令牌（单机演示 / 旧部署零改动）
     return { api: new HttpApi(httpBase, () => currentToken(apiToken)), realtime };
   }

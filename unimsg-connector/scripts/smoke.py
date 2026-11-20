@@ -27,13 +27,16 @@ TOKEN = (
 PLATFORMS = ["feishu", "dingtalk", "wechat", "mail"]
 
 
-def req(method, path, body=None, token=None):
+def req(method, path, body=None, token=None, sig=None):
     data = json.dumps(body).encode() if body is not None else None
     r = urllib.request.Request(BASE + path, data=data, method=method)
     if body is not None:
         r.add_header("Content-Type", "application/json")
     if token:
         r.add_header("Authorization", f"Bearer {token}")
+    if sig:
+        # 微信 RPA 桥的固定 webhook 签名；mock 模式也走同一验签入口
+        r.add_header("x-signature", sig)
     try:
         with urllib.request.urlopen(r) as resp:
             ct = resp.headers.get("content-type", "")

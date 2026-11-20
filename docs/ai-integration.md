@@ -82,25 +82,9 @@ System 提示词固定为「只输出一个 JSON 对象」，字段与约束：
                      写 trace + 广播 message.updated（前端就地刷新）
 ```
 
-为什么异步：真实调用实测平均 5.47s、最大 9.3s。同步等待会让 Webhook 响应被拖住（平台超时会重推）并让收件箱迟迟不出新消息。
+为什么异步：真实调用通常 3–9s（长尾接近 9s）。同步等待会让 Webhook 响应被拖住（平台超时会重推）并让收件箱迟迟不出新消息。
 
-## 5. 实测数据（2026-11-11）
-
-意图识别抽样，5 条业务样例（MiMo flash vs 关键词规则）：
-
-| 消息 | flash | 关键词规则 | 延迟 | tokens |
-|---|---|---|---|---|
-| 麻烦把 Q3 复盘的材料在周五下班前发我一份 | 待办 ✅ | 未分类 ❌ | 2.90s | 173 |
-| 这个接口的鉴权头应该放哪个字段？ | 咨询 ✅ | 咨询 ✅ | 4.86s | 164 |
-| 系统将于本周六凌晨升级，期间服务不可用 | 通知 ✅ | 未分类 ❌ | 2.93s | 150 |
-| 明天上午十点会议室A301对齐一下排期 | 待办 ✅ | 通知 ❌ | 7.37s | 272 |
-| 收到，谢谢 | 未分类 ✅ | 未分类 ✅ | 9.30s | 337 |
-
-- 命中率：**flash 5/5**，关键词规则 2/5；平均 5.47s，P100 9.30s。
-- `pnpm run doctor` 真实探针：`mimo-v2.6-flash 响应 2473ms，识别为「待办」（0.95，179 tokens）`。
-- 端到端（浏览器实拍，当时配置为 MiMo）：Webhook 回执 **25ms**、消息 **27ms** 可见、意图 **2734ms** 填充，界面不刷新即更新，详情页显示「MiMo 识别」（现在会按实际生效厂商动态显示）。
-
-## 6. 配置与替换
+## 5. 配置与替换
 
 ```bash
 # .env（不会进仓库）
@@ -127,12 +111,12 @@ LLM_MIN_CONFIDENCE=0.6
 2. **`LLM_MODEL` 必须是控制台里的「模型 ID」，不是显示名**，且该模型必须已在服务商控制台**开通/激活**。例如填 `Doubao-Seed-2.1-lite` 会得到 `http_404: The model or endpoint ... does not exist`；填了正确 ID 但没开通会得到 `Your account has not activated the model ...`。两种情况的响应体摘要都会写进闭环日志与 `pnpm run doctor` 的建议里。
 3. **页面「API Base URL」写进 `LLM_ENDPOINT`**（旧版写的是兼容别名 `LLM_BASE_URL`，服务端两个键都读、前者优先）。页面上改完**必须重启后端**，配置只在启动时解析；`.env` 里显式写过的值页面改不动，会列进 `ignoredByEnv`。
 4. **历史消息不会自动重算**：AI 分析原本只在消息入库时跑一次。改完配置后，在消息详情页点「**重新生成**」即可用当前配置重跑（或直接发一条新消息）。成功后草稿、来源标签、低精度说明在 AI 面板里就地刷新，**不弹浮层**（toast 会遮住底部「发送」按钮，且信息重复）；只有规则兜底 / 调用失败才短暂提示，并带上后端 `llm.reason` 说明原因。
-5. **推理模型会「什么都不返回」**：豆包 `doubao-seed-*` 等带深度思考的模型，默认把 `max_completion_tokens` 全部花在思维链上，响应是 `content: ""` + `finish_reason: "length"` + `usage.completion_tokens_details.reasoning_tokens`，看起来像配置错了，实际 HTTP 是 200。服务端已对「火山端点 + 豆包模型」自动加 `thinking: {"type":"disabled"}`（实测输出从 400 token 空正文变成 48 token 的合法 JSON），并在任何推理模型被 `length` 截断时自动把输出预算放大 3 倍重试一次；仍然为空才回退，且 `empty_content` 原因里会带上 `finish_reason` / `reasoning_tokens` 便于定位。`response_format: json_object` 对此无效，不要拿它当解法。
-6. **短消息也一定有 AI 建议**：实测模型对 `"1"` 给 `confidence=0.3` / `intent=未分类` / `replyDraft=您好，请问您有什么具体需求可以详细说明一下吗？`，对明确业务消息（周报 / 通知 / 咨询）给 `0.95~0.99` 和针对性回复——**它本来就能生成，只是长短和精度不同**。旧版本把低置信结果丢掉换成关键词规则，现已改为一律采用：低精度时草稿更简短、界面提示「信息量较少 · 精度较低」，`LLM_MIN_CONFIDENCE=0.6` 只是精度分档线。看到「低精度」不要当成 API / Key 坏了去排查；只有界面出现「规则兜底」才代表真实调用失败（超时 / 404 / 网络 / 畸形 JSON）。
+5. **推理模型会「什么都不返回」**：豆包 `doubao-seed-*` 等带深度思考的模型，默认把 `max_completion_tokens` 全部花在思维链上，响应是 `content: ""` + `finish_reason: "length"` + `usage.completion_tokens_details.reasoning_tokens`，看起来像配置错了，实际 HTTP 是 200。服务端已对「火山端点 + 豆包模型」自动加 `thinking: {"type":"disabled"}`（关掉思考后从 400 token 空正文变成几十 token 的合法 JSON），并在任何推理模型被 `length` 截断时自动把输出预算放大 3 倍重试一次；仍然为空才回退，且 `empty_content` 原因里会带上 `finish_reason` / `reasoning_tokens` 便于定位。`response_format: json_object` 对此无效，不要拿它当解法。
+6. **短消息也一定有 AI 建议**：模型对 `"1"` 给 `confidence=0.3` / `intent=未分类` / `replyDraft=您好，请问您有什么具体需求可以详细说明一下吗？`，对明确业务消息（周报 / 通知 / 咨询）给 `0.95~0.99` 和针对性回复——**它本来就能生成，只是长短和精度不同**。低置信结果不再丢弃换成关键词规则，一律采用模型结果：低精度时草稿更简短、界面提示「信息量较少 · 精度较低」，`LLM_MIN_CONFIDENCE=0.6` 只是精度分档线。看到「低精度」不要当成 API / Key 坏了去排查；只有界面出现「规则兜底」才代表真实调用失败（超时 / 404 / 网络 / 畸形 JSON）。
 
 不填 Key / `LLM_PROVIDER=mock` → 走内置规则识别，零密钥也能完整演示；`pnpm run doctor` 会明确给出 SKIP 与启用步骤，真实调用失败则给 FAIL + 可操作建议。
 
-## 7. 安全与成本
+## 6. 安全与成本
 
 - Key 只在服务端读取，不写日志、不进前端 bundle、不进 doctor 报告（探针只报模型名与延迟）。
 - `.env` 已被 `.gitignore` 忽略；交付包由 `git archive` 生成，天然不含凭据。

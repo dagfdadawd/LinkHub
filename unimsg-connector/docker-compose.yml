@@ -3,7 +3,7 @@
 #   cd unimsg-connector
 #   cp .env.example .env          # 可选：填真实平台凭据；不填则自动走 Mock
 #   docker compose up -d --build
-#   打开 http://localhost:3001    默认入口令牌见下方 LINKHUB_DEPLOY_TOKEN
+#   打开 http://localhost:3001    默认入密码牌见下方 LINKHUB_DEPLOY_TOKEN
 #
 # 说明：
 #  - 单容器同源部署：/api/*、/ws 与前端页面都由 3001 提供，无需 nginx / DB；

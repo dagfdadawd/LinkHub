@@ -2,7 +2,7 @@
 
 > 目标：**不配任何平台账号，也能看到完整闭环**；以后换成自己的账号只改 `.env`，不改代码。
 > 从交付包根目录开始，先 `cd unimsg-connector`；下文命令都在该目录下执行（仓库根目录没有 `package.json`，在根目录跑 `pnpm` 会报错）。
-> 根目录 [README.md](../README.md) 顶部有「30 秒跑起来」入口与文档导航，两边内容一致。
+> 根目录 [README.md](../README.md) 顶部有「跑起来」一节和文档导航，两边内容一致。
 >
 > **Windows 用户更省事**：直接双击仓库根目录的 `start.bat`（或 `start-docker.bat` 走 Docker），脚本会自动完成下面的依赖安装、环境变量配置、启动后端与前端、打开浏览器；停止用 `start.bat stop`；改完代码 / `.env` 想重启用 `start.bat restart`（只停 LinkHub 自己的旧进程，不误杀别的程序）；想知道端口被谁占着用 `start.bat ports`。详见 [reference.md 的「Windows 一键启动」小节](reference.md)。
 >
@@ -14,8 +14,8 @@
 |---|---|---|
 | **只想看效果**（零账号、零平台配置） | [路径 A：零账号演示](#path-a) | 约 5 分钟 |
 | **要换成自己的账号**（飞书 / 钉钉 / 微信 / 邮箱任选一个即可） | [路径 B：换账号](#path-b) | 约 10 分钟 |
-| **个人版首次使用**（普通用户，用自己的账号收发） | [路径 E：连接账号授权中心](#path-e) | 邮箱约 2 分钟；钉钉 / 飞书需本人授权 5–10 分钟（管理员项另计） |
 | **要用本人账号收发**（推荐，免把机器人拉进每个群） | [路径 D：连接本人账号](#path-d) | 飞书约 10 分钟；钉钉约 10–15 分钟（企业先开 CLI 访问；本机浏览器登录，远程 / 容器用设备码） |
+| **个人版首次使用**（普通用户，用自己的账号收发） | [路径 E：连接账号授权中心](#path-e) | 邮箱约 2 分钟；钉钉 / 飞书需本人授权 5–10 分钟（管理员项另计） |
 | **要现场演示 / 交付给评审 / 部署** | [路径 C：演示与交付](#path-c) | 按场景 5–30 分钟 |
 
 ## 30 秒前置检查
@@ -96,7 +96,7 @@ pnpm run doctor
 pnpm --filter @unimsg/server start
 ```
 
-> ⚠️ 必须写 **`pnpm run doctor`**，不要写 `pnpm doctor`：pnpm 9 自带同名内置命令会抢走它，实测没有输出、退出码 0，看起来像成功但本项目自检根本没运行。
+> ⚠️ 必须写 **`pnpm run doctor`**，不要写 `pnpm doctor`：pnpm 9 自带同名内置命令会抢走它，没有任何输出、退出码 0，看起来像成功但本项目自检根本没运行。
 > 只想看某一平台：`pnpm run doctor --platform=dingtalk,mail`。
 
 > `API_TOKEN` 不要留空：演示保持默认 `dev-token`，对外部署必须改成强随机值。**留空会回退 dev-token 并打印告警，仍强制 Bearer 鉴权**（不会出现"空令牌 = 不鉴权"）；`NODE_ENV=production` 且仍是默认/空令牌时服务会拒绝启动。
@@ -104,11 +104,11 @@ pnpm --filter @unimsg/server start
 **成功信号（分两层看，别混）**：
 
 - **变量层（不代表连通）**：后端启动日志出现 `运行模式: ...=real(auto) 收✓ 发✓`；`curl .../api/health` 的 `modes` 中该平台为 `real`；`/api/accounts` 中该平台 `configured=true / mode=real`。这些只说明 **env 变量填齐了**——**填假的 App ID 也会显示 `real` / 卡片 Tag「已配置（未验证）」**，不能当成"已连上"。
-- **连通层（这才是判据）**：`pnpm run doctor --platform=<平台>` 输出 `[PASS]` 且退出码 0（`✔ 自检通过：PASS x / FAIL 0`；0 = 全 PASS/SKIP，1 = 有 FAIL，2 = 参数错，3 = 自检异常）。若 doctor FAIL 而账号页显示 `real`，**以 doctor 为准**（典型：假凭据 `10003`、权限未开、租户 `21001`（历史：本机租户 2026-11-12 已解除；换租户仍可能）、网络/代理）。若终端退出码和报告结论对不上，重跑一次即可（历史版本在 Windows + Node 24 下有过强制退出导致异常码的问题，已修复）。
+- **连通层（这才是判据）**：`pnpm run doctor --platform=<平台>` 输出 `[PASS]` 且退出码 0（`✔ 自检通过：PASS x / FAIL 0`；0 = 全 PASS/SKIP，1 = 有 FAIL，2 = 参数错，3 = 自检异常）。若 doctor FAIL 而账号页显示 `real`，**以 doctor 为准**（典型：假凭据 `10003`、权限未开、租户策略 `21001`、网络 / 代理）。
   - 注意：四个平台**都没填凭据**时，结论是「⚠ 尚未配置任何平台」而不是「✔ 自检通过」（退出码仍为 0）——这是提醒你去填账号，不是自检失败。
   - 不知道命令在哪：账号页真实模式的卡片上就有可复制的 `pnpm run doctor --platform=<平台>`（提示语「变量齐了 ≠ 平台能连通」）。
 
-外部限制要提前知道：飞书历史上可能报 `21001`（**本机租户 2026-11-12 已解除**；换租户 / 换环境仍需企业认证 / 合规租户）。微信走 RPA 通道、无官方 API 限制，但需本机**微信桌面端 3.9.x**（4.x 是 Qt 自绘界面、不暴露控件树：自动轮询不可用，可「按需拉取」）与桥就绪。doctor 会给中文修复建议；逐平台步骤见 [swap-accounts.md](swap-accounts.md)。
+外部限制要提前知道：飞书可能报 `21001`（租户级平台策略，需企业认证 / 合规租户，改代码与配置都无效）。微信走 RPA 通道、无官方 API 限制，但需本机**微信桌面端 3.9.x**（4.x 是 Qt 自绘界面、不暴露控件树：自动轮询不可用，可「按需拉取」）与桥就绪。doctor 会给中文修复建议；逐平台步骤见 [swap-accounts.md](swap-accounts.md)。
 改完 `.env` 必须**重启后端**；改了前端 `.env` 必须**重启 Vite**。账号页会在 `.env` 修改时间晚于服务启动时间时提示「.env 已修改，需要重启后端才生效」，看到就重启，不要反复改拼写。
 
 <a id="path-d"></a>
@@ -121,11 +121,11 @@ pnpm --filter @unimsg/server start
 
 ### D1 飞书（约 10 分钟，需应用管理员先开权限）
 
-1. **后台一次性配置**（应用管理员）：用户身份权限（发送：`im:message`、`im:message.send_as_user`、`im:resource`；接收：以用户身份获取单聊 / 群聊消息权限 + 列会话 `im:chat:read`；持续授权：`offline_access`）→ 安全设置添加重定向 URL `http://localhost:3001/api/feishu/oauth/callback`（端口不同则以 `FEISHU_REDIRECT_URI` 为准）。**持续授权（自动续期）由用户身份权限 `offline_access`（后台名称「持续访问已授权的数据」）决定**：开通它并重新授权后，OAuth 会返回 `refresh_token` + `refresh_token_expires_in`（2026-11-12 实测已验证）；旧版控制台曾有「刷新 user_access_token」开关，新版已无此项（安全设置只有「重定向 URL」「IP 白名单」）。测试应用改动免审即时生效，正式应用需发布版本。
+1. **后台一次性配置**（应用管理员）：用户身份权限（发送：`im:message`、`im:message.send_as_user`、`im:resource`；接收：以用户身份获取单聊 / 群聊消息权限 + 列会话 `im:chat:read`；持续授权：`offline_access`）→ 安全设置添加重定向 URL `http://localhost:3001/api/feishu/oauth/callback`（端口不同则以 `FEISHU_REDIRECT_URI` 为准）。**持续授权（自动续期）由用户身份权限 `offline_access`（后台名称「持续访问已授权的数据」）决定**：开通它并重新授权后，OAuth 会返回 `refresh_token` + `refresh_token_expires_in`；旧版控制台曾有「刷新 user_access_token」开关，新版已无此项（安全设置只有「重定向 URL」「IP 白名单」）。测试应用改动免审即时生效，正式应用需发布版本。
 2. `.env` 保持默认即可：`FEISHU_IDENTITY=auto`、`FEISHU_USER_RECEIVE=auto`（轮询间隔 `FEISHU_USER_RECEIVE_SECONDS=20`）。
 3. **重启后端** → 打开「平台账号」页 → 飞书卡片 → **「连接本人账号」** → 在飞书授权页用本人账号点同意。
 4. 成功信号：飞书卡片「身份 · 谁在收、谁在发」块里 **接收 = 本人、发送 = 本人**，并显示「已连接：<账号名>」；给本人发一条单聊消息，**5–30 秒内**出现在收件箱（标「本人账号接收」）；回复后对方收到**你本人**发的消息。
-5. 失败：授权报 `20027` / `20010` / `20029` 或收不到消息 → 按卡片 hint 与 [personal-identity.md §4.6](personal-identity.md#46-飞书本人身份常见报错) 处理；租户 `21001` 属平台策略（**本机租户 2026-11-12 已解除**，其他租户仍可能），改配置无解。
+5. 失败：授权报 `20027` / `20010` / `20029` 或收不到消息 → 按卡片 hint 与 [personal-identity.md §4.6](personal-identity.md#46-飞书本人身份常见报错) 处理；租户 `21001` 属平台策略（企业认证 / 合规租户之外无解），改配置无效。
 
 ### D2 钉钉（约 15 分钟，需企业管理员 + 首次真人授权）
 
@@ -222,7 +222,7 @@ curl -H "Authorization: Bearer dev-token" http://127.0.0.1:3001/api/accounts
    - 卡片「已就绪」只代表本机后端探测到的真实状态；**重启后仍显示「演示模式」说明是显式 `*_MODE=mock`，需要去掉并再重启**。
 9. **回退 / 换账号**：不想连某平台就让它保持演示模式，不影响其它平台；换邮箱/钉钉/飞书账号回本页重新添加或重新授权；想直接改 `.env` 的路径见 [swap-accounts.md §0.1](swap-accounts.md)。
 
-> 依据：白号首次使用审计与两轮复测证据见 [docs/qa/white-account/](qa/white-account/)（white-auditor-report / white-user-report / white-user-round2-report / white-api-round2-report；只读审计报告，未修改）。平台能力边界（飞书轮询/可见范围、钉钉 CLI 访问、微信 RPA 依赖、`21001` 等）见 [personal-identity.md §3](personal-identity.md#3-平台边界先读避免踩空)。
+> 这里按「一台干净机器」的真实首次使用顺序写：能自助的（邮箱、钉钉）先做，需要管理员的（飞书权限）后做。平台能力边界（飞书轮询 / 可见范围、钉钉 CLI 访问、微信 RPA 依赖、`21001` 等）见 [personal-identity.md](personal-identity.md)。
 <a id="path-c"></a>
 ## 路径 C：现场演示 / 交付评审 / 部署
 
@@ -230,8 +230,8 @@ curl -H "Authorization: Bearer dev-token" http://127.0.0.1:3001/api/accounts
 - 打包交付 → [delivery-checklist.md](delivery-checklist.md)（`pnpm run deliver` + 交付前后自检）
 - 完整真实接入（后台点什么、填哪些变量、常见报错）→ [swap-accounts.md](swap-accounts.md)
 - 本人账号收发（飞书 OAuth / 钉钉 dws、平台限制、回退、排错）→ [personal-identity.md](personal-identity.md)
-- 承诺 vs 实现、已知边界与风险 → [reference.md](reference.md) 的「设计文档承诺 vs 当前实现」与 [risk-register.md](risk-register.md)
-- 环境变量全表、API 一览、测试记录、目录结构 → [reference.md](reference.md)
+- 能力边界、实现取舍与已知限制 → [reference.md](reference.md) 的「已知限制」
+- 环境变量全表、API 一览、目录结构、已知限制 → [reference.md](reference.md)
 
 部署三条底线：**飞书推荐用长连接（`FEISHU_STREAM=true`）免公网回调**（详见 [swap-accounts.md](swap-accounts.md) §3）；微信走本机 RPA 桥、无需公网；生产必须改强随机 `API_TOKEN`（`NODE_ENV=production` 且仍是默认 `dev-token` 会拒绝启动；也**不要**把它留空，空值会回退默认 `dev-token` 并告警、**仍强制鉴权**）。
 本人身份另有两条底线：飞书**重定向 URL 必须与 `FEISHU_REDIRECT_URI` 完全一致**（协议 / 域名 / 端口 / 路径 / 斜杠）；钉钉 **dws 必须安装在 LinkHub 运行的环境中并完成登录**（容器部署需在容器内登录，详见 [deploy.md](deploy.md)）。
@@ -274,4 +274,4 @@ curl -H "Authorization: Bearer dev-token" http://127.0.0.1:3001/api/accounts
 - 换真实账号 / 排错：[swap-accounts.md](swap-accounts.md)
 - 现场演示讲稿：[demo-script.md](demo-script.md)
 - 交付打包：[delivery-checklist.md](delivery-checklist.md)
-- 全量风险与边界：[risk-register.md](risk-register.md)
+- 全量边界与实现取舍：[reference.md](reference.md)

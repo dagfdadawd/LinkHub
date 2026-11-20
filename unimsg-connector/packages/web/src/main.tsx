@@ -5,16 +5,14 @@ import dayjs from 'dayjs';
 import 'dayjs/locale/zh-cn';
 import { App } from './app/App';
 import { ThemeProvider } from './app/ThemeProvider';
-import { store } from './store';
 import './styles/app.css';
 
 dayjs.locale('zh-cn');
-void store.init();
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ThemeProvider>
-      <BrowserRouter>
+      <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <App />
       </BrowserRouter>
     </ThemeProvider>

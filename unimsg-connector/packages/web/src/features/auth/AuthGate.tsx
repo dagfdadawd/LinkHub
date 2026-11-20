@@ -13,7 +13,7 @@
 import { useEffect, useState } from 'react';
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { Spin } from 'antd';
-import { services } from '../../store';
+import { services, store } from '../../store';
 import { useSession } from '../../services/session';
 
 type GateState = 'checking' | 'open' | 'login';
@@ -22,6 +22,14 @@ export function AuthGate() {
   const session = useSession();
   const location = useLocation();
   const [gate, setGate] = useState<GateState>(session ? 'open' : 'checking');
+
+  // 认证放行后才连 WS / 拉数据：登录前不拿 dev-token 去撞 401。
+  // 登录、退出、切换账号都会让 token 变化，这里用同一个 effect 统一重连。
+  useEffect(() => {
+    if (gate !== 'open') return;
+    void store.init();
+    services.realtime.reconnectNow?.();
+  }, [gate, session?.token]);
 
   useEffect(() => {
     if (session) {

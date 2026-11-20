@@ -120,6 +120,20 @@ describe('WsRealtime', () => {
     rt.close();
   });
 
+  it('reconnectNow：1008 后登录成功可强制重连，旧连接不会重复调度', () => {
+    const rt = create();
+    FakeWebSocket.instances[0].open();
+    FakeWebSocket.instances[0].serverClose(1008);
+    expect(rt.getStatus()).toBe('offline');
+
+    rt.reconnectNow();
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    FakeWebSocket.instances[1].open();
+    expect(rt.getStatus()).toBe('connected');
+    vi.advanceTimersByTime(10_000);
+    expect(FakeWebSocket.instances).toHaveLength(2);
+  });
+
   it('鉴权失败（1008）直接 offline，不做无意义重连', () => {
     const rt = create();
     FakeWebSocket.instances[0].serverClose(1008);

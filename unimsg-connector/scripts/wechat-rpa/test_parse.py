@@ -100,13 +100,16 @@ class ParseClipboardTest(unittest.TestCase):
         self.assertEqual(msgs[0]["type"], "text")
         self.assertIsNone(msgs[0]["fileName"])
 
-    def test_skip_self(self):
-        """自己发的消息按昵称过滤掉，并计数（不静默丢弃）"""
+    def test_keep_self_marked(self):
+        """自己发的消息也保留，并标 isSelf（供 LinkHub 渲染到右侧）"""
         raw = "张三\n\n15:20\n\n你好\n\n我自己\n\n15:21\n\n收到"
         msgs, stats = self.parse(raw, self_name="我自己")
-        self.assertEqual(len(msgs), 1)
-        self.assertEqual(msgs[0]["sender"], "张三")
-        self.assertEqual(stats["skippedSelf"], 1)
+        self.assertEqual(len(msgs), 2)
+        self.assertEqual([m["sender"] for m in msgs], ["张三", "我自己"])
+        self.assertFalse(msgs[0]["isSelf"])
+        self.assertTrue(msgs[1]["isSelf"])
+        self.assertEqual(stats["selfCount"], 1)
+        self.assertEqual(stats["skippedSelf"], 0)
 
     def test_lone_time_in_body_not_anchor(self):
         """正文里孤立的时间不会被当成消息锚点（否则会把一条消息拆成两条）"""
@@ -149,8 +152,8 @@ class BuildInboundTest(unittest.TestCase):
         payload = bridge.build_pulled_inbound(item, "项目群")
         self.assertEqual(payload["at"], "2026-11-19T15:20:00")
 
-    def test_missing_file_has_no_path(self):
-        """定位不到本机文件时不给 path：前端据此不显示下载按钮，不假装能下"""
+    def test_missing_file_has_no_token(self):
+        """定位不到本机文件时不给 token：前端据此不显示下载按钮，不假装能下"""
         item = {
             "sender": "张三",
             "at": datetime(2026, 11, 19, 15, 20),
@@ -159,8 +162,22 @@ class BuildInboundTest(unittest.TestCase):
             "fileName": "不存在的文件_zzz.pdf",
         }
         payload = bridge.build_pulled_inbound(item, "项目群")
-        self.assertEqual(payload["attachments"][0]["path"], "")
+        self.assertEqual(payload["attachments"][0]["token"], "")
         self.assertEqual(payload["attachments"][0]["name"], "不存在的文件_zzz.pdf")
+
+    def test_self_message_direction_is_out(self):
+        """自己发的消息必须标 out，否则会显示在左侧并被当成未读来信"""
+        item = {
+            "sender": "我自己",
+            "at": datetime(2026, 11, 19, 15, 20),
+            "text": "收到",
+            "type": "text",
+            "isSelf": True,
+        }
+        payload = bridge.build_pulled_inbound(item, "项目群")
+        self.assertEqual(payload["direction"], "out")
+        item["isSelf"] = False
+        self.assertEqual(bridge.build_pulled_inbound(item, "项目群")["direction"], "in")
 
 
 if __name__ == "__main__":

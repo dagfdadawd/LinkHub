@@ -14,7 +14,7 @@ import {
 import type { ReactNode } from 'react';
 import { useAppState } from '../../hooks/useAppState';
 import { services, store } from '../../store';
-import { clearSession, useSession } from '../../services/session';
+import { clearSession, listSessions, useSession } from '../../services/session';
 import { resetOnboardingTips } from '../../utils/onboarding';
 import { useTheme, type ThemePreference } from '../../app/ThemeProvider';
 import {
@@ -76,7 +76,7 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
   const [avatarUrl, setAvatarUrl] = useState<string | null>(profile.avatarUrl);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  /** 账号分区：当前登录用户 + 改口令 / 退出所有设备 */
+  /** 账号分区：当前登录用户 + 改密码 / 退出所有设备 */
   const session = useSession();
   const [oldPassword, setOldPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -85,23 +85,30 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
 
   async function handleChangePassword(): Promise<void> {
     if (newPassword !== confirmPassword) {
-      message.error('两次输入的新口令不一致');
+      message.error('两次输入的新密码不一致');
       return;
     }
     setChangingPassword(true);
     try {
       const { revoked } = await services.api.changePassword({ oldPassword, newPassword });
-      // 后端已作废全部会话：本地必须同步清掉，否则会拿着废令牌继续请求
+      // 后端作废了这个账号的会话：本地必须同步清掉，否则会拿着废令牌继续请求。
+      // 多开场景下别的账号还留着，这时不该把人赶回登录页。
       clearSession();
       services.realtime.reconnectNow?.();
       setOldPassword('');
       setNewPassword('');
       setConfirmPassword('');
       onClose();
-      message.success(`口令已修改，${revoked} 个登录已失效，请用新口令重新登录`);
+      if (listSessions().length > 0) {
+        void store.refresh?.();
+        message.success(`密码已修改，${revoked} 个登录已失效；已切到本机其他账号`);
+        navigate('/inbox', { replace: true });
+        return;
+      }
+      message.success(`密码已修改，${revoked} 个登录已失效，请用新密码重新登录`);
       navigate('/login', { replace: true });
     } catch (e) {
-      message.error(e instanceof Error ? e.message : '修改口令失败');
+      message.error(e instanceof Error ? e.message : '修改密码失败');
     } finally {
       setChangingPassword(false);
     }
@@ -113,6 +120,12 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
       clearSession();
       services.realtime.reconnectNow?.();
       onClose();
+      if (listSessions().length > 0) {
+        void store.refresh?.();
+        message.success(`已退出这个账号的所有设备（${revoked} 个登录失效），已切到本机其他账号`);
+        navigate('/inbox', { replace: true });
+        return;
+      }
       message.success(`已退出所有设备（${revoked} 个登录失效）`);
       navigate('/login', { replace: true });
     } catch (e) {
@@ -398,28 +411,28 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
                       认领无主的历史消息
                     </Button>
 
-                    <div className="set-section__title">修改口令</div>
+                    <div className="set-section__title">修改密码</div>
                     <p className="set-hint">
-                      修改成功后，该账号的所有登录（含本机）都会失效，需要用新口令重新登录。
+                      修改成功后，该账号的所有登录（含本机）都会失效，需要用新密码重新登录。
                     </p>
                     <div className="account-pwd">
                       <Input.Password
-                        placeholder="原口令"
-                        aria-label="原口令"
+                        placeholder="原密码"
+                        aria-label="原密码"
                         value={oldPassword}
                         onChange={(e) => setOldPassword(e.target.value)}
                         size="large"
                       />
                       <Input.Password
-                        placeholder="新口令（至少 6 位）"
-                        aria-label="新口令"
+                        placeholder="新密码（至少 6 位）"
+                        aria-label="新密码"
                         value={newPassword}
                         onChange={(e) => setNewPassword(e.target.value)}
                         size="large"
                       />
                       <Input.Password
-                        placeholder="确认新口令"
-                        aria-label="确认新口令"
+                        placeholder="确认新密码"
+                        aria-label="确认新密码"
                         value={confirmPassword}
                         onChange={(e) => setConfirmPassword(e.target.value)}
                         size="large"
@@ -431,7 +444,7 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
                         onClick={() => void handleChangePassword()}
                         data-testid="account-change-password"
                       >
-                        修改口令
+                        修改密码
                       </Button>
                     </div>
 

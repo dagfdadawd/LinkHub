@@ -1,6 +1,0 @@
-{
-  "hasResult": true,
-  "text": "连接测试失败\nIMAP：连接被拒绝：127.0.0.1:1（connect ECONNREFUSED 127.0.0.1:1）（目标端口未开放或被中间设备拒绝：核对 .env 的 host/端口是否与服务商一致（IMAP 993、SMTP 465/587）；若开了代理/VPN，尝试关闭后重试。）\nSMTP：连接被拒绝：127.0.0.1:1（connect ECONNREFUSED 127.0.0.1:1）（目标端口未开放或被中间设备拒绝：核对 .env 的 host/端口是否与服务商一致（IMAP 993、SMTP 465/587）；若开了代理/VPN，尝试关闭后重试。）",
-  "formStillOpen": true,
-  "accountsText": "w******@example.invalid\nQQ 邮箱\n本地\n删除"
-}

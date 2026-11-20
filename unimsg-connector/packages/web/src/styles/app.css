@@ -9162,11 +9162,16 @@ html.vt-morph .detail {
   height: 100vh;
   height: 100dvh;
   display: flex;
-  align-items: center;
+  /* 卡片顶边钉住不动：注册比登录多两行，切 Tab 时只向下「长高」，
+     标题和 Tab 条原地不动——没有整卡上下平移，就不会有跳帧的感觉 */
+  align-items: flex-start;
   justify-content: center;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: clamp(16px, 4vh, 36px) 20px;
+  /* 上边距只跟视口高度有关，与「当前是哪张表单」无关：
+     按最高的那一档（注册/重置，约 640px）居中留白，登录时卡片顶边落在同一个位置。
+     这样切 Tab 时卡片的顶边、标题、Tab 条都不动，只有底边向下延伸。 */
+  padding: max(24px, calc((100dvh - 640px) / 2)) 20px 36px;
   background: var(--bg);
   font-family: var(--font-sans);
 }
@@ -9186,92 +9191,101 @@ html.vt-morph .detail {
 }
 
 .auth-card {
+  /* 字段一行一个之后，注册（4 行）必然比登录（2 行）高约 150px，两卡不可能再等高。
+     所以改「钉顶边」：卡片离页面顶部的距离与自身高度无关（见 .auth-page 的
+     align-items: flex-start），切 Tab 时标题、Tab 条、前两个字段一动不动，
+     只有底边向下延伸——比整卡上下平移安定得多。 */
+  display: flex;
+  flex-direction: column;
   width: min(440px, 100%);
-  margin: auto;
-  padding: 24px 28px 18px;
+  margin: 0 auto;
+  padding: 30px 32px 22px;
   border-radius: var(--r-22);
   background: var(--surface);
   border: 1px solid var(--auth-card-border);
   box-shadow: var(--auth-shadow);
 }
 
-/* 登录 / 重置 / 恢复码：比注册页更舒展，避免卡片显得又扁又宽。
-   注册页字段多，继续走上面的紧凑基准。 */
-.auth-card--roomy {
-  padding: 32px 32px 26px;
+/* 表单自己也是一列：字段区 flex-grow，错误槽与按钮留在底部 */
+.auth-form {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
 }
 
-.auth-card--roomy .auth-brand {
-  margin-bottom: 24px;
+.auth-fields {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  /* 一行一个，从上往下排；不撑开，避免少字段的那一页被拉出空洞 */
+  justify-content: flex-start;
+  min-height: 0;
 }
 
-.auth-card--roomy .auth-head {
-  margin-bottom: 22px;
+/* 最后一个字段不再留底部外边距，避免和提示槽叠加后多出 14px */
+.auth-fields > .ant-form-item:last-child {
+  margin-bottom: 0;
 }
 
-.auth-card--roomy .auth-title {
-  margin-bottom: 8px;
-  font-size: 2rem;
+/* 提示槽常驻：高度写死、位置固定。
+   错误提示和「注册已关闭 / 需要邀请码」共用这一格，出现时只在槽内淡入
+   （透明度 + 上浮 2px，纯 transform），既不新增节点也不改高度——
+   所以画面一帧都不会被挤压，也不需要把整页往上抬。
+   登录与注册两种模式的槽高完全一样，切 Tab 时按钮不会跟着跳。 */
+.auth-slot {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  height: 42px;
+  padding: 3px 0;
+  overflow: hidden;
 }
 
-.auth-card--roomy .auth-sub {
-  font-size: 0.875rem;
+.auth-error,
+.auth-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-height: 48px;
+  margin: 0;
+  padding: 5px 11px;
+  overflow: hidden;
+  border-radius: var(--r-10);
+  font-size: 0.75rem;
+  line-height: 1.5;
+  text-align: left;
+  animation: auth-slot-in 200ms ease-out both;
 }
 
-.auth-card--roomy .auth-tabs {
-  margin-bottom: 22px;
+@keyframes auth-slot-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
-.auth-card--roomy .auth-tab {
-  height: 40px;
-  font-size: 0.875rem;
+/* 注册状态提示：浅蓝信息条，和错误条同尺寸，避免两种提示高度不一样 */
+.auth-hint {
+  border: 1px solid var(--auth-accent-border);
+  background: var(--auth-accent-soft);
+  color: var(--auth-accent-ink);
 }
 
-.auth-card--roomy .auth-form .ant-form-item {
-  margin-bottom: 18px;
-}
-
-.auth-card--roomy .auth-form .ant-form-item-label {
-  padding-bottom: 6px;
-}
-
-.auth-card--roomy .auth-form .ant-form-item-label > label {
-  font-size: 0.8125rem;
-}
-
-.auth-card--roomy .auth-form .ant-input,
-.auth-card--roomy .auth-form .ant-input-affix-wrapper {
-  min-height: 48px;
-  padding: 10px 14px;
-  font-size: 0.9375rem;
-}
-
-.auth-card--roomy .auth-form .ant-input-affix-wrapper > .ant-input {
-  min-height: auto;
-  padding: 0;
-}
-
-.auth-card--roomy .auth-submit.ant-btn {
-  height: 48px;
-  margin-top: 6px;
-  font-size: 0.9375rem;
-}
-
-.auth-card--roomy .auth-links {
-  min-height: 20px;
-  margin-top: 18px;
-}
-
-.auth-card--roomy .auth-links__hint,
-.auth-card--roomy .auth-link {
-  font-size: 0.8125rem;
+.auth-hint .anticon {
+  color: var(--auth-accent);
 }
 
 .auth-brand {
   display: inline-flex;
   align-items: center;
-  gap: 9px;
-  margin-bottom: 14px;
+  gap: 8px;
+  margin-bottom: 16px;
 }
 
 .auth-brand__dot {
@@ -9290,12 +9304,12 @@ html.vt-morph .detail {
 }
 
 .auth-head {
-  margin-bottom: 12px;
+  margin-bottom: 14px;
 }
 
 .auth-title {
-  margin: 0 0 5px;
-  font-size: 1.625rem;
+  margin: 0 0 6px;
+  font-size: 1.75rem;
   font-weight: 700;
   line-height: 1.2;
   letter-spacing: -0.02em;
@@ -9304,13 +9318,16 @@ html.vt-morph .detail {
 
 .auth-sub {
   margin: 0;
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
   line-height: 1.6;
   color: var(--text-2);
 }
 
-/* 胶囊式 Tab：浅灰轨道 + 白色选中块 */
+/* 胶囊式 Tab：浅灰轨道 + 滑动高光。
+   高光单独一层，切 Tab 时只动 transform，不触发布局； */
 .auth-tabs {
+  position: relative;
+  isolation: isolate;
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 4px;
@@ -9320,7 +9337,37 @@ html.vt-morph .detail {
   background: var(--auth-track);
 }
 
+.auth-tabs__thumb {
+  position: absolute;
+  z-index: 0;
+  top: 3px;
+  left: 3px;
+  width: calc((100% - 10px) / 2);
+  height: 36px;
+  border-radius: var(--r-8);
+  background: var(--surface);
+  box-shadow:
+    0 1px 2px rgb(16 24 40 / 8%),
+    0 4px 12px -4px rgb(16 24 40 / 12%);
+  pointer-events: none;
+  /* 1.3 只留一点回弹：能看出“果冻”，但不会明显冲过头 */
+  transition:
+    transform 360ms cubic-bezier(0.34, 1.3, 0.64, 1),
+    opacity 160ms ease;
+  will-change: transform;
+}
+
+.auth-tabs[data-active='register'] .auth-tabs__thumb {
+  transform: translate3d(calc(100% + 4px), 0, 0);
+}
+
+.auth-tabs[data-active='none'] .auth-tabs__thumb {
+  opacity: 0;
+}
+
 .auth-tab {
+  position: relative;
+  z-index: 1;
   height: 36px;
   border: 0;
   border-radius: var(--r-8);
@@ -9329,7 +9376,7 @@ html.vt-morph .detail {
   font-size: 0.875rem;
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
+  transition: color 0.18s ease, transform 0.18s ease;
 }
 
 .auth-tab:hover {
@@ -9337,11 +9384,30 @@ html.vt-morph .detail {
 }
 
 .auth-tab.is-active {
-  background: var(--surface);
+  background: transparent;
   color: var(--auth-accent);
-  box-shadow:
-    0 1px 2px rgb(16 24 40 / 8%),
-    0 4px 12px -4px rgb(16 24 40 / 12%);
+  box-shadow: none;
+  /* 文字只跟一点点横向阻尼，幅度控制在 0.6px 内 */
+  animation: auth-tab-wobble 360ms cubic-bezier(0.34, 1.3, 0.64, 1);
+}
+
+@keyframes auth-tab-wobble {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+
+  24% {
+    transform: translate3d(-0.6px, 0, 0);
+  }
+
+  52% {
+    transform: translate3d(0.45px, 0, 0);
+  }
+
+  76% {
+    transform: translate3d(-0.2px, 0, 0);
+  }
 }
 
 .auth-tab:focus-visible {
@@ -9349,28 +9415,28 @@ html.vt-morph .detail {
   outline-offset: 2px;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .auth-tabs__thumb {
+    transition: none;
+  }
+
+  .auth-tab.is-active {
+    animation: none;
+  }
+}
+
 /* 表单 */
 .auth-form .ant-form-item {
-  margin-bottom: 10px;
+  margin-bottom: 12px;
 }
 
-/* 注册 / 重置：口令与确认口令并排，少一行高度；窄屏自动堆叠 */
-.auth-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  column-gap: 12px;
-}
-
-.auth-row .ant-form-item {
-  margin-bottom: 10px;
-}
-
+/* 注册 / 重置：密码与确认密码并排，少一行高度；窄屏自动堆叠 */
 .auth-form .ant-form-item-label {
-  padding-bottom: 3px;
+  padding-bottom: 2px;
 }
 
 .auth-form .ant-form-item-label > label {
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
   font-weight: 600;
   color: var(--auth-label);
 }
@@ -9386,15 +9452,15 @@ html.vt-morph .detail {
   color: var(--auth-muted);
 }
 
-/* 输入框：46px 高、10px 圆角、聚焦蓝色描边 + 柔和外圈 */
+/* 输入框：40px 高、10px 圆角、聚焦蓝色描边 + 柔和外圈 */
 .auth-form .ant-input,
 .auth-form .ant-input-affix-wrapper {
   min-height: 40px;
-  padding: 7px 12px;
+  padding: 6px 12px;
   border-radius: var(--r-10);
   border-color: var(--auth-input-border);
   background: var(--surface);
-  font-size: 0.875rem;
+  font-size: 0.9375rem;
   box-shadow: none;
   transition: border-color 0.18s ease, box-shadow 0.18s ease;
 }
@@ -9431,11 +9497,7 @@ html.vt-morph .detail {
   box-shadow: none;
 }
 
-.auth-form .ant-input-prefix {
-  margin-inline-end: 8px;
-  color: var(--auth-muted);
-}
-
+/* 输入框里不再放前缀小图标（label 上已经有了），只留密码的显示/隐藏按钮 */
 .auth-form .ant-input-suffix {
   color: var(--auth-muted);
 }
@@ -9454,14 +9516,16 @@ html.vt-morph .detail {
   color: var(--danger);
 }
 
+/* 错误提示：白底 + 细描边 + 投影，靠「浮起来一档」被看见。
+   之前是整块粉底 + 正红字，红得比错误本身更抢眼；
+   现在颜色退到描边和文字上，边框带一圈阴影就够了。 */
 .auth-error {
-  margin: 0 0 10px;
-  padding: 8px 10px;
-  border-radius: var(--r-10);
-  background: var(--danger-soft);
-  color: var(--danger);
-  font-size: 0.75rem;
-  line-height: 1.5;
+  border: 1px solid color-mix(in srgb, var(--danger) 24%, var(--auth-input-border));
+  background: var(--surface);
+  box-shadow:
+    0 1px 2px rgb(16 24 40 / 6%),
+    0 8px 18px -12px rgb(16 24 40 / 34%);
+  color: color-mix(in srgb, var(--danger) 72%, var(--text));
 }
 
 /* ---------------------------------------------------------------------------
@@ -9504,17 +9568,20 @@ html.vt-morph .detail {
   animation: auth-shake 520ms ease-in-out both;
 }
 
-/* 失败态：输入框转红（描边 + 极淡底 + 外圈光晕），与上方提示条同一套色 */
+/* 失败态：细一档的红描边 + 一圈很淡的投影。
+   原来是「正红描边 + 粉底 + 红光环」三层叠在一起，太吵；
+   现在底色回到白，红只留在描边上，阴影负责把这一格"抬起来"。 */
 .auth-form.is-invalid .ant-input,
 .auth-form.is-invalid .ant-input-affix-wrapper {
-  border-color: var(--danger);
-  background: color-mix(in srgb, var(--danger-soft) 55%, var(--surface));
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--danger) 10%, transparent);
+  border-color: color-mix(in srgb, var(--danger) 30%, var(--auth-input-border));
+  background: var(--surface);
+  box-shadow:
+    0 1px 2px rgb(16 24 40 / 6%),
+    0 4px 12px -6px color-mix(in srgb, var(--danger) 26%, transparent);
 }
 
-.auth-form.is-invalid .ant-input-prefix,
 .auth-form.is-invalid .ant-input-suffix {
-  color: var(--danger);
+  color: color-mix(in srgb, var(--danger) 68%, var(--text));
 }
 
 /* 悬停 / 聚焦不许弹回蓝色：错误态要一直保持，直到用户开始改 */
@@ -9522,8 +9589,10 @@ html.vt-morph .detail {
 .auth-form.is-invalid .ant-input-affix-wrapper:hover,
 .auth-form.is-invalid .ant-input:focus,
 .auth-form.is-invalid .ant-input-affix-wrapper:focus-within {
-  border-color: var(--danger);
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--danger) 16%, transparent);
+  border-color: color-mix(in srgb, var(--danger) 40%, var(--auth-input-border));
+  box-shadow:
+    0 1px 2px rgb(16 24 40 / 6%),
+    0 6px 16px -6px color-mix(in srgb, var(--danger) 30%, transparent);
 }
 
 /* affix 内层真实 input 不重复描边，否则外框里再套一圈红线 */
@@ -9539,32 +9608,11 @@ html.vt-morph .detail {
   .auth-form.is-shaking .ant-form-item-control-input > .ant-input {
     animation: none;
   }
-}
 
-/* 注册关闭提示：浅蓝信息卡 */
-.auth-notice.ant-alert {
-  margin: 0 0 10px;
-  padding: 8px 11px;
-  border-radius: var(--r-12);
-  background: var(--auth-accent-soft);
-  border: 1px solid var(--auth-accent-border);
-}
-
-.auth-notice .ant-alert-icon {
-  color: var(--auth-accent);
-}
-
-.auth-notice .ant-alert-message {
-  margin-bottom: 1px;
-  font-size: 0.8125rem;
-  font-weight: 600;
-  color: var(--auth-accent-ink);
-}
-
-.auth-notice .ant-alert-description {
-  font-size: 0.75rem;
-  line-height: 1.5;
-  color: var(--text-2);
+  .auth-error,
+  .auth-hint {
+    animation: none;
+  }
 }
 
 /* 主按钮：48px 高、12px 圆角，含悬停/按下/禁用态 */
@@ -9576,7 +9624,7 @@ html.vt-morph .detail {
   height: 42px;
   margin-top: 0;
   border-radius: var(--r-10);
-  font-size: 0.875rem;
+  font-size: 0.9375rem;
   font-weight: 600;
   background: var(--auth-accent);
   box-shadow: 0 6px 16px -8px color-mix(in srgb, var(--auth-accent) 52%, transparent);
@@ -9608,18 +9656,19 @@ html.vt-morph .detail {
   font-size: 0.875rem;
 }
 
-/* 忘记口令 / 返回登录 */
+/* 忘记密码 / 返回登录 */
 .auth-links {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: center;
   gap: 10px;
   min-height: 18px;
-  margin-top: 10px;
+  margin-top: 12px;
 }
 
 .auth-links__hint {
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
   color: var(--text-2);
 }
 
@@ -9634,7 +9683,7 @@ html.vt-morph .detail {
   border: 0;
   background: none;
   color: var(--auth-accent);
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
   font-weight: 600;
   cursor: pointer;
 }
@@ -9707,9 +9756,6 @@ html.vt-morph .detail {
     margin-bottom: 14px;
   }
 
-  .auth-row {
-    grid-template-columns: 1fr;
-  }
 }
 
 /* 侧栏账号入口：登录后显示首字徽标 */
@@ -9725,7 +9771,163 @@ html.vt-morph .detail {
   font-weight: 600;
 }
 
-/* 设置 · 账号分区（改口令 / 退出所有设备） */
+/* 侧栏账号按钮上的「还有 N 个账号」小角标：多开的存在感，不占额外一行 */
+.side-account__more {
+  position: absolute;
+  top: 3px;
+  right: 2px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  border-radius: var(--r-pill);
+  background: var(--brand);
+  color: var(--on-accent);
+  font-size: 0.5625rem;
+  font-weight: 600;
+  line-height: 15px;
+  text-align: center;
+  box-shadow: 0 0 0 2px var(--panel-card);
+}
+
+/* ---------- 账号切换浮层 ----------
+   一列账号（头像 + 显示名 + @用户名 + 当前打勾），下面是添加/安全/退出。
+   侧栏贴左边，浮层必须往右展开，所以走 Popover 的 rightBottom。 */
+.acct-pop-overlay .ant-popover-inner {
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-16);
+  box-shadow:
+    0 18px 40px -24px rgb(16 24 40 / 42%),
+    0 2px 6px rgb(16 24 40 / 6%);
+}
+
+.acct-pop {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 220px;
+}
+
+.acct-pop__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px 6px;
+  color: var(--text-3);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.acct-pop__count {
+  padding: 0 5px;
+  border-radius: var(--r-pill);
+  background: var(--surface-3);
+  color: var(--text-2);
+  font-size: 0.625rem;
+  line-height: 15px;
+}
+
+.acct-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--r-10);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.16s ease;
+}
+
+.acct-row:hover {
+  background: var(--surface-2);
+}
+
+.acct-row.is-active {
+  background: var(--brand-soft);
+}
+
+.acct-row__avatar {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.acct-row.is-active .acct-row__avatar {
+  background: var(--brand);
+  color: var(--on-brand);
+}
+
+.acct-row__text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.acct-row__name {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.acct-row__id {
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: 0.6875rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.acct-row__check {
+  flex: 0 0 auto;
+  color: var(--brand);
+  font-size: 0.75rem;
+}
+
+.acct-row--action {
+  color: var(--text-2);
+  font-size: 0.8125rem;
+}
+
+.acct-row--action .anticon {
+  font-size: 0.875rem;
+}
+
+.acct-row__hint {
+  margin-left: auto;
+  color: var(--success-ink);
+  font-size: 0.625rem;
+}
+
+.acct-row--danger {
+  color: var(--danger);
+}
+
+.acct-row--danger:hover {
+  background: var(--danger-soft);
+}
+
+.acct-pop__sep {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--border);
+}
+
+/* 设置 · 账号分区（改密码 / 退出所有设备） */
 .set-section__title {
   margin: 16px 0 6px;
   font-size: 0.8125rem;

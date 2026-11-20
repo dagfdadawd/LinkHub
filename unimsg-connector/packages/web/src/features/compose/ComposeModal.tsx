@@ -85,6 +85,8 @@ export function ComposeModal({
   /** 选中的会话（内部存会话键，对用户只展示名字）；邮箱平台用下面的地址输入框 */
   const [targetKey, setTargetKey] = useState<string>();
   const [conversationId, setConversationId] = useState('');
+  /** 微信 RPA 没有通讯录，允许直接填好友昵称/群名；手动填写优先于下拉选择 */
+  const [wechatConversationType, setWechatConversationType] = useState<'p2p' | 'group'>('p2p');
   const [accounts, setAccounts] = useState<AccountInfo[]>([]);
   const [mailAccount, setMailAccount] = useState<string>();
   /** 本次发送身份：仅飞书/钉钉且后端身份视图可用时可指定；默认跟随后端 effectiveSend */
@@ -218,10 +220,12 @@ export function ComposeModal({
   useEffect(() => {
     if (!open || platform === Platform.MAIL) return;
     setTargetKey((prev) => {
+      // 微信手动填了目标时，不被「自动选第一个会话」覆盖
+      if (platform === Platform.WECHAT && conversationId.trim()) return prev;
       if (prev && targetOptions.some((o) => o.value === prev)) return prev;
       return targetOptions[0]?.value;
     });
-  }, [open, platform, targetOptions]);
+  }, [open, platform, targetOptions, conversationId]);
 
   // 邮箱：目标是收件地址，仍用输入框；预填该平台最近一条会话（历史上用过的地址）
   useEffect(() => {
@@ -237,10 +241,15 @@ export function ComposeModal({
   /** 演示模式：Mock 通道发送按钮可直接发（后端会用演示会话 mock:demo 生成模拟消息） */
   const mockChannel = cap?.mode === 'mock' || accountMode === 'mock' || effectiveSend === 'mock';
   /** 本次真正的目标：IM 取选中会话的 conversation.id + type，邮箱取输入的地址 */
-  const resolvedConversationId =
-    platform === Platform.MAIL ? conversationId.trim() : (selectedTarget?.conversationId ?? '');
-  const resolvedConversationType =
-    platform === Platform.MAIL ? ('p2p' as const) : selectedTarget?.conversationType;
+  const manualWechatTarget = platform === Platform.WECHAT ? conversationId.trim() : '';
+  const resolvedConversationId = platform === Platform.MAIL
+    ? conversationId.trim()
+    : manualWechatTarget || (selectedTarget?.conversationId ?? '');
+  const resolvedConversationType = platform === Platform.MAIL
+    ? ('p2p' as const)
+    : manualWechatTarget
+      ? wechatConversationType
+      : selectedTarget?.conversationType;
   const hasTarget = mockChannel || Boolean(resolvedConversationId);
   const canSend = !sending
     && hasTarget
@@ -268,7 +277,9 @@ export function ComposeModal({
         // 会话类型从选中的会话带过来：以前不传，群会被后端当成单聊
         ...(resolvedConversationType ? { conversationType: resolvedConversationType } : {}),
         // 会话名一起带上：不带的话这条发送会在收件箱里形成一个没有名字的会话
-        ...(selectedTarget?.label ? { conversationTitle: selectedTarget.label } : {}),
+        ...(selectedTarget?.label || manualWechatTarget
+          ? { conversationTitle: selectedTarget?.label ?? manualWechatTarget }
+          : {}),
         ...(platform === Platform.MAIL && mailAccount ? { mailAccount } : {}),
         // 身份显式下发：两种身份都可用时尊重用户选择；只有一种时等同 effectiveSend。
         // Mock 通道不传（服务端整体模拟，不接受身份覆盖）。
@@ -430,6 +441,34 @@ export function ComposeModal({
                       ? `已包含飞书本人账号可见的全部会话（${directory.items.length} 个），可直接搜索人名或群名。`
                       : '列表来自真实的收件箱会话；选中后按该会话的类型（单聊 / 群聊）发送。'}
               </div>
+              {platform === Platform.WECHAT && (
+                <div className="compose-wechat-target" data-testid="compose-wechat-target">
+                  <div className="compose-field__label">或直接填写微信好友 / 群名</div>
+                  <Input
+                    value={conversationId}
+                    onChange={(e) => {
+                      setConversationId(e.target.value);
+                      // 手动输入优先：清掉下拉选择，避免用户以为选中的旧会话仍生效
+                      if (e.target.value.trim()) setTargetKey(undefined);
+                    }}
+                    placeholder="例如：张三 / 项目群（RPA 按名称定位）"
+                    aria-label="微信目标会话"
+                  />
+                  <Select
+                    value={wechatConversationType}
+                    onChange={(v) => setWechatConversationType(v)}
+                    style={{ width: 160, marginTop: 8 }}
+                    aria-label="微信会话类型"
+                    options={[
+                      { value: 'p2p', label: '单聊' },
+                      { value: 'group', label: '群聊' },
+                    ]}
+                  />
+                  <div className="compose-field__hint">
+                    微信没有通讯录，可直接填昵称/群名；已有会话也可以从上面选。手动填写时优先用这里的目标和类型。
+                  </div>
+                </div>
+              )}
             </>
           )}
         </div>

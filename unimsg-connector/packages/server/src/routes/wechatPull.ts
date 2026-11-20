@@ -50,8 +50,10 @@ export function wechatPullRouter(): Router {
       } catch {
         json = { ok: false, error: text.slice(0, 300) };
       }
-      // 桥的 502/409 是「真实的失败原因」，原样带回给界面，不要包装成 500
-      const status = resp.status === 200 || resp.status === 207 ? resp.status : 502;
+      // 桥的 409/422/429 是「真实的失败原因」：原样带回，不要一律包装成 502。
+      // 以前把「没有解析到消息」/「正在拉取」都报成 Bad Gateway，界面看不到真实原因。
+      const passthrough = new Set([200, 207, 409, 422, 429, 502]);
+      const status = passthrough.has(resp.status) ? resp.status : 502;
       res.status(status).json(json);
     } catch (e) {
       const detail = e instanceof Error ? e.message : String(e);

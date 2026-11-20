@@ -81,7 +81,7 @@ export interface ReplyAck {
   taskId: string;
 }
 
-/** 账号体系：注册/登录后返回的公开用户信息（不含口令哈希/盐） */
+/** 账号体系：注册/登录后返回的公开用户信息（不含密码哈希/盐） */
 export interface PublicUser {
   id: string;
   username: string;
@@ -556,13 +556,13 @@ export interface MessageApi {
    * 旧后端 / 纯 Mock 没有这个概念时返回 requireLogin=false（不破坏单机演示）。
    */
   authStatus(): Promise<AuthStatus>;
-  /** 修改口令：成功后该账号全部会话作废，需重新登录 */
+  /** 修改密码：成功后该账号全部会话作废，需重新登录 */
   changePassword(input: { oldPassword: string; newPassword: string }): Promise<{ revoked: number }>;
   /** 退出所有设备：作废该账号全部会话，返回条数 */
   logoutAll(): Promise<{ revoked: number }>;
   /** 认领「未归属」的历史消息到当前账号，返回认领条数（数据隔离演示入口） */
   claimMessages(): Promise<{ claimed: number }>;
-  /** 忘记口令：用注册时发的恢复码重置，无需旧口令；成功后返回新恢复码 */
+  /** 忘记密码：用注册时发的恢复码重置，无需旧密码；成功后返回新恢复码 */
   resetPassword(input: { username: string; recoveryCode: string; newPassword: string }): Promise<{ revoked: number; recoveryCode?: string }>;
   /** 发起飞书用户身份授权，返回需要打开的飞书授权页 URL */
   feishuOAuthStart(): Promise<FeishuOAuthStart>;

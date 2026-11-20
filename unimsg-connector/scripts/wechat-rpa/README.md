@@ -103,8 +103,9 @@ curl -X POST http://127.0.0.1:8787/pull -H "Content-Type: application/json" \
 
 要点：
 
-- **`selfName` 建议一定要给**：复制文本里自己发的消息也带昵称，不给就分不清谁说的，
-  会把你自己发的话当成入站（`/health` 的 `pull.warning` 会提示）。
+- **`selfName` 建议一定要给**：复制文本里自己发的消息也带昵称；给了才能把自己发的消息标成
+  `direction=out`（显示在右侧、不计未读），不给就分不清谁说的（`/health` 的 `pull.warning` 会提示）。
+  自己发的消息**不会被丢弃**，会和对方消息一起返回。
 - **`conversation` 由人确认**：4.x 从外部读不到当前会话标题，名字填错会把消息挂到错的会话上。
   返回里的 `conversationVerified:false` 就是在提醒这一点；用 `--self-name` 可以在启动时固定自述昵称。
 - **`parsed=0` 是失败**：拖选区不对/会话为空时桥返回 422，不会假装「拉取成功」。

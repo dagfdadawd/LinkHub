@@ -370,7 +370,7 @@ export class MockApi implements DemoApi {
     const username = (input.username ?? '').trim();
     const password = (input.password ?? '').trim();
     if (username.length < 2) throw new Error('用户名需 2-32 位');
-    if (password.length < 6) throw new Error('口令至少 6 位');
+    if (password.length < 6) throw new Error('密码至少 6 位');
     const user: PublicUser = {
       id: `mock-${username}`,
       username,
@@ -384,7 +384,7 @@ export class MockApi implements DemoApi {
   async login(input: { username: string; password: string }) {
     await this.wait();
     const hit = this.demoUsers.get((input.username ?? '').trim().toLowerCase());
-    if (!hit || hit.password !== input.password) throw new Error('用户名或口令不正确');
+    if (!hit || hit.password !== input.password) throw new Error('用户名或密码不正确');
     return { user: hit.user, token: `mock-token-${hit.user.username}` };
   }
 
@@ -407,12 +407,12 @@ export class MockApi implements DemoApi {
     };
   }
 
-  /** 演示模式：只改内存里的口令，不涉及真实会话 */
+  /** 演示模式：只改内存里的密码，不涉及真实会话 */
   async changePassword(input: { oldPassword: string; newPassword: string }): Promise<{ revoked: number }> {
     await this.wait();
     const entry = [...this.demoUsers.values()].find((u) => u.password === input.oldPassword);
-    if (!entry) throw new Error('原口令不正确');
-    if ((input.newPassword ?? '').length < 6) throw new Error('口令至少 6 位');
+    if (!entry) throw new Error('原密码不正确');
+    if ((input.newPassword ?? '').length < 6) throw new Error('密码至少 6 位');
     entry.password = input.newPassword;
     return { revoked: 1 };
   }
@@ -444,7 +444,7 @@ export class MockApi implements DemoApi {
     }
     const entry = this.demoUsers.get((input.username ?? '').trim().toLowerCase());
     if (!entry) throw new Error('用户名或恢复码不正确');
-    if ((input.newPassword ?? '').length < 6) throw new Error('口令至少 6 位');
+    if ((input.newPassword ?? '').length < 6) throw new Error('密码至少 6 位');
     entry.password = input.newPassword;
     return { revoked: 1, recoveryCode: 'DEMO-CODE-0001' };
   }

@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { App as AntApp } from 'antd';
 import { LoginPage } from './LoginPage';
-import { getSession, resetSessionForTest } from '../../services/session';
+import { getSession, resetSessionForTest, setSession } from '../../services/session';
 
 const api = vi.hoisted(() => ({
   register: vi.fn(),
@@ -17,10 +17,10 @@ vi.mock('../../store', () => ({
   store: { refresh: vi.fn() },
 }));
 
-function renderPage() {
+function renderPage(path = '/login') {
   render(
     <AntApp>
-      <MemoryRouter>
+      <MemoryRouter initialEntries={[path]}>
         <LoginPage />
       </MemoryRouter>
     </AntApp>,
@@ -43,7 +43,7 @@ beforeEach(() => {
 });
 
 describe('LoginPage 账号闭环入口', () => {
-  it('默认是登录态：提交用户名口令后写入会话', async () => {
+  it('默认是登录态：提交用户名密码后写入会话', async () => {
     api.login.mockResolvedValue({
       user: { id: 'u1', username: 'zhang', displayName: '张三', createdAt: '2026-01-01' },
       token: 'session-token',
@@ -51,13 +51,28 @@ describe('LoginPage 账号闭环入口', () => {
     renderPage();
 
     fireEvent.change(screen.getByLabelText('用户名'), { target: { value: 'zhang' } });
-    fireEvent.change(screen.getByLabelText('口令'), { target: { value: 'secret123' } });
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } });
     fireEvent.click(screen.getByTestId('auth-submit'));
 
     await waitFor(() => expect(api.login).toHaveBeenCalledTimes(1));
     expect(api.login.mock.calls[0][0]).toEqual({ username: 'zhang', password: 'secret123' });
     await waitFor(() => expect(getSession()?.user.username).toBe('zhang'));
     expect(getSession()?.token).toBe('session-token');
+  });
+
+  it('登录/注册切换：data-active 驱动滑动高光，高光层不参与交互', () => {
+    renderPage();
+    const tabs = screen.getByRole('tablist', { name: '登录或注册' });
+    const thumb = tabs.querySelector('.auth-tabs__thumb');
+
+    expect(tabs).toHaveAttribute('data-active', 'login');
+    expect(thumb).toHaveAttribute('aria-hidden', 'true');
+
+    fireEvent.click(screen.getByRole('tab', { name: '注册' }));
+    expect(tabs).toHaveAttribute('data-active', 'register');
+
+    fireEvent.click(screen.getByRole('tab', { name: '登录' }));
+    expect(tabs).toHaveAttribute('data-active', 'login');
   });
 
   it('切到注册：带显示名提交，成功后同样是已登录', async () => {
@@ -70,8 +85,8 @@ describe('LoginPage 账号闭环入口', () => {
     fireEvent.click(screen.getByRole('tab', { name: '注册' }));
     fireEvent.change(screen.getByLabelText('用户名'), { target: { value: 'lisi' } });
     fireEvent.change(screen.getByLabelText('显示名（可选）'), { target: { value: '李四' } });
-    fireEvent.change(screen.getByLabelText('口令'), { target: { value: 'secret123' } });
-    fireEvent.change(screen.getByLabelText('确认口令'), { target: { value: 'secret123' } });
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } });
+    fireEvent.change(screen.getByLabelText('确认密码'), { target: { value: 'secret123' } });
     fireEvent.click(screen.getByTestId('auth-submit'));
 
     await waitFor(() => expect(api.register).toHaveBeenCalledTimes(1));
@@ -89,8 +104,8 @@ describe('LoginPage 账号闭环入口', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: '注册' }));
     fireEvent.change(screen.getByLabelText('用户名'), { target: { value: 'wang' } });
-    fireEvent.change(screen.getByLabelText('口令'), { target: { value: 'secret123' } });
-    fireEvent.change(screen.getByLabelText('确认口令'), { target: { value: 'secret123' } });
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } });
+    fireEvent.change(screen.getByLabelText('确认密码'), { target: { value: 'secret123' } });
     fireEvent.click(screen.getByTestId('auth-submit'));
 
     expect(await screen.findByTestId('recovery-code')).toHaveTextContent('A1B2-C3D4-E5F6');
@@ -99,15 +114,29 @@ describe('LoginPage 账号闭环入口', () => {
     fireEvent.click(screen.getByRole('button', { name: /我已保存/ }));
   });
 
+  it('添加账号模式：已登录也停在登录页，并说明新账号会并进同一个窗口', () => {
+    setSession({
+      token: 'token-a',
+      user: { id: 'u1', username: 'zhang', displayName: '张三', createdAt: '2026-01-01' },
+    });
+    renderPage('/login?add=1');
+
+    // 没有 ?add=1 时会直接跳 /inbox（这里没有该路由，表单就消失了）
+    expect(screen.getByLabelText('用户名')).toBeInTheDocument();
+    expect(screen.getByText(/再登一个账号/)).toBeInTheDocument();
+    // 原有账号还在，不会被这次「添加」清掉
+    expect(getSession()?.user.username).toBe('zhang');
+  });
+
   it('后端拒绝时把原话显示出来，不写入会话', async () => {
-    api.login.mockRejectedValue(new Error('用户名或口令不正确'));
+    api.login.mockRejectedValue(new Error('用户名或密码不正确'));
     renderPage();
 
     fireEvent.change(screen.getByLabelText('用户名'), { target: { value: 'zhang' } });
-    fireEvent.change(screen.getByLabelText('口令'), { target: { value: 'wrong' } });
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'wrong' } });
     fireEvent.click(screen.getByTestId('auth-submit'));
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('用户名或口令不正确');
+    expect(await screen.findByRole('alert')).toHaveTextContent('用户名或密码不正确');
     expect(getSession()).toBeNull();
   });
 });

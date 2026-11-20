@@ -112,7 +112,7 @@ class TestPull(unittest.TestCase):
         bridge.WechatVisualReader = lambda: FakeReader("")
         h = FakeHandler()
         try:
-            bridge.Handler._handle_pull(h, {"conversation": "项目群"})
+            bridge.Handler._handle_pull_unlocked(h, {"conversation": "项目群"})
         finally:
             bridge.MODE, bridge.WechatVisualReader = old_mode, old_reader
         self.assertEqual(h.status, 422, h.body)
@@ -135,7 +135,7 @@ class TestPull(unittest.TestCase):
         bridge.forward_to_linkhub = fake_forward
         h = FakeHandler()
         try:
-            bridge.Handler._handle_pull(
+            bridge.Handler._handle_pull_unlocked(
                 h, {"conversation": "项目群", "conversationType": "group"}
             )
         finally:

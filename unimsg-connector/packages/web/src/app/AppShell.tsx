@@ -1,16 +1,18 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { Alert, App as AntApp, Avatar, Button, Dropdown, Tooltip } from 'antd';
+import { Alert, App as AntApp, Avatar, Button, Dropdown, Popover, Tooltip } from 'antd';
 import type { MenuProps } from 'antd';
 import {
   ApiOutlined,
+  CheckOutlined,
   CheckSquareOutlined,
   DownOutlined,
   HistoryOutlined,
   InboxOutlined,
   LinkOutlined,
   LoginOutlined,
+  LogoutOutlined,
   MoonOutlined,
   ReloadOutlined,
   SearchOutlined,
@@ -18,10 +20,17 @@ import {
   SettingOutlined,
   SunOutlined,
   ThunderboltOutlined,
+  UserAddOutlined,
 } from '@ant-design/icons';
 import { useAppState } from '../hooks/useAppState';
 import { store, services } from '../store';
-import { clearSession, useSession } from '../services/session';
+import {
+  clearSession,
+  listSessions,
+  switchSession,
+  useSession,
+  useSessions,
+} from '../services/session';
 import { PlatformGlyph } from '../components/PlatformGlyph';
 import { footerShortLabel, footerState } from '../utils/footerState';
 import { clamp } from '../utils/format';
@@ -142,9 +151,16 @@ export function AppShell() {
   const prefs = usePreferences();
   /** 当前登录账号（未登录 = null，此时回退部署令牌，演示模式仍可用） */
   const session = useSession();
+  /** 本机记着的全部账号：一个窗口里多开，点一下就换人 */
+  const sessions = useSessions();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  /** 账号菜单受控：点完「切换 / 添加 / 退出」要主动收起，别一直挂在侧栏上挡视野 */
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
 
-  /** 退出登录：先让服务端作废会话，再清本地状态；失败也照清，避免卡在"退不出去" */
+  /**
+   * 退出当前账号：先让服务端作废会话，再清本地状态；失败也照清，避免卡在"退不出去"。
+   * 多开场景下还留着别的账号时，退完自动落到下一个账号，不把人赶回登录页。
+   */
   const handleLogout = useCallback(async () => {
     try {
       await services.api.logout();
@@ -153,9 +169,110 @@ export function AppShell() {
     }
     clearSession();
     services.realtime.reconnectNow?.();
+    const rest = listSessions();
+    if (rest.length > 0) {
+      const next = rest[rest.length - 1];
+      void store.refresh?.();
+      message.success(`已退出，切换到 ${next.user.displayName}`);
+      navigate('/inbox');
+      return;
+    }
     message.success('已退出登录');
     navigate('/login', { replace: true });
   }, [message, navigate]);
+
+  /** 切换到另一个已登录账号：换令牌 → 重连实时通道 → 重拉数据（各账号只看自己的消息） */
+  const handleSwitchAccount = useCallback(
+    (token: string) => {
+      setAccountMenuOpen(false);
+      if (!switchSession(token)) return;
+      services.realtime.reconnectNow?.();
+      void store.refresh?.();
+      navigate('/inbox');
+    },
+    [navigate],
+  );
+
+  /**
+   * 账号切换菜单：一张列表看完本机所有账号，点谁切谁。
+   * 用 Popover 而不是 Dropdown —— 只有 Popover 支持向右展开，
+   * 侧栏贴左边，菜单必须往内容区方向长，才不会被视口裁掉。
+   */
+  const accountMenuBody = (
+    <div className="acct-pop" role="menu" aria-label="切换账号">
+      <div className="acct-pop__head">
+        已登录账号
+        <span className="acct-pop__count">{sessions.length}</span>
+      </div>
+
+      {sessions.map((item) => {
+        const active = item.token === session?.token;
+        return (
+          <button
+            key={item.token}
+            type="button"
+            role="menuitem"
+            aria-current={active ? 'true' : undefined}
+            className={`acct-row${active ? ' is-active' : ''}`}
+            data-testid={`acct-row-${item.user.username}`}
+            onClick={() => {
+              if (active) return;
+              handleSwitchAccount(item.token);
+            }}
+          >
+            <span className="acct-row__avatar" aria-hidden="true">
+              {initialOf(item.user.displayName)}
+            </span>
+            <span className="acct-row__text">
+              <span className="acct-row__name">{item.user.displayName}</span>
+              <span className="acct-row__id">@{item.user.username}</span>
+            </span>
+            {active && <CheckOutlined className="acct-row__check" aria-hidden="true" />}
+          </button>
+        );
+      })}
+
+      <div className="acct-pop__sep" aria-hidden="true" />
+      <button
+        type="button"
+        role="menuitem"
+        className="acct-row acct-row--action"
+        onClick={() => {
+          setAccountMenuOpen(false);
+          navigate('/login?add=1');
+        }}
+      >
+        <UserAddOutlined aria-hidden="true" />
+        <span>添加账号</span>
+        <span className="acct-row__hint">免邀请码</span>
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        className="acct-row acct-row--action"
+        onClick={() => {
+          setAccountMenuOpen(false);
+          setSettingsOpen(true);
+        }}
+      >
+        <SettingOutlined aria-hidden="true" />
+        <span>账号与安全</span>
+      </button>
+      <div className="acct-pop__sep" aria-hidden="true" />
+      <button
+        type="button"
+        role="menuitem"
+        className="acct-row acct-row--action acct-row--danger"
+        onClick={() => {
+          setAccountMenuOpen(false);
+          void handleLogout();
+        }}
+      >
+        <LogoutOutlined aria-hidden="true" />
+        <span>退出当前账号</span>
+      </button>
+    </div>
+  );
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [composeOpen, setComposeOpen] = useState(false);
 
@@ -373,9 +490,11 @@ export function AppShell() {
     return () => observer.disconnect();
   }, [activeNavKey, activePlatformKey, measureGlow]);
 
+  /** 顺序与收件箱的渠道筛选条保持一致（全部 → 飞书 → 钉钉 → 邮箱 → 微信），
+      两处顺序不同会让人以为是两套不同的入口 */
   const platformNav = useMemo(
     () =>
-      [Platform.FEISHU, Platform.DINGTALK, Platform.WECHAT, Platform.MAIL].map((platform) => ({
+      [Platform.FEISHU, Platform.DINGTALK, Platform.MAIL, Platform.WECHAT].map((platform) => ({
         platform,
         name:
           PLATFORM_META[platform].name,
@@ -528,21 +647,35 @@ export function AppShell() {
         </nav>
 
         <div className="side__foot">
-          {/* 账号：闭环起点「我是谁」——未登录显示去登录，登录后显示当前用户 */}
+          {/* 账号：多开入口。点开就是本机所有账号 —— 点谁切谁，最后一项退到登录页 */}
           {session ? (
-            <Tooltip title={`${session.user.displayName} · 点击退出登录`} placement="right">
+            <Popover
+              content={accountMenuBody}
+              trigger="click"
+              placement="rightBottom"
+              arrow={false}
+              open={accountMenuOpen}
+              onOpenChange={setAccountMenuOpen}
+              overlayClassName="acct-pop-overlay"
+            >
               <button
                 className="side-link side-link--plain side-account"
                 type="button"
-                aria-label={`当前用户 ${session.user.displayName}，点击退出登录`}
-                onClick={() => void handleLogout()}
+                aria-label={`当前用户 ${session.user.displayName}，打开账号菜单`}
+                aria-haspopup="menu"
+                data-testid="account-menu-trigger"
               >
                 <span className="side-link__icon side-account__badge" aria-hidden="true">
                   {initialOf(session.user.displayName)}
                 </span>
                 <span className="side-link__label">{session.user.displayName}</span>
+                {sessions.length > 1 && (
+                  <span className="side-account__more" aria-hidden="true">
+                    +{sessions.length - 1}
+                  </span>
+                )}
               </button>
-            </Tooltip>
+            </Popover>
           ) : (
             <button
               className="side-link side-link--plain"

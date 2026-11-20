@@ -178,6 +178,26 @@ describe('ComposeModal（统一入口主动发送）', () => {
     expect(screen.getByTestId('compose-send')).toBeDisabled();
   });
 
+  it('微信没有通讯录：可直接填昵称/群名作为目标发送', async () => {
+    const { compose } = setup();
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: '目标平台' }));
+    fireEvent.click(await screen.findByTitle('微信'));
+
+    fireEvent.change(await screen.findByLabelText('微信目标会话'), { target: { value: '张三' } });
+    fireEvent.change(screen.getByLabelText('发送文本'), { target: { value: '微信手动目标测试' } });
+    expect(screen.getByTestId('compose-send')).toBeEnabled();
+    fireEvent.click(screen.getByTestId('compose-send'));
+
+    await waitFor(() => expect(compose).toHaveBeenCalledTimes(1));
+    expect(compose.mock.calls[0][0]).toMatchObject({
+      platform: Platform.WECHAT,
+      conversationId: '张三',
+      conversationType: 'p2p',
+      conversationTitle: '张三',
+      text: '微信手动目标测试',
+    });
+  });
+
   it('文本与附件都为空时禁止发送', () => {
     setup();
     expect(screen.getByTestId('compose-send')).toBeDisabled();

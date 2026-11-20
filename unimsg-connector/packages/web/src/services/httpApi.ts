@@ -239,7 +239,7 @@ export class HttpApi implements MessageApi {
     }
   }
 
-  /** 改口令：后端会作废全部会话，调用方必须紧接着清本地会话并跳登录 */
+  /** 改密码：后端会作废全部会话，调用方必须紧接着清本地会话并跳登录 */
   async changePassword(input: { oldPassword: string; newPassword: string }): Promise<{ revoked: number }> {
     const body = await this.request<{ data?: { revoked: number } }>('/api/auth/password', {
       method: 'POST',
@@ -341,11 +341,15 @@ export class HttpApi implements MessageApi {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${this.token}`,
+          Authorization: `Bearer ${this.authToken()}`,
         },
         body: JSON.stringify(req),
         signal: ctrl.signal,
       });
+      if (resp.status === 401) {
+        clearSession();
+        throw new ApiError('登录已过期，请重新登录', 401);
+      }
       const json = (await resp.json().catch(() => ({}))) as WechatPullResult & { error?: string };
       if (json?.error) throw new ApiError(String(json.error), resp.status);
       if (!resp.ok && !json?.conversation) {
@@ -383,11 +387,16 @@ export class HttpApi implements MessageApi {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.token}`,
+        Authorization: `Bearer ${this.authToken()}`,
       },
       body: '{}',
       signal: AbortSignal.timeout(15_000),
     });
+    if (res.status === 401) {
+      // 会话过期 / 令牌失效：清掉本地登录态，让 AuthGate 回登录页
+      clearSession();
+      throw new ApiError('登录已过期，请重新登录', 401);
+    }
     const json = (await res.json().catch(() => ({}))) as { data?: T; error?: string };
     if (json.data) return json.data;
     throw new ApiError(json.error ?? `RPA 桥操作失败（HTTP ${res.status}）`, res.status);
@@ -539,7 +548,7 @@ export class HttpApi implements MessageApi {
       res = await fetch(
         `${this.baseUrl}/api/messages/${encodeURIComponent(traceId)}/attachments/${index}/download${query}`,
         {
-          headers: { Authorization: `Bearer ${this.token}` },
+          headers: { Authorization: `Bearer ${this.authToken()}` },
           signal: controller.signal,
         },
       );
@@ -554,7 +563,10 @@ export class HttpApi implements MessageApi {
 
     if (!res.ok) {
       const body = await res.json().catch(() => null) as { error?: string } | null;
-      if (res.status === 401) throw new ApiError('未授权：API Token 无效或缺失', 401);
+      if (res.status === 401) {
+        clearSession();
+        throw new ApiError('登录已过期，请重新登录', 401);
+      }
       if (res.status === 404) throw new ApiError(body?.error ?? '附件不存在', 404);
       throw new ApiError(body?.error ?? `附件下载失败（HTTP ${res.status}）`, res.status);
     }
@@ -631,14 +643,14 @@ export class HttpApi implements MessageApi {
     const body = (await res.json().catch(() => null)) as ({ ok?: boolean; error?: string } & Record<string, unknown>) | null;
 
     // 401 有三种含义，不能都笼统说成「API Token 无效」：
-    //  - 凭证校验类接口（登录/注册/重置/改口令）的 401 = 用户名或口令不对，
+    //  - 凭证校验类接口（登录/注册/重置/改密码）的 401 = 用户名或密码不对，
     //    必须原样透出后端文案，且**不能**清本地会话（旧密码填错不该被踢下线）；
-    //  - 带着会话令牌的一般接口 401 = 会话过期/被作废（改口令、退出所有设备、重启丢会话），
+    //  - 带着会话令牌的一般接口 401 = 会话过期/被作废（改密码、退出所有设备、重启丢会话），
     //    这时必须清掉本地会话，AuthGate 会立刻把用户送回登录页；
     //  - 没有会话（部署令牌）→ 才是令牌配错了。
     if (res.status === 401) {
       if (isCredentialCheckPath(path)) {
-        throw new ApiError(String(body?.error ?? '用户名或口令不正确'), 401);
+        throw new ApiError(String(body?.error ?? '用户名或密码不正确'), 401);
       }
       if (getSession()) {
         clearSession();

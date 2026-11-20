@@ -123,6 +123,8 @@ export function InboxPage() {
    */
   const [pullOpen, setPullOpen] = useState(false);
   const [pulling, setPulling] = useState(false);
+  /** 防连点：state 更新是异步的，双击时第二次可能仍看到 pulling=false */
+  const pullInFlight = useRef(false);
   const [pullConv, setPullConv] = useState(() => localStorage.getItem('linkhub.wechat.pullConv') ?? '');
   const [pullSelf, setPullSelf] = useState(() => localStorage.getItem('linkhub.wechat.selfName') ?? '');
   const [pullType, setPullType] = useState<'p2p' | 'group'>(
@@ -324,12 +326,14 @@ export function InboxPage() {
 
   /** 微信 4.x 按需拉取：把当前会话可视区的消息拉进来（拖选复制，拿原文，零 OCR 误差） */
   const handleWechatPull = async () => {
+    if (pullInFlight.current) return;
     const conversation = pullConv.trim();
     if (!conversation) {
       toast.error('请先填会话名：要和微信里显示的完全一致（4.x 从外部读不到当前会话标题）');
       return;
     }
     const selfName = pullSelf.trim();
+    pullInFlight.current = true;
     setPulling(true);
     try {
       const r = await services.api.wechatPull({
@@ -354,6 +358,7 @@ export function InboxPage() {
     } catch (e) {
       toast.error(e instanceof Error ? e.message : '拉取失败');
     } finally {
+      pullInFlight.current = false;
       setPulling(false);
     }
   };

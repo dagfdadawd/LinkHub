@@ -184,7 +184,7 @@ const feishuUserStateFile = feishuUserStateRaw
     ? join(dataDir, 'feishu-user-receive.json')
     : resolve(here, '../../../.feishu-user-receive.json');
 
-// 入口令牌：空串不能当"未配置"处理——那会让鉴权中间件拿到空 token，
+// 入密码牌：空串不能当"未配置"处理——那会让鉴权中间件拿到空 token，
 // 历史上可能被误判成"跳过鉴权"。这里统一归一化：空 → dev-token + 启动警告。
 const rawApiToken = (process.env.API_TOKEN ?? '').trim();
 const apiToken = rawApiToken || 'dev-token';
@@ -258,10 +258,9 @@ export const config = {
 
   /**
    * 注册准入（`AUTH_REGISTRATION` 三态，默认 auto）：
-   *  - auto：本机没有账号时可自助注册第一个账号；之后默认关闭注册，
-   *          若设置了 `AUTH_SIGNUP_CODE` 则凭邀请码仍可添加成员；
-   *  - open：始终允许自助注册（旧行为，仅推荐本机演示）；
+   *  - auto / open：始终允许自助注册（**默认无门槛**，多开账号不需要改配置）；
    *  - closed：始终关闭注册（已有账号只能由运维改账号库）。
+   * 另外：配了 `AUTH_SIGNUP_CODE` 时注册要带邀请码（可选加固）。
    * 单测（usersFile 为空 = 纯内存账号库）不参与限制。
    */
   authRegistrationMode: parseRegistrationMode(process.env.AUTH_REGISTRATION),

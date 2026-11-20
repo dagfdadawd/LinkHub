@@ -1,7 +1,7 @@
 # LinkHub 交付 / 打包 checklist
 
 > 原则：**交付包 = `git archive` 白名单产物**——只含 git 已跟踪文件；凭据、日志、本机状态文件、`node_modules` 一律不进包。打包后必须解压再自检一遍。
-> 相关文档：[quickstart.md](quickstart.md) · [demo-script.md](demo-script.md) · [swap-accounts.md](swap-accounts.md) · [ai-integration.md](ai-integration.md) · [risk-register.md](risk-register.md) · [README.md](../README.md)
+> 相关文档：[quickstart.md](quickstart.md) · [demo-script.md](demo-script.md) · [swap-accounts.md](swap-accounts.md) · [ai-integration.md](ai-integration.md) · [README.md](../README.md)
 
 ## 0. 一句话流程（在 `unimsg-connector/` 下）
 
@@ -40,7 +40,7 @@ pnpm typecheck        # shared / server / web 全部 Done
 pnpm test             # 服务端单测全部通过（条数以实际输出为准）
 pnpm test:web         # 前端单测全部通过（条数以实际输出为准）
 pnpm e2e              # 20 项 PASS + SMOKE OK；macOS / Linux / Git Bash 用 pnpm e2e:sh
-pnpm run doctor       # 全 PASS 最好；飞书 21001 已于 2026-11-12 复测本机租户恢复（code=0）；若换租户再出现 21001，仍按外部限制如实说明（退出码 1）
+pnpm run doctor       # 全 PASS 最好；若出现飞书 21001，属租户策略，按外部限制如实说明（退出码 1）
 ```
 
 契约自检（必须用 **Mock 后端**，否则回复会走真实通道导致断言失败）：
@@ -96,10 +96,10 @@ pnpm e2e                                   # Windows；macOS / Linux / Git Bash�
 |---|---|
 | 版本 | commit `<git log -1 --format="%H">`（或 tag） |
 | 运行环境 | Node `<node -v>`、pnpm `<pnpm -v>`（package.json 固定 pnpm 9.15.9，可用 corepack） |
-| 真实可用 | 钉钉 Stream 收 + 机器人回写；邮箱 IMAP 收 + SMTP 发（多账号 / STARTTLS）；**飞书本人身份收发已实测通过（2026-11-12）**：真实 OAuth → 单聊 + 群聊轮询入库 → 以本人身份发送（飞书侧核对 `sender_type=user`）；钉钉**本人身份收发**代码就绪（单测 + fake-dws 桩），真实端到端待平台条件（见下行） |
-| 受限能力 | 飞书 `21001`（**历史：本机租户 2026-11-12 已解除**；换租户 / 换环境仍可能遇到，需企业认证 / 合规租户）；微信走 RPA 补充通道（无官方 API；需本机**微信桌面端 3.9.x** + 本地桥 + `WECHAT_MODE=real`，默认 Mock；4.x 为 Qt 自绘、无控件树：自动轮询不可用，接收走「按需拉取」（拖选复制当前会话，原文零误差））；**飞书本人身份**已实测通过（2026-11-12），仍受平台边界限制：管理员需开用户身份权限（含 `im:chat:read` / `offline_access`）、轮询 5–30s、只读本人可见会话、单聊枚举依赖未公开参数 `types`；**钉钉本人身份**需企业管理员开启 CLI 访问 + 首次真人授权、凭据绑定设备（Windows 不能跨机复制） |
+| 真实可用 | 钉钉 Stream 收 + 机器人回写；邮箱 IMAP 收 + SMTP 发（多账号 / STARTTLS）；**飞书本人身份收发可用**：OAuth 授权 → 单聊 + 群聊轮询入库 → 以本人身份发送；钉钉**本人身份收发**已就绪，真实端到端取决于企业是否开放 CLI 访问与本人授权（见下行） |
+| 受限能力 | 飞书 `21001`（租户级策略，换租户 / 换环境仍可能遇到，需企业认证 / 合规租户）；微信走 RPA 补充通道（无官方 API；需本机**微信桌面端 3.9.x** + 本地桥 + `WECHAT_MODE=real`，默认 Mock；4.x 为 Qt 自绘、无控件树：自动轮询不可用，接收走「按需拉取」（拖选复制当前会话，原文零误差））；**飞书本人身份**可用，但仍受平台边界限制：管理员需开用户身份权限（含 `im:chat:read` / `offline_access`）、轮询 5–30s、只读本人可见会话、单聊枚举依赖未公开参数 `types`；**钉钉本人身份**需企业管理员开启 CLI 访问 + 首次真人授权、凭据绑定设备（Windows 不能跨机复制） |
 | AI 能力 | 大模型意图 / 摘要 / 回复草稿**已接真实调用**（OpenAI 兼容协议，默认 MiMo `mimo-v2.6-flash`；失败/超时/低置信回退内置规则并标注来源），见 [ai-integration.md](ai-integration.md)；OCR 仍为占位实现 |
 | 未实现 | PostgreSQL/Redis 持久化（当前为单实例内存 + 文件快照）、OCR 真实调用、高可用/水平扩展、多租户 / 多员工共享单实例身份（详见 [reference.md](reference.md)「设计文档承诺 vs 当前实现」） |
 | 独立部署包 | `unimsg-connector/Dockerfile` + `docker-compose.yml` + `.dockerignore`；步骤见 [deploy.md](deploy.md)，可 `docker save/load` 离线搬运；**镜像默认不含 dws**，容器内钉钉本人身份需自建 glibc 镜像 |
-| 文档索引 | README / reference / quickstart / personal-identity / demo-script / swap-accounts / deploy / ai-integration / risk-register / delivery-checklist |
-| 已知风险 | 全部见 [risk-register.md](risk-register.md) |
+| 文档索引 | README / reference / quickstart / personal-identity / demo-script / swap-accounts / deploy / desktop-app / ai-integration / delivery-checklist |
+| 已知限制 | 平台边界与实现取舍见 [reference.md「已知限制」](reference.md) |

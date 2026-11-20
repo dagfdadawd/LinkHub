@@ -77,6 +77,7 @@ MAX_MESSAGES_PER_CONV = 20
 _watch_thread = None
 _stop = threading.Event()
 _lock = threading.Lock()
+_pull_lock = threading.Lock()  # 同一时刻只允许一个按需拉取：否则两次拖选会互相抢焦点/剪贴板
 _queue = deque()               # MOCK 态：注入待转发的消息
 _sent_log = deque(maxlen=50)   # 最近发送记录（/health 可见条数）
 _pulled_seen = set()           # 按需拉取已转发的 externalId（桥侧重去重；后端幂等键兜底）
@@ -618,7 +619,8 @@ def parse_clipboard(raw, conversation="微信当前会话", self_name=None, now=
     所以统一以「时间行」为锚点，允许时间行前面是 0 或 1 个空行；
     这样正文里孤立出现的时间（有人发了"15:30"）不会被误当锚点
     （它前面通常是正文行而不是昵称行，且紧邻关系不成立）。
-    返回 (messages, stats)：stats 记录跳过了多少条（自己发的 / 空正文），不静默丢弃。
+    返回 (messages, stats)：自己发的消息也保留（标 isSelf，供 LinkHub 显示在右侧）；
+    stats 记录自己消息数与空正文数，不静默丢弃。
     """
     raw = (raw or "").replace("\r\n", "\n").replace("\r", "\n")
     lines = raw.split("\n")
@@ -637,7 +639,7 @@ def parse_clipboard(raw, conversation="微信当前会话", self_name=None, now=
             continue
         anchors.append((j, i))
 
-    out, skipped_self, skipped_empty = [], 0, 0
+    out, self_count, skipped_empty = [], 0, 0
     me = (self_name or "").strip()
     for k, (si, ti) in enumerate(anchors):
         end = anchors[k + 1][0] if k + 1 < len(anchors) else len(lines)
@@ -646,9 +648,9 @@ def parse_clipboard(raw, conversation="微信当前会话", self_name=None, now=
         if not body:
             skipped_empty += 1
             continue
-        if me and sender == me:
-            skipped_self += 1
-            continue
+        is_self = bool(me and sender == me)
+        if is_self:
+            self_count += 1
         mtype, fname = _classify_body(body)
         out.append({
             "sender": sender,
@@ -656,10 +658,12 @@ def parse_clipboard(raw, conversation="微信当前会话", self_name=None, now=
             "text": body,
             "type": mtype,
             "fileName": fname,
+            "isSelf": is_self,
         })
     return out, {
         "anchors": len(anchors),
-        "skippedSelf": skipped_self,
+        "selfCount": self_count,
+        "skippedSelf": 0,
         "skippedEmpty": skipped_empty,
     }
 
@@ -727,6 +731,8 @@ def build_pulled_inbound(item, conversation, conv_type="p2p"):
         "text": item["text"],
         "type": item["type"],
         "at": iso,
+        # 按需拉取保留自己的消息：必须标 out，LinkHub 才能渲染在右侧、不计未读。
+        "direction": "out" if item.get("isSelf") else "in",
     }
     # 文件/图片能定位到本机落盘副本就给绝对路径：LinkHub 通过桥 /file 下载
     fname = item.get("fileName")
@@ -1535,6 +1541,20 @@ class Handler(BaseHTTPRequestHandler):
             self._json(404, {"ok": False, "error": "not found"})
 
     def _handle_pull(self, data):
+        """串行化拉取：两次拖选并发会互相抢焦点/剪贴板，第二次必失败。"""
+        if not _pull_lock.acquire(blocking=False):
+            self._json(409, {
+                "ok": False,
+                "error": "上一次拉取还在执行，请等它完成后再试（不要连点）",
+                "busy": True,
+            })
+            return
+        try:
+            self._handle_pull_unlocked(data)
+        finally:
+            _pull_lock.release()
+
+    def _handle_pull_unlocked(self, data):
         """
         按需拉取当前会话的可视消息。
 
@@ -1559,6 +1579,7 @@ class Handler(BaseHTTPRequestHandler):
         if err:
             with _lock:
                 RECEIVE["lastError"] = err
+            log(f"[PULL] 失败：{err}")
             self._json(502, {"ok": False, "error": err, "conversation": conversation, "meta": meta})
             return
 

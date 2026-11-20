@@ -34,6 +34,8 @@ export interface WsOptions {
   idleDelayMs?: number;
   /** 测试注入用：替换全局 WebSocket 实现 */
   WebSocketImpl?: typeof WebSocket;
+  /** 是否在构造时立即连接（默认 true）；登录守卫可先关着，等认证后再 reconnectNow */
+  autoConnect?: boolean;
 }
 
 /** 服务端鉴权失败的关闭码（见 packages/server/src/ws.ts） */
@@ -68,7 +70,7 @@ export class WsRealtime implements RealtimeClient {
     this.idleDelayMs = options.idleDelayMs ?? 15_000;
     this.WS = options.WebSocketImpl ?? WebSocket;
     this.attachWindowHooks();
-    this.connect();
+    if (options.autoConnect !== false) this.connect();
   }
 
   /**
@@ -128,10 +130,19 @@ export class WsRealtime implements RealtimeClient {
     this.closed = false;
     this.attempts = 0;
     this.clearTimer();
-    try {
-      this.ws?.close();
-    } catch {
-      // 关闭旧连接失败不影响新建
+    const old = this.ws;
+    this.ws = undefined;
+    if (old) {
+      // 先摘掉旧连接监听，否则它 close 时还会再排一次重连，导致双连接
+      old.onopen = null;
+      old.onclose = null;
+      old.onerror = null;
+      old.onmessage = null;
+      try {
+        old.close();
+      } catch {
+        // 关闭旧连接失败不影响新建
+      }
     }
     this.connect();
   }

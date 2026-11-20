@@ -83,7 +83,7 @@ test('桥没启动：502 并提示用 --mode rpa 启动，不假装成功', asyn
   }
 });
 
-test('桥返回 mock 模式 409：原样透传桥的原因，不包装成 500', async () => {
+test('桥返回 mock 模式 409：保留 409 并透传桥的原因，不包装成 502', async () => {
   await withFakeBridge(
     () => ({
       status: 409,
@@ -92,8 +92,24 @@ test('桥返回 mock 模式 409：原样透传桥的原因，不包装成 500', 
     async () => {
       await withApp(async (base) => {
         const { status, json } = await post(base, { conversation: '项目群' });
-        assert.equal(status, 502, '前端只需知道这次没成功');
+        assert.equal(status, 409, '桥的 409 要原样保留，界面才能显示真实原因');
         assert.match(json.error, /mock 模式/);
+      });
+    },
+  );
+});
+
+test('桥 422（没解析到消息）：保留 422，不伪装成 Bad Gateway', async () => {
+  await withFakeBridge(
+    () => ({
+      status: 422,
+      json: { ok: false, error: '没有从当前选中内容解析出任何消息' },
+    }),
+    async () => {
+      await withApp(async (base) => {
+        const { status, json } = await post(base, { conversation: '项目群' });
+        assert.equal(status, 422);
+        assert.match(json.error, /没有从当前选中内容/);
       });
     },
   );
@@ -125,7 +141,7 @@ test('拉取成功：解析/转发/去重数字原样带回，并附能力边界
         assert.equal(json.forwarded, 2);
         assert.equal(json.duplicates, 1);
         assert.deepEqual(json.scope, ['只覆盖当前打开的会话']);
-        // 请求体要按桥的约定传过去（含 selfName 过滤自己发的消息）
+        // 请求体要按桥的约定传过去（selfName 用于把自己发的消息标成 out）
         assert.deepEqual(seen[0], { conversation: '项目群', conversationType: 'p2p', selfName: '阿彬' });
       });
     },

@@ -6,10 +6,11 @@
  *  4. 明暗切换紧挨在「新建发送」左侧，且「新建发送」是顶栏最右的操作。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { AppShell } from './AppShell';
 import { ThemeProvider } from './ThemeProvider';
+import { resetSessionForTest, setSession } from '../services/session';
 
 const hoisted = vi.hoisted(() => ({
   state: {
@@ -61,6 +62,7 @@ function renderShell() {
 describe('AppShell 顶栏布局', () => {
   beforeEach(() => {
     window.localStorage.clear();
+    resetSessionForTest();
   });
 
   it('「我」头像占据侧栏顶部，顶栏不再有个人入口', () => {
@@ -103,5 +105,47 @@ describe('AppShell 顶栏布局', () => {
       '切换明暗主题',
       '新建发送',
     ]);
+  });
+});
+
+describe('侧栏账号菜单（多开）', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    resetSessionForTest();
+  });
+
+  const person = (id: string, username: string, displayName: string) => ({
+    id,
+    username,
+    displayName,
+    createdAt: '2026-01-01T00:00:00.000Z',
+  });
+
+  it('本机两个账号都列在菜单里，当前账号打勾、另一个可点', () => {
+    setSession({ token: 'token-a', user: person('u1', 'alice', '爱丽丝') });
+    setSession({ token: 'token-b', user: person('u2', 'bob', '鲍勃') });
+    renderShell();
+
+    fireEvent.click(screen.getByTestId('account-menu-trigger'));
+
+    expect(screen.getByText('@alice')).toBeInTheDocument();
+    expect(screen.getByText('@bob')).toBeInTheDocument();
+    // 当前是最后登录的 bob
+    expect(screen.getByTestId('acct-row-bob')).toHaveAttribute('aria-current', 'true');
+    expect(screen.getByTestId('acct-row-alice')).not.toHaveAttribute('aria-current');
+    // 菜单里直接给出「再加一个」的入口
+    expect(screen.getByText('添加账号')).toBeInTheDocument();
+    expect(screen.getByText('退出当前账号')).toBeInTheDocument();
+  });
+
+  it('只有一个账号时不显示「+N」角标，多于一个才显示', () => {
+    setSession({ token: 'token-a', user: person('u1', 'alice', '爱丽丝') });
+    const first = renderShell();
+    expect(first.container.querySelector('.side-account__more')).toBeNull();
+    first.unmount();
+
+    setSession({ token: 'token-b', user: person('u2', 'bob', '鲍勃') });
+    const second = renderShell();
+    expect(second.container.querySelector('.side-account__more')?.textContent).toBe('+1');
   });
 });

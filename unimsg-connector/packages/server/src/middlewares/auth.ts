@@ -20,7 +20,7 @@ export interface AuthedRequest extends Request {
 export const DEFAULT_DEV_TOKEN = 'dev-token';
 
 /**
- * 有效入口令牌：空 API_TOKEN（漏填/写成空串）视同「未配置」→ 回退 dev-token，
+ * 有效入密码牌：空 API_TOKEN（漏填/写成空串）视同「未配置」→ 回退 dev-token，
  * 绝不因为空串而关闭鉴权（旧实现 `if (!token) next()` 会让空 token 变成人人可访问）。
  */
 export function resolveApiToken(raw: string | undefined): string {
