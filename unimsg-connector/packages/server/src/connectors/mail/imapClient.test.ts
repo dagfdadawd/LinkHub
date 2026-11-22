@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import type { TLSSocket } from 'node:tls';
-import { ImapSession, fetchNewMails, encodeMailboxName, mailboxArg } from './imapClient';
+import { ImapSession, encodeMailboxName, fetchNewMails, fetchRawMail, mailboxArg } from './imapClient';
 import type { MailAccount } from '../../config';
 
 function fakeSocket(): EventEmitter & { destroyed: boolean; writes: string[]; write: (data: string) => boolean } {
@@ -303,4 +303,31 @@ test('IMAP：SELECT 未上报 UIDVALIDITY 时保持 undefined（老服务端/假
 
   assert.equal(r.uidValidity, undefined);
   assert.equal(r.maxUid, 0);
+});
+
+test('IMAP：fetchRawMail 按 UID 取回单封原始报文（附件下载链路）', async () => {
+  const raw = Buffer.from('From: a@b.com\r\nSubject: 带附件\r\n\r\nbody', 'utf8');
+  const { session, commands } = scriptedSession((args) => {
+    if (args.startsWith('SELECT ')) return { lines: ['* 1 EXISTS'] };
+    if (args.startsWith('UID FETCH 42 ')) return { literals: [raw] };
+    return {};
+  });
+
+  const r = await fetchRawMail(ACCOUNT, 42, 'INBOX', { connect: async () => session });
+
+  assert.ok(r);
+  assert.equal(r.toString('utf8'), raw.toString('utf8'));
+  assert.ok(commands.includes('SELECT INBOX'));
+  assert.ok(commands.some((c) => c.startsWith('UID FETCH 42 BODY.PEEK[]')));
+  assert.ok(commands.includes('LOGOUT'));
+});
+
+test('IMAP：fetchRawMail 邮件不存在（UID 越界）返回 null 而不是抛错', async () => {
+  const { session } = scriptedSession((args) => {
+    if (args.startsWith('SELECT ')) return { lines: ['* 1 EXISTS'] };
+    return {};
+  });
+
+  const r = await fetchRawMail(ACCOUNT, 99, 'INBOX', { connect: async () => session });
+  assert.equal(r, null);
 });

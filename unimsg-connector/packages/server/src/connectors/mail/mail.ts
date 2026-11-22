@@ -54,6 +54,13 @@ export function receive(raw: unknown): UnifiedMessage {
   const body = [r.subject, r.text].filter(Boolean).join('\n\n').slice(0, BODY_LIMIT);
   const fromName = r.from.name || r.from.address;
   const type = inferType(body);
+  // 邮件附件：入库时挂上真实体积 / MIME / 邮件 UID（下载时按 account:folder:uid 重取原信，评审 P0-4）
+  const attachments = (r.attachmentMeta ?? []).map((a) => ({
+    name: a.name,
+    mimeType: a.mimeType || 'application/octet-stream',
+    size: a.size,
+    mailUid: r.uid,
+  }));
   return {
     traceId: genTraceId(),
     platform: Platform.MAIL,
@@ -63,6 +70,7 @@ export function receive(raw: unknown): UnifiedMessage {
     type,
     body,
     dueAt: type === 'todo' ? inferDueAt(body) : undefined,
+    ...(attachments.length > 0 ? { attachments } : {}),
     mailMeta: { account: r.account, inReplyTo: r.messageId, subject: r.subject },
     status: MsgStatus.RECEIVED,
     createdAt: r.date ? new Date(r.date).toISOString() : now,

@@ -9,7 +9,7 @@ import type { AttachmentInfo } from '../types';
 
 /** 该附件是否值得显示下载按钮（与后端 isAttachmentDownloadable 保持同一口径） */
 export function canDownloadAttachment(
-  attachment: Pick<AttachmentInfo, 'mediaId' | 'fileId' | 'fileKey' | 'fileToken' | 'localPath' | 'preview'> | undefined,
+  attachment: Pick<AttachmentInfo, 'mediaId' | 'fileId' | 'fileKey' | 'fileToken' | 'localPath' | 'preview' | 'mailUid'> | undefined,
 ): boolean {
   return Boolean(
     attachment?.mediaId
@@ -18,6 +18,8 @@ export function canDownloadAttachment(
     // 微信：新版桥的不透明 token；localPath 只兼容旧消息
     || attachment?.fileToken
     || attachment?.localPath
+    // 邮件：有 IMAP UID 引用即可按 UID 重取原信下载（评审 P0-4）
+    || attachment?.mailUid !== undefined
     || attachment?.preview?.startsWith('data:'),
   );
 }

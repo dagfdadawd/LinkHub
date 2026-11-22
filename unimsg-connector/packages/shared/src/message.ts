@@ -153,6 +153,14 @@ export interface AttachmentInfo {
    */
   localPath?: string;
   /**
+   * 邮件附件：收到这封邮件时的 IMAP UID（消息 externalId = `account:folder:uid` 的第三段）。
+   *
+   * 邮件附件内容不入库，下载时后端按 account/folder/uid 重新拉取原始报文、
+   * 解出同名 MIME part 返回字节——所以邮件附件全部可下载，前提是原信还在邮箱里。
+   * 与 mediaId / fileId / fileKey / fileToken 同为「平台资源引用」体系。
+   */
+  mailUid?: number;
+  /**
    * 图片的缩略预览（data URL）。仅对图片、且体积在阈值内生成。
    *
    * 为什么不走「按需下载接口」：演示环境没有对象存储，图片本身就要经请求体传上来，

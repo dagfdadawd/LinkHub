@@ -488,9 +488,9 @@ LinkHub 的账号只回答一个问题：**这台机器上「我是谁」**。�
 | POST | `/api/mail/accounts` | Bearer | 保存邮箱账号到本地文件并**热加载轮询（无需重启）**，`201`；body 可带 **`verify:true`**（先跑 IMAP/SMTP 登录自检，通过才保存并标记已验证）；普通保存的账号未验证、**不算就绪**（提示「请点『测试连接』验证」）；同地址覆盖更新；本地文件含授权码、仅本机（`DATA_DIR/mail-accounts.json` 或 `.linkhub-mail-accounts.json`，已 gitignore） |
 | POST | `/api/mail/accounts/:key/verify` | Bearer | 对已保存的本地账号跑一次真实 IMAP + SMTP 登录自检：成功写 `verifiedAt` 并热加载（下一轮开始真实收信）；失败 `200 + ok:false` 带中文 `imap/smtp` 原因；`.env` 来源返回 400 |
 | DELETE | `/api/mail/accounts/:key` | Bearer | 删除**本地导入**的邮箱账号；`.env` 来源返回 400 中文（提示改 `.env`）；不存在 404 |
-| GET | `/api/messages` | Bearer | 消息列表，支持 `?platform=&status=` |
+| GET | `/api/messages` | Bearer | 消息列表，支持 `?platform=&status=`；服务端搜索 / 分页：`?q=`（正文/联系人/待办标题子串）、`?before=`（createdAt 时间游标）、`?limit=`（最新 N 条降序，上限 2000）；三者都不传 = 全量 |
 | GET | `/api/messages/:id` | Bearer | 消息详情（`:id` 传 `traceId`；消息内含 `delivery` 投递标注、`receivedAs` 接收身份，发送失败时有 `failureReason` 可读原因 + 详情页「重试发送」） |
-| GET | `/api/messages/:id/attachments/:index/download` | Bearer | 下载附件（`:id` 传 `traceId`；`?field=replyAttachments` 下载回复附件）。钉钉走 `fileId`/`mediaId` + `dws`，飞书走 `file_key`（按 `receivedAs`/`delivery.identity` 选本人或机器人 token），微信走桥的 `GET /file`（只允许微信文件目录/桥 outbox 白名单，50MB 上限）；返回二进制 + 中文 `Content-Disposition`；图片预览 data URL 可直接还原，既无平台资源也无预览的演示 / 主动发送附件返回 409 |
+| GET | `/api/messages/:id/attachments/:index/download` | Bearer | 下载附件（`:id` 传 `traceId`；`?field=replyAttachments` 下载回复附件）。钉钉走 `fileId`/`mediaId` + `dws`，飞书走 `file_key`（按 `receivedAs`/`delivery.identity` 选本人或机器人 token），微信走桥的 `GET /file`（只允许微信文件目录/桥 outbox 白名单），邮件按 `externalId` 里的 `account:folder:uid` 重取原始报文、解出同名 MIME part（原信已删除/归档返回 404，50MB 上限）；返回二进制 + 中文 `Content-Disposition`；图片预览 data URL 可直接还原，既无平台资源也无预览的演示 / 主动发送附件返回 409 |
 | POST | `/api/messages/:id/reply` | Bearer | 回复（`202`，异步回写）；请求可带 `identity: 'bot' \| 'user'` 覆盖发送身份，不可用时 400 中文报错 |
 | POST | `/api/messages/compose` | Bearer | 统一入口新建发送（平台 / 目标会话 / 文本 / 附件；可选 `identity` 指定本人或机器人；可选 `todo: {title?, dueAt?}` 同时手动加一条待办——待办就是这条消息本身，`type=todo` 并写 `todo_added` 闭环日志，不额外发一次请求） |
 | POST | `/api/messages/:id/done` | Bearer | 标记待办完成（置 `done`，不改状态机状态） |
@@ -514,7 +514,7 @@ LinkHub 的账号只回答一个问题：**这台机器上「我是谁」**。�
 - **钉钉本人身份**依赖官方 `dws`（共创阶段）：需企业管理员开启「CLI 访问管理」+ 首次真人授权；凭据绑定设备，不能跨机复制。
 - **飞书**本人接收是轮询（默认 20s，通常 5–30s 延迟），只能读本人可见会话；用户身份权限需管理员开通并生效。租户策略 `21001` 会直接拦住取 token，`doctor` 会把原因和修复方向写清楚。
 - **微信**个人版无官方收发 API，走 RPA 本地桥：默认模拟；3.9.x 可自动轮询接收，4.x（Qt 自绘、无控件树）只能「按需拉取」。受窗口布局 / 分辨率影响，存在账号风控风险，仅作补充通道。
-- **邮箱**走 IMAP + 授权码，默认 45s 一轮、非实时；附件需到邮箱客户端查看；Gmail 需应用专用密码，部分 Microsoft 365 租户关闭基础认证。
+- **邮箱**走 IMAP + 授权码，默认 45s 一轮、非实时；附件可直接在 LinkHub 内下载（按邮件 UID 重取原信解析）；Gmail 需应用专用密码，部分 Microsoft 365 租户关闭基础认证。
 
 **实现侧（刻意的取舍）**
 

@@ -6,12 +6,14 @@ import {
 } from './download';
 
 describe('附件下载工具', () => {
-  it('有平台资源引用才显示下载按钮（微信 fileToken / 旧 localPath 也算）', () => {
+  it('有平台资源引用才显示下载按钮（微信 fileToken / 旧 localPath / 邮件 mailUid 也算）', () => {
     expect(canDownloadAttachment({ mediaId: 'm1' })).toBe(true);
     expect(canDownloadAttachment({ fileId: 'f1' })).toBe(true);
     expect(canDownloadAttachment({ fileKey: 'k1' })).toBe(true);
     expect(canDownloadAttachment({ fileToken: 'wxfile_t' })).toBe(true);
     expect(canDownloadAttachment({ localPath: 'C:/wx/a.pdf' })).toBe(true);
+    expect(canDownloadAttachment({ mailUid: 42 })).toBe(true);
+    expect(canDownloadAttachment({ mailUid: 0 })).toBe(true, 'UID 0 是合法引用');
     expect(canDownloadAttachment({ preview: 'data:image/png;base64,AAAA' })).toBe(true);
     expect(canDownloadAttachment({})).toBe(false);
     expect(canDownloadAttachment(undefined)).toBe(false);

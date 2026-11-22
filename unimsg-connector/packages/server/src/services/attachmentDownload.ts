@@ -24,6 +24,8 @@ import {
 import { config, modeOf } from '../config';
 import { DingtalkPersonalError, dingtalkPersonalClient } from '../connectors/dingtalkPersonal';
 import { feishuUserAuth } from '../connectors/feishuUserAuth';
+import { fetchRawMail } from '../connectors/mail/imapClient';
+import { extractAttachment } from '../connectors/mail/mime';
 import { bridgeUrl } from '../connectors/wechat';
 import {
   feishuTenantToken,
@@ -79,6 +81,13 @@ export interface AttachmentDownloadDeps {
     fileUrl(value: string, kind: 'token' | 'path'): string;
     getBinary(url: string, headers: Record<string, string>, opts?: { timeoutMs?: number; label?: string }): Promise<BinaryResponse>;
   };
+  /**
+   * 邮箱：按 account/folder/uid 重取原始报文（评审 P0-4）。
+   * 返回 null = 原信已不在邮箱里；连接 / 命令失败直接抛错由调用方包装。
+   */
+  mail?: {
+    fetchRaw(account: string, folder: string, uid: number): Promise<Buffer | null>;
+  };
 }
 
 /** 生产默认依赖；单测通过参数注入假实现，绝不外呼 / 不启动 dws */
@@ -97,14 +106,22 @@ const realDeps: AttachmentDownloadDeps = {
     fileUrl: (value, kind) => `${bridgeUrl()}/file?${kind}=${encodeURIComponent(value)}`,
     getBinary: (url, headers, opts) => getBinary(url, headers, { label: '微信附件', timeoutMs: 30_000, ...opts }),
   },
+  mail: {
+    fetchRaw: (account, folder, uid) => {
+      const found = config.mail.accounts.find((a) => a.key === account);
+      if (!found) throw new Error(`邮箱账号未配置：${account}（检查 MAIL_${account.toUpperCase()}_ADDRESS / AUTH_CODE）`);
+      return fetchRawMail(found, uid, folder);
+    },
+  },
 };
 
 /**
  * 是否可以尝试下载：前端按钮也按同一组字段显示。
  * 主动通过 LinkHub 发送的文件只有元数据（内容不落库），因此没有这些引用，不能下载。
+ * 邮件附件有 mailUid（IMAP UID 引用）即可下载——原信还在邮箱里就能按 UID 重取（评审 P0-4）。
  */
 export function isAttachmentDownloadable(
-  attachment: Pick<AttachmentInfo, 'mediaId' | 'fileId' | 'fileKey' | 'fileToken' | 'localPath' | 'preview'> | undefined,
+  attachment: Pick<AttachmentInfo, 'mediaId' | 'fileId' | 'fileKey' | 'fileToken' | 'localPath' | 'preview' | 'mailUid'> | undefined,
 ): boolean {
   return Boolean(
     attachment?.mediaId
@@ -112,6 +129,7 @@ export function isAttachmentDownloadable(
     || attachment?.fileKey
     || attachment?.fileToken
     || attachment?.localPath
+    || attachment?.mailUid !== undefined
     || attachment?.preview?.startsWith('data:'),
   );
 }
@@ -402,6 +420,55 @@ async function downloadWechat(
 }
 
 /**
+ * 邮件：按 externalId（account:folder:uid）重取原始报文，解出同名 MIME part 返回字节。
+ * 附件内容不入库是邮箱通道的既有边界——引用留在原信里，原信在就能下（评审 P0-4）。
+ */
+async function downloadMail(
+  message: UnifiedMessage,
+  attachment: AttachmentInfo,
+  filename: string,
+  deps: AttachmentDownloadDeps,
+): Promise<DownloadedAttachment> {
+  const client = deps.mail ?? realDeps.mail!;
+  const [account, folder, uidRaw] = String(message.externalId ?? '').split(':');
+  const uid = Number(uidRaw);
+  if (!account || !Number.isInteger(uid) || uid <= 0) {
+    throw new AttachmentDownloadError(
+      '这封邮件缺少原始报文定位（account/folder/uid），无法下载附件；请到邮箱客户端查看',
+      409,
+    );
+  }
+  let raw: Buffer | null;
+  try {
+    raw = await client.fetchRaw(account, folder || 'INBOX', uid);
+  } catch (e) {
+    const reason = e instanceof Error ? e.message : String(e);
+    // 账号未配置 / 登录失败是可修复的账号问题，不是服务端 5xx
+    const accountIssue = /未配置|登录失败|LOGIN|AUTH/i.test(reason);
+    throw new AttachmentDownloadError(`邮件附件下载失败：${reason}`, accountIssue ? 409 : 502);
+  }
+  if (!raw) {
+    throw new AttachmentDownloadError('原始邮件已不在邮箱里（可能被删除或归档），无法取回附件', 404);
+  }
+  const hit = extractAttachment(raw, attachment.name);
+  if (!hit) {
+    throw new AttachmentDownloadError('原始邮件里找不到这个附件（文件名可能已变化），无法下载', 404);
+  }
+  if (hit.buffer.byteLength > MAX_ATTACHMENT_BYTES) {
+    throw new AttachmentDownloadError(
+      `邮件附件过大（${Math.round(hit.buffer.byteLength / 1024 / 1024)}MB），超过 ${Math.round(MAX_ATTACHMENT_BYTES / 1024 / 1024)}MB 下载上限`,
+      413,
+    );
+  }
+  return {
+    buffer: hit.buffer,
+    filename: safeDownloadFilename(hit.name || attachment.name),
+    mimeType: finalMime(attachment, filename, undefined, hit.buffer),
+    source: Platform.MAIL,
+  };
+}
+
+/**
  * 下载一条消息里的附件。
  * 只读取已入库的元数据，不信任客户端传入的 URL / 文件名 / 路径。
  */
@@ -413,7 +480,7 @@ export async function downloadAttachment(
   if (!isAttachmentDownloadable(attachment)) {
     if (message.platform === Platform.MAIL) {
       throw new AttachmentDownloadError(
-        '邮件附件暂不支持在 LinkHub 内下载：邮件的附件内容没有入库，请到邮箱客户端查看（正文与附件名已展示在消息里）。',
+        '这条邮件附件来自旧版本消息（当时没有记录邮件 UID），无法回取原信；新收到的邮件附件可直接下载。',
         409,
       );
     }
@@ -432,7 +499,11 @@ export async function downloadAttachment(
   const filename = safeDownloadFilename(attachment.name);
 
   // 没有平台资源引用、但有预览 data URL：直接把预览还原成文件（图片/主动发送的图片）。
-  if (!attachment.mediaId && !attachment.fileId && !attachment.fileKey && !attachment.fileToken && !attachment.localPath) {
+  // 邮件附件（mailUid）走独立的 IMAP 重取链路，绝不落进预览兜底。
+  if (
+    !attachment.mediaId && !attachment.fileId && !attachment.fileKey
+    && !attachment.fileToken && !attachment.localPath && attachment.mailUid === undefined
+  ) {
     const preview = attachment.preview;
     const decoded = preview?.startsWith('data:') ? decodePreviewDataUrl(preview) : undefined;
     if (!decoded) {
@@ -459,7 +530,7 @@ export async function downloadAttachment(
     case Platform.FEISHU:
       return finish(await downloadFeishu(message, attachment, filename, deps));
     case Platform.MAIL:
-      throw new AttachmentDownloadError('邮件附件暂不支持在 LinkHub 内下载', 409);
+      return finish(await downloadMail(message, attachment, filename, deps));
     case Platform.WECHAT:
       return finish(await downloadWechat(attachment, filename, deps));
     default:

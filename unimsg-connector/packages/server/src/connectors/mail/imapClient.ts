@@ -368,3 +368,35 @@ export async function fetchNewMails(
     s.close();
   }
 }
+
+/**
+ * 按目录 + UID 取回一封邮件的完整原始报文（邮件附件下载用，评审 P0-4）。
+ * 登录 / SELECT 前导命令与 fetchNewMails 相同（ID 上报是网易/QQ 风控要求）；
+ * 单独成函数而不共享会话：下载是低频单封操作，不值得为它改动经过实战的轮询链路。
+ * 邮件不存在（UID 越界 / 已被删除）返回 null；连接或命令失败向上抛错。
+ */
+export async function fetchRawMail(
+  account: MailAccount,
+  uid: number,
+  folder = 'INBOX',
+  opts: FetchNewMailsOptions = {},
+): Promise<Buffer | null> {
+  const s = await (opts.connect ? opts.connect(account) : ImapSession.connect(account));
+  try {
+    await s.greeting();
+    if (!account.imapSecure) await s.startTls();
+    const identify = `ID ("name" "LinkHub" "version" "1.0" "vendor" "unimsg-connector")`;
+    await s.command(identify);
+    const login = await s.command(`LOGIN ${quote(account.address)} ${quote(account.authCode)}`);
+    if (!login.ok) throw new Error(`IMAP 登录失败：${login.text.trim()}`);
+    await s.command(identify);
+    const select = await s.command(`SELECT ${mailboxArg(folder)}`);
+    if (!select.ok) throw new Error(`IMAP 选择目录 ${folder} 失败：${select.text.trim()}`);
+    const r = await s.command(`UID FETCH ${uid} BODY.PEEK[]`);
+    const raw = r.literals[r.literals.length - 1];
+    await s.command('LOGOUT');
+    return r.ok && raw ? raw : null;
+  } finally {
+    s.close();
+  }
+}

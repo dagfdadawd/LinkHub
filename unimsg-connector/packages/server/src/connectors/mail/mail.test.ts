@@ -214,3 +214,36 @@ test('连接器已注册进注册表且实现四件套', () => {
   assert.equal(typeof mailConnector.receive, 'function');
   assert.equal(typeof mailConnector.convert, 'function');
 });
+
+test('receive：附件元数据映射为消息附件，带真实体积与邮件 UID（评审 P0-4）', () => {
+  const m = receive({
+    source: 'imap',
+    account: 'qq',
+    folder: 'INBOX',
+    uid: 42,
+    messageId: '<m1@b.com>',
+    subject: '周报',
+    from: { name: '李四', address: 'l@b.com' },
+    text: '见附件',
+    attachmentMeta: [
+      { name: '周报.pdf', size: 2048, mimeType: 'application/pdf' },
+    ],
+  });
+  assert.deepEqual(
+    m.attachments,
+    [{ name: '周报.pdf', mimeType: 'application/pdf', size: 2048, mailUid: 42 }],
+  );
+
+  // 没有附件的老事件：不带 attachments 字段（向后兼容，不空挂数组）
+  const plain = receive({
+    source: 'imap',
+    account: 'qq',
+    folder: 'INBOX',
+    uid: 1,
+    messageId: '<m2@b.com>',
+    subject: 'hi',
+    from: { name: '李四', address: 'l@b.com' },
+    text: '无附件',
+  });
+  assert.equal(plain.attachments, undefined);
+});

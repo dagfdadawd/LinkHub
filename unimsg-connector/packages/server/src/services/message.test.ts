@@ -563,7 +563,7 @@ test('list：服务端搜索 q / 时间游标 before / 最新N条 limit（评审
   assert.deepEqual(svc.list({ limit: 2 }).map((m) => m.traceId), ['t-4', 't-3']);
 
   // before：时间游标，配合 limit 实现「加载更早」
-  const cursor = mk(3).createdAt;
+  const cursor = new Date(base + 3 * 60_000).toISOString();
   assert.deepEqual(svc.list({ before: cursor, limit: 2 }).map((m) => m.traceId), ['t-2', 't-1']);
 
   // q + limit 叠加

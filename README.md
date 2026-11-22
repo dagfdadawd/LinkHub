@@ -48,7 +48,7 @@ pnpm --filter @unimsg/web dev         # 另开终端，前端 :5173
 |---|---|
 | **接收** | 飞书长连接 / HTTP 回调、钉钉 Stream / HTTP 回调、微信 RPA 本地桥轮询、邮箱 IMAP 轮询；本人身份另走飞书 OAuth 轮询、钉钉 `dws` 个人事件 |
 | **展示** | 收件箱按平台 / 状态筛选，WebSocket 实时推送；「本人 / 机器人 / 模拟」来源如实标注 |
-| **下载** | 收到的图片 / 文件可直接下载：钉钉本人文件走 `fileId`（`dws drive download`）、飞书走 `file_key`（本人或机器人 token）；微信 RPA 附件经桥的 `GET /file` 回吐（只允许微信文件目录 / 桥 outbox）、邮件附件需到邮箱客户端查看 |
+| **下载** | 收到的图片 / 文件可直接下载：钉钉本人文件走 `fileId`（`dws drive download`）、飞书走 `file_key`（本人或机器人 token）；微信 RPA 附件经桥的 `GET /file` 回吐（只允许微信文件目录 / 桥 outbox）、邮件附件按 IMAP UID 重取原信解出同名附件（原信还在邮箱里即可下载） |
 | **处理** | 直接回复、标记完成、手动加待办、引用回复；AI 做意图识别 / 摘要 / 回复草稿（真实调用大模型，失败才回退规则并标注） |
 | **回写** | 按平台格式异步发送文本与附件，`delivery` 记录真实通道与身份；失败可见原因并可重试 |
 | **回流** | 平台状态事件回写本地状态机（`received → processing → replied → sent → synced`），异常进死信队列 |
@@ -164,7 +164,7 @@ Node.js ≥ 20 · TypeScript · Express 4 + ws · React 18 + Vite 5 + Ant Design
 
 **飞书本人接收是轮询**（默认 20s，延迟通常 5–30s），只能读本人可见的会话；权限要管理员开通并生效。
 
-**邮箱**走 IMAP 加授权码，附件需要到邮箱客户端查看；企业邮箱如果关了 IMAP，得先开通。
+**邮箱**走 IMAP 加授权码，附件可直接在 LinkHub 内下载（后端按邮件 UID 重取原信解析附件）；企业邮箱如果关了 IMAP，得先开通。
 
 **持久化**默认是内存加可选文件快照（设 `DATA_DIR`）。PostgreSQL / Redis 只提供了 DDL 和仓储接口，没有接入运行时，重启会丢消息。
 

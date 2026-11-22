@@ -125,6 +125,22 @@ interface BodySearch {
   plain: string;
   html: string;
   attachments: string[];
+  /** 附件元数据（与 attachments 同序）：入库时挂到消息上的真实体积与类型（评审 P0-4） */
+  meta: Array<{ name: string; size: number; mimeType: string }>;
+}
+
+/** 附件字节解码：base64 / quoted-printable → Buffer（附件是二进制，不做字符集转换） */
+function attachmentBytes(part: RawMail): Buffer {
+  const enc = (part.headers['content-transfer-encoding'] ?? '7bit').toLowerCase().replace(/[\s_-]/g, '');
+  if (enc === 'base64') {
+    const cleaned = part.body.toString('ascii').replace(/[^A-Za-z0-9+/=]/g, '');
+    return Buffer.from(cleaned, 'base64');
+  }
+  if (enc === 'quotedprintable') {
+    const soft = part.body.toString('binary').replace(/=\r?\n/g, '');
+    return Buffer.from(soft.replace(/=([0-9A-Fa-f]{2})/g, (_m, h: string) => String.fromCharCode(parseInt(h, 16))), 'binary');
+  }
+  return part.body;
 }
 
 /** 附件名：优先 Content-Disposition 的 filename，退化到 Content-Type 的 name */
@@ -186,7 +202,13 @@ function walkPart(part: RawMail, found: BodySearch, depth: number): void {
   const encoding = part.headers['content-transfer-encoding'] ?? '';
 
   if (dispositionType(part.headers['content-disposition']) === 'attachment') {
-    found.attachments.push(attachmentName(part) || '未命名');
+    const name = attachmentName(part) || '未命名';
+    found.attachments.push(name);
+    found.meta.push({
+      name,
+      size: attachmentBytes(part).length,
+      mimeType: ct.split(';')[0]?.trim().toLowerCase() || 'application/octet-stream',
+    });
     return;
   }
 
@@ -224,6 +246,11 @@ function walkPart(part: RawMail, found: BodySearch, depth: number): void {
   const name = attachmentName(part);
   if (name) {
     found.attachments.push(name);
+    found.meta.push({
+      name,
+      size: attachmentBytes(part).length,
+      mimeType: ct.split(';')[0]?.trim().toLowerCase() || 'application/octet-stream',
+    });
     return;
   }
   // 顶层非文本（历史上直接按文本兜底）：保持兼容，别让老报文突然变空
@@ -233,14 +260,54 @@ function walkPart(part: RawMail, found: BodySearch, depth: number): void {
   }
 }
 
+/** 附件元数据：入库时挂在消息附件上的真实体积与类型（下载按钮与体积展示用） */
+export interface MailAttachmentMeta {
+  name: string;
+  size: number;
+  mimeType: string;
+}
+
 /** 邮件正文 + 附件名：递归解析整棵 MIME 树（multipart/mixed 里嵌 multipart/alternative 也能出正文） */
-export function extractMail(mail: RawMail): { text: string; attachments: string[] } {
-  const found: BodySearch = { plain: '', html: '', attachments: [] };
+export function extractMail(mail: RawMail): {
+  text: string;
+  attachments: string[];
+  /** 有附件时才带：附件的真实字节体积与 MIME（评审 P0-4，旧调用方零感知） */
+  attachmentMeta?: MailAttachmentMeta[];
+} {
+  const found: BodySearch = { plain: '', html: '', attachments: [], meta: [] };
   walkPart(mail, found, 0);
   const text = found.plain.trim() ? found.plain : found.html;
-  if (text.trim()) return { text, attachments: found.attachments };
+  const meta = found.meta.length > 0 ? found.meta : undefined;
+  if (text.trim()) return { text, attachments: found.attachments, attachmentMeta: meta };
   // 确认没有任何正文，才退化成附件名摘要
-  return { text: found.attachments.length > 0 ? `[附件] ${found.attachments.join(', ')}` : '', attachments: found.attachments };
+  return {
+    text: found.attachments.length > 0 ? `[附件] ${found.attachments.join(', ')}` : '',
+    attachments: found.attachments,
+    attachmentMeta: meta,
+  };
+}
+
+/** 按文件名从原始报文里解出附件字节（大小写不敏感；邮件附件下载的唯一入口） */
+export function extractAttachment(raw: Buffer | string, name: string): MailAttachmentMeta & { buffer: Buffer } | undefined {
+  const target = name.trim().toLowerCase();
+  if (!target) return undefined;
+  let hit: (MailAttachmentMeta & { buffer: Buffer }) | undefined;
+  const visit = (part: RawMail, depth: number): void => {
+    if (hit || depth > MAX_MIME_DEPTH) return;
+    const ct = part.headers['content-type'] ?? '';
+    if (/multipart\//i.test(ct)) {
+      const boundary = parseParam(ct, 'boundary');
+      if (boundary) for (const child of splitMultipart(part.body, boundary)) visit(parseMail(child), depth + 1);
+      return;
+    }
+    const partName = attachmentName(part);
+    if (!partName || partName.toLowerCase() !== target) return;
+    const mimeType = ct.split(';')[0]?.trim().toLowerCase() || 'application/octet-stream';
+    const buffer = attachmentBytes(part);
+    hit = { name: partName, mimeType: mimeType || 'application/octet-stream', size: buffer.length, buffer };
+  };
+  visit(parseMail(raw), 0);
+  return hit;
 }
 
 /** 邮件正文：优先 text/plain，退化到 text/html 去标签 */
@@ -285,6 +352,8 @@ export interface ParsedMessage {
   text: string;
   /** 附件文件名（只在确实解析到附件时出现；正文摘要仍走 text，不破坏原有字段语义） */
   attachments?: string[];
+  /** 附件元数据（真实体积 / MIME / 与 attachments 同序）；入库时映射为消息附件（评审 P0-4） */
+  attachmentMeta?: MailAttachmentMeta[];
 }
 
 /** 原始报文 → 结构化邮件（连接器 receive 的输入） */

@@ -37,18 +37,20 @@ type DepsOverride = {
   dingtalk?: Partial<AttachmentDownloadDeps['dingtalk']>;
   feishu?: Partial<AttachmentDownloadDeps['feishu']>;
   wechat?: Partial<NonNullable<AttachmentDownloadDeps['wechat']>>;
+  mail?: Partial<NonNullable<AttachmentDownloadDeps['mail']>>;
 };
 
 /** 记录调用；默认成功返回 PDF 内容 */
 function fakeDeps(overrides: DepsOverride = {}): {
   deps: AttachmentDownloadDeps;
-  calls: { drive: unknown[]; media: unknown[]; feishu: string[]; wechat: string[] };
+  calls: { drive: unknown[]; media: unknown[]; feishu: string[]; wechat: string[]; mail: unknown[] };
 } {
   const calls = {
     drive: [] as unknown[],
     media: [] as unknown[],
     feishu: [] as string[],
     wechat: [] as string[],
+    mail: [] as unknown[],
   };
   const base: AttachmentDownloadDeps = {
     dingtalk: {
@@ -77,6 +79,12 @@ function fakeDeps(overrides: DepsOverride = {}): {
         return { buffer: Buffer.from('%PDF-1.4 wx'), contentType: 'application/pdf' };
       },
     },
+    mail: {
+      fetchRaw: async (account: string, folder: string, uid: number) => {
+        calls.mail.push({ account, folder, uid });
+        return null;
+      },
+    },
   };
   return {
     deps: {
@@ -86,17 +94,20 @@ function fakeDeps(overrides: DepsOverride = {}): {
         ...base.wechat,
         ...(overrides.wechat ?? {}),
       } as NonNullable<AttachmentDownloadDeps['wechat']>,
+      mail: { ...base.mail, ...(overrides.mail ?? {}) } as NonNullable<AttachmentDownloadDeps['mail']>,
     },
     calls,
   };
 }
 
-test('isAttachmentDownloadable：平台资源引用任一即可（含微信 token / 旧 localPath）', () => {
+test('isAttachmentDownloadable：平台资源引用任一即可（含微信 token / 旧 localPath / 邮件 UID）', () => {
   assert.equal(isAttachmentDownloadable({ mediaId: 'm' }), true);
   assert.equal(isAttachmentDownloadable({ fileId: 'f' }), true);
   assert.equal(isAttachmentDownloadable({ fileKey: 'k' }), true);
   assert.equal(isAttachmentDownloadable({ fileToken: 'wxfile_t' }), true);
   assert.equal(isAttachmentDownloadable({ localPath: 'C:/wx/a.pdf' }), true);
+  assert.equal(isAttachmentDownloadable({ mailUid: 42 }), true);
+  assert.equal(isAttachmentDownloadable({ mailUid: 0 }), true, 'UID 0 视为合法引用（!= undefined）');
   assert.equal(isAttachmentDownloadable({ preview: 'data:image/png;base64,AAAA' }), true);
   assert.equal(isAttachmentDownloadable({}), false);
 });
@@ -301,5 +312,89 @@ test('微信桥不可达：502 并提示确认桥已启动', async () => {
       deps,
     ),
     (e: unknown) => e instanceof AttachmentDownloadError && e.status === 502 && /连不上本机 RPA 桥/.test(e.message),
+  );
+});
+
+test('邮件附件：按 externalId 重取原信、解出同名 MIME part 返回字节（评审 P0-4）', async () => {
+  const raw = [
+    'From: a@b.com',
+    'Subject: report',
+    'MIME-Version: 1.0',
+    'Content-Type: multipart/mixed; boundary="OUTER"',
+    '',
+    '--OUTER',
+    'Content-Type: text/plain; charset=utf-8',
+    '',
+    '正文',
+    '--OUTER',
+    'Content-Type: application/pdf; name="report.pdf"',
+    'Content-Disposition: attachment; filename="report.pdf"',
+    'Content-Transfer-Encoding: base64',
+    '',
+    Buffer.from('%PDF-1.4 mail附件').toString('base64'),
+    '--OUTER--',
+    '',
+  ].join('\r\n');
+  const { deps, calls } = fakeDeps({
+    mail: { fetchRaw: async (account, folder, uid) => {
+      calls.mail.push({ account, folder, uid });
+      return Buffer.from(raw, 'utf8');
+    } },
+  });
+  const mailMsg = message({
+    platform: Platform.MAIL,
+    externalId: 'qq:INBOX:42',
+    attachments: [{ name: 'report.pdf', mimeType: 'application/pdf', size: 14, mailUid: 42 }],
+  });
+
+  const file = await downloadAttachment(mailMsg, mailMsg.attachments![0], deps);
+  assert.deepEqual(calls.mail[0], { account: 'qq', folder: 'INBOX', uid: 42 });
+  assert.equal(file.buffer.toString('utf8'), '%PDF-1.4 mail附件');
+  assert.equal(file.mimeType, 'application/pdf');
+  assert.equal(file.filename, 'report.pdf');
+  assert.equal(file.source, Platform.MAIL);
+});
+
+test('邮件附件错误路径：缺定位 409 / 原信不在 404 / 附件名不匹配 404', async () => {
+  const { deps } = fakeDeps();
+  const att = (mailUid?: number): AttachmentInfo => ({
+    name: 'report.pdf',
+    mimeType: 'application/pdf',
+    size: 14,
+    ...(mailUid !== undefined ? { mailUid } : {}),
+  });
+
+  await assert.rejects(
+    () => downloadAttachment(
+      message({ platform: Platform.MAIL, externalId: 'qq:INBOX:not-a-uid' }),
+      att(42),
+      deps,
+    ),
+    (e: unknown) => e instanceof AttachmentDownloadError && e.status === 409,
+  );
+  await assert.rejects(
+    () => downloadAttachment(
+      message({ platform: Platform.MAIL, externalId: 'qq:INBOX:7' }),
+      att(7),
+      deps,
+    ),
+    (e: unknown) => e instanceof AttachmentDownloadError && e.status === 404 && /已不在邮箱/.test(e.message),
+  );
+  await assert.rejects(
+    () => downloadAttachment(
+      message({ platform: Platform.MAIL, externalId: 'qq:INBOX:42' }),
+      { name: '不存在.pdf', mimeType: 'application/pdf', size: 1, mailUid: 42 },
+      fakeDeps({ mail: { fetchRaw: async () => Buffer.from('no attachment here', 'utf8') } }).deps,
+    ),
+    (e: unknown) => e instanceof AttachmentDownloadError && e.status === 404 && /找不到这个附件/.test(e.message),
+  );
+  // 旧版本消息没有 mailUid：进不可下载分支并给出升级指引
+  await assert.rejects(
+    () => downloadAttachment(
+      message({ platform: Platform.MAIL, externalId: 'qq:INBOX:42' }),
+      att(),
+      deps,
+    ),
+    (e: unknown) => e instanceof AttachmentDownloadError && e.status === 409 && /旧版本消息/.test(e.message),
   );
 });

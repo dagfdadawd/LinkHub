@@ -7,7 +7,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readMessage, extractText, extractMail, parseMail } from './mime';
+import { readMessage, extractText, extractMail, extractAttachment, parseMail } from './mime';
 
 const CRLF = '\r\n';
 const b64 = (s: string) => Buffer.from(s, 'utf8').toString('base64');
@@ -188,4 +188,62 @@ test('MIME：附件名支持 encoded-word 与 RFC 2231 两种真实客户端写�
   const extracted = extractMail(parse(raw));
   assert.deepEqual(extracted.attachments, ['报表.pdf', '报表.pdf']);
   assert.equal(extracted.text, '[附件] 报表.pdf, 报表.pdf');
+});
+
+test('extractAttachment：按名解出 MIME part 字节（base64 / 嵌套 multipart / 大小写不敏感）', () => {
+  const content = Buffer.from('%PDF-1.5 中文内容', 'utf8');
+  const raw = [
+    'From: a@b.com',
+    'Content-Type: multipart/mixed; boundary="OUTER"',
+    '',
+    '--OUTER',
+    'Content-Type: multipart/alternative; boundary="INNER"',
+    '',
+    '--INNER',
+    'Content-Type: text/plain',
+    '',
+    '纯文本正文',
+    '--INNER',
+    'Content-Type: text/html',
+    '',
+    '<p>HTML 正文</p>',
+    '--INNER--',
+    '--OUTER',
+    'Content-Type: application/pdf',
+    'Content-Disposition: attachment; filename="' + encodedWord('报表.pdf') + '"',
+    'Content-Transfer-Encoding: base64',
+    '',
+    content.toString('base64'),
+    '--OUTER--',
+    '',
+  ].join('\r\n');
+  const buf = Buffer.from(raw, 'utf8');
+
+  // 真实邮件的中文文件名走 encoded-word：attachmentName 解码后按解码名匹配
+  const hit = extractAttachment(buf, '报表.pdf');
+  assert.ok(hit, '嵌套 multipart 里的附件也要能解出');
+  assert.equal(hit.buffer.toString('utf8'), '%PDF-1.5 中文内容');
+  assert.equal(hit.mimeType, 'application/pdf');
+
+  assert.ok(extractAttachment(buf, '报表.PDF'), '文件名匹配大小写不敏感');
+  assert.equal(extractAttachment(buf, '不存在.pdf'), undefined);
+  assert.equal(extractAttachment(buf, ''), undefined);
+
+  // quoted-printable 附件同样解码
+  const qpRaw = [
+    'From: a@b.com',
+    'Content-Type: multipart/mixed; boundary="B"',
+    '',
+    '--B',
+    'Content-Type: text/plain',
+    'Content-Disposition: attachment; filename="notes.txt"',
+    'Content-Transfer-Encoding: quoted-printable',
+    '',
+    'caf=C3=A9-42',
+    '--B--',
+    '',
+  ].join('\r\n');
+  const qp = extractAttachment(Buffer.from(qpRaw, 'utf8'), 'notes.txt');
+  assert.ok(qp);
+  assert.equal(qp.buffer.toString('utf8'), 'café-42');
 });
