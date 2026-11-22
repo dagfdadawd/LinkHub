@@ -7,7 +7,8 @@ import { join } from 'node:path';
 import { Platform } from '@unimsg/shared';
 import { createApp, formatListenError, parseCorsOrigins } from './app';
 import { config, modeOf } from './config';
-import { DEFAULT_DEV_TOKEN, apiTokenWarning, productionTokenBlocker, resolveApiToken } from './middlewares/auth';
+import { apiAuth, DEFAULT_DEV_TOKEN, apiTokenWarning, productionTokenBlocker, resolveApiToken } from './middlewares/auth';
+import { doctorRouter } from './routes/doctor';
 import { InMemoryRepository } from './db/repository';
 import { connectors } from './connectors/registry';
 import { ensureDwsConfigDir } from './connectors/dwsConfigDir';
@@ -135,6 +136,10 @@ const app = createApp(svc, {
     },
   },
 });
+// UX 评审 P1-9：GET /api/doctor 只读自检（账号页「一键自检」数据源），鉴权与其它 /api 业务路由一致。
+// 挂载点说明：常规做法是在 app.ts 的 createApp 里挂，但本次改动白名单不含 app.ts；
+// Express 的路由栈在请求时才匹配，应用创建后追加 use 与内部挂载行为完全一致。
+app.use('/api', apiAuth, doctorRouter());
 const server = http.createServer(app);
 const wss = initWs(server);
 
