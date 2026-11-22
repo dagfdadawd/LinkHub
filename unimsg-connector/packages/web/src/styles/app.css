@@ -10851,3 +10851,75 @@ html.vt-morph .detail {
 .stats-platform-card {
   margin-bottom: 8px;
 }
+
+/* ------------------------------------------------------------------
+ * 看板导出 + 趋势（评审 P1-7）
+ * 趋势图是内联 SVG：柱色 / 基线 / 轴文字全部走令牌，
+ * 暗色主题自动跟随，不出现第二处色值真相。
+ * ------------------------------------------------------------------ */
+
+.stats-trend-card {
+  margin-bottom: 8px;
+}
+
+.stats-trend__legend {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin: 0 0 8px;
+  color: var(--text-2);
+  font-size: 0.75rem;
+}
+
+.stats-trend__dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 6px;
+  border-radius: var(--r-6);
+}
+
+.stats-trend__dot--in {
+  background: var(--brand);
+}
+
+.stats-trend__dot--out {
+  background: var(--copper);
+}
+
+.stats-trend__peak {
+  margin-left: auto;
+  color: var(--text-3);
+}
+
+.stats-trend__chart {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.stats-trend__bar--in {
+  fill: var(--brand);
+}
+
+.stats-trend__bar--out {
+  fill: var(--copper);
+}
+
+.stats-trend__baseline {
+  stroke: var(--border-strong);
+}
+
+.stats-trend__axis {
+  fill: var(--text-3);
+  font-size: 0.625rem;
+}
+
+.stats-trend__empty {
+  margin: 0;
+  padding: 28px 0;
+  color: var(--text-3);
+  font-size: 0.8125rem;
+  text-align: center;
+}
+
