@@ -47,7 +47,7 @@ export function StatusFlow({ status }: { status: MsgStatus }) {
           <span className="status-step__dot status-step--failed">
             <CloseOutlined />
           </span>
-          <span className="status-step__label status-step--failed">发送失败</span>
+          <span className="status-step__label status-step--failed">发送失败（未送达）</span>
         </div>
       )}
     </div>

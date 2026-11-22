@@ -52,9 +52,13 @@ import { PLATFORM_META } from '../utils/format';
 import { conversationKey } from '../utils/conversations';
 import { ensureNotificationPermission, showSystemNotification } from '../services/notify';
 
-/** 错误排查提示：后端未启动 / 端口不一致 / token 不一致是最常见的三类首启问题 */
+/** 普通用户看到的排查提示：不出现端口 / token / 命令这类技术词 */
 const ERROR_HINTS =
-  '排查：后端是否已启动（pnpm --filter @unimsg/server start）；VITE_API_BASE 是否指向正确端口；token 是否与后端 API_TOKEN 一致';
+  '可以先刷新页面或重新打开 LinkHub 再试；如果一直这样，请确认 LinkHub 服务还在运行。';
+
+/** 「给技术同事」的排查细节：默认折叠，只有需要的人展开 */
+const ERROR_HINTS_DEV =
+  '后端是否已启动（pnpm --filter @unimsg/server start）；VITE_API_BASE 是否指向正确端口；token 是否与后端 API_TOKEN 一致';
 
 
 /** ≤640px 时渲染底部导航；测试环境 matchMedia 返回 false，不会产生重复文案 */
@@ -141,6 +145,8 @@ export function AppShell() {
   const { message } = AntApp.useApp();
   const { mode, toggle } = useTheme();
   const footer = footerState(state.demoMode, state.connection, state.error);
+  /** 401/登录失效类错误：给「重新登录」按钮，而不是让用户对着术语发愁 */
+  const needsLogin = Boolean(state.error && /登录|未授权|已过期/.test(state.error));
   const page = pageMeta(location.pathname);
   const compact = useIsCompact();
   const profile = useProfile();
@@ -798,12 +804,27 @@ export function AppShell() {
               type="error"
               showIcon
               closable
-              message="数据加载异常"
+              message={needsLogin ? '需要重新登录' : '数据加载异常'}
               description={
-                <div className="alert-detail">
-                  <div>{state.error}</div>
-                  <div className="alert-detail__hint">{ERROR_HINTS}</div>
-                </div>
+                needsLogin ? (
+                  <div>登录状态已失效，重新登录就能继续使用，消息不会丢。</div>
+                ) : (
+                  <div className="alert-detail">
+                    <div>{state.error}</div>
+                    <div className="alert-detail__hint">{ERROR_HINTS}</div>
+                    <details className="alert-detail__dev">
+                      <summary>给技术同事的排查线索</summary>
+                      <div>{ERROR_HINTS_DEV}</div>
+                    </details>
+                  </div>
+                )
+              }
+              action={
+                needsLogin ? (
+                  <Button size="small" type="primary" onClick={() => navigate('/login')}>
+                    重新登录
+                  </Button>
+                ) : undefined
               }
               onClose={() => store.dismissError()}
             />

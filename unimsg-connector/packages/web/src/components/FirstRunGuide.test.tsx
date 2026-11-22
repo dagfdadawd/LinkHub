@@ -17,7 +17,6 @@ import { Platform } from '../types';
 const BASE_PROPS = {
   demoMode: false,
   messageCount: 0,
-  received: 0,
   accounts: ACCOUNTS,
   connection: 'connected' as const,
 };
@@ -58,18 +57,20 @@ describe('FirstRunGuide 客户化（白号 P0-1/P1-5）', () => {
     );
 
     expect(screen.getByTestId('first-run-guide')).toBeInTheDocument();
-    expect(screen.getByText('后端已连上，但还没有消息')).toBeInTheDocument();
+    expect(screen.getByText('欢迎使用 LinkHub')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /去连接账号/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /先体验演示（注入示例消息）/ })).toBeInTheDocument();
+    // 首屏不再出现「后端已连上」这类技术说法（问题④）
+    expect(document.body.textContent ?? '').not.toContain('后端已连上');
 
-    // 四平台当前通道：Mock 统一叫「演示模式」，不再出现「Mock 模拟」混用
+    // 四平台当前通道：演示模式不伪装成真实连接
     for (const platform of [Platform.FEISHU, Platform.DINGTALK, Platform.WECHAT, Platform.MAIL]) {
       expect(screen.getByTestId(`first-run-mode-${platform}`)).toBeInTheDocument();
     }
-    expect(screen.getByTestId('first-run-mode-feishu')).toHaveTextContent('飞书 · 真实接口');
+    expect(screen.getByTestId('first-run-mode-feishu')).toHaveTextContent('飞书 · 真实平台');
     expect(screen.getByTestId('first-run-mode-dingtalk')).toHaveTextContent('钉钉 · 演示模式');
     expect(screen.getByTestId('first-run-mode-wechat')).toHaveTextContent('微信 · 演示模式');
-    expect(screen.getByTestId('first-run-mode-mail')).toHaveTextContent('邮箱 · 真实接口');
+    expect(screen.getByTestId('first-run-mode-mail')).toHaveTextContent('邮箱 · 真实平台');
 
     // 开发者命令默认折叠，不在首屏直接铺开（展开后才可见）
     const devDetails = screen.getByText('开发者：命令行方式（可选）').closest('details');
@@ -125,9 +126,9 @@ describe('FirstRunGuide 客户化（白号 P0-1/P1-5）', () => {
     expect(screen.queryByTestId('first-run-guide')).not.toBeInTheDocument();
   });
 
-  it('加载失败（error）时不显示，绝不谎称「后端已连上」', () => {
+  it('加载失败（error）时不显示，绝不谎称已连接', () => {
     const { storage } = memoryStorage();
-    render(<FirstRunGuide {...BASE_PROPS} error="无法连接后端服务，请确认服务已启动" storage={storage} />);
+    render(<FirstRunGuide {...BASE_PROPS} error="无法连接 LinkHub 服务，请确认它还在运行" storage={storage} />);
     expect(screen.queryByTestId('first-run-guide')).not.toBeInTheDocument();
   });
 
@@ -137,9 +138,15 @@ describe('FirstRunGuide 客户化（白号 P0-1/P1-5）', () => {
     expect(screen.queryByTestId('first-run-guide')).not.toBeInTheDocument();
   });
 
-  it('后端已经收到过消息（received > 0）不显示', () => {
+  it('显示条件不再依赖进程级 received：重启后计数归零也只看当前账号消息数', () => {
     const { storage } = memoryStorage();
-    render(<FirstRunGuide {...BASE_PROPS} received={3} storage={storage} />);
+    // 旧实现要 received===0 才显示：成员账号（机器主人收到过消息、自己 0 条）会被误判
+    const { unmount } = render(<FirstRunGuide {...BASE_PROPS} storage={storage} />);
+    expect(screen.getByTestId('first-run-guide')).toBeInTheDocument();
+    unmount();
+
+    // 自己的账号有消息就隐藏（与进程级计数无关）
+    render(<FirstRunGuide {...BASE_PROPS} messageCount={2} storage={storage} />);
     expect(screen.queryByTestId('first-run-guide')).not.toBeInTheDocument();
   });
 
@@ -170,7 +177,7 @@ describe('FirstRunGuide 客户化（白号 P0-1/P1-5）', () => {
   it('实时连接异常时如实展示连接质量（不影响显示条件）', () => {
     const { storage } = memoryStorage();
     render(<FirstRunGuide {...BASE_PROPS} connection="reconnecting" storage={storage} />);
-    expect(screen.getByText('实时连接重连中')).toBeInTheDocument();
+    expect(screen.getByText('正在重新连接…')).toBeInTheDocument();
   });
 
   it('localStorage 读写抛错时不影响展示与关闭（隐私模式降级）', async () => {
@@ -192,16 +199,15 @@ describe('FirstRunGuide 客户化（白号 P0-1/P1-5）', () => {
 });
 
 describe('FirstRunGuide 判定与命令工具函数', () => {
-  it('shouldShowFirstRun 只在「真实后端 + 无消息 + 未关闭」时返回 true', () => {
-    const base = { demoMode: false, messageCount: 0, received: 0, dismissed: false };
+  it('shouldShowFirstRun 只在「真实服务 + 当前账号 0 条消息 + 未关闭」时返回 true', () => {
+    const base = { demoMode: false, messageCount: 0, dismissed: false };
     expect(shouldShowFirstRun(base)).toBe(true);
     expect(shouldShowFirstRun({ ...base, demoMode: true })).toBe(false);
     expect(shouldShowFirstRun({ ...base, messageCount: 1 })).toBe(false);
-    expect(shouldShowFirstRun({ ...base, received: 1 })).toBe(false);
     expect(shouldShowFirstRun({ ...base, dismissed: true })).toBe(false);
     // isEmptyFirstRun 与「知道了」无关：用于空收件箱时替换误导性的「没有匹配的消息」
-    expect(isEmptyFirstRun({ demoMode: false, messageCount: 0, received: 0 })).toBe(true);
-    expect(isEmptyFirstRun({ demoMode: true, messageCount: 0, received: 0 })).toBe(false);
+    expect(isEmptyFirstRun({ demoMode: false, messageCount: 0 })).toBe(true);
+    expect(isEmptyFirstRun({ demoMode: true, messageCount: 0 })).toBe(false);
   });
 
   it('readFirstRunDismissed 容错：无存储/标记缺失/抛错都按未关闭处理', () => {

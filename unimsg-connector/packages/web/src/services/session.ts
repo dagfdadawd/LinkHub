@@ -32,6 +32,17 @@ let accounts: Session[] = [];
 let activeToken: string | null = null;
 let current: Session | null = null;
 
+/**
+ * 「登录已经失效」标记（401 触发）。
+ *
+ * 为什么不能只靠「session 变 null」判断：本机账号库被重置/清空后，后端会认为
+ * 这台机器根本不要求登录，登录守卫按原规则会把用户放行——用户停在一个
+ * 只会弹「数据加载异常」的空页面上，既没数据也不知道该去登录。带上这个标记后，
+ * 守卫会明确把人送回登录页，并在登录页说明「登录已过期」。
+ * 重新登录成功（setSession）时自动清除。
+ */
+let authExpired = false;
+
 function isSession(value: unknown): value is Session {
   const s = value as Partial<Session> | null;
   return Boolean(s && typeof s.token === 'string' && s.token && s.user && typeof s.user.username === 'string');
@@ -135,6 +146,7 @@ export function currentToken(fallback: string): string {
  * 同一用户再登一次只保留最新令牌（位置不变），不会在菜单里出现两行同名账号。
  */
 export function setSession(session: Session): void {
+  authExpired = false;
   const index = accounts.findIndex((s) => s.user.id === session.user.id);
   const next = accounts.filter((s) => s.user.id !== session.user.id);
   if (index >= 0) next.splice(Math.min(index, next.length), 0, session);
@@ -176,7 +188,28 @@ export function removeSession(token: string): void {
 
 /** 退出全部账号（改密码、退出所有设备） */
 export function clearAllSessions(): void {
+  authExpired = false;
   commit([], null);
+}
+
+/**
+ * 标记「登录已失效」：httpApi 收到 401 且本地确有会话时调用（与用户主动退出区分开）。
+ * 只打标记，不清名单——由调用方紧接着 `clearSession()`，两者都会通知订阅者。
+ */
+export function markAuthExpired(): void {
+  if (authExpired) return;
+  authExpired = true;
+  emit();
+}
+
+/** 当前是否处于「登录已失效、等待重新登录」状态 */
+export function isAuthExpired(): boolean {
+  return authExpired;
+}
+
+/** React 订阅：登录过期后守卫/页面会自动刷新 */
+export function useAuthExpired(): boolean {
+  return useSyncExternalStore(subscribeSession, isAuthExpired, isAuthExpired);
 }
 
 export function subscribeSession(listener: Listener): () => void {
@@ -189,6 +222,7 @@ export function resetSessionForTest(): void {
   accounts = [];
   activeToken = null;
   current = null;
+  authExpired = false;
   try {
     window.localStorage.removeItem(STORAGE_KEY);
     window.localStorage.removeItem(LEGACY_KEY);

@@ -50,8 +50,8 @@ export function QuickStart({
       <p className="quickstart__title">还没有收到消息</p>
       <p className="quickstart__hint">
         {demoMode
-          ? '点下面按钮灌入一条演示消息，立刻看到完整闭环'
-          : '点下面的平台按钮，注入一条示例消息试试（走真实入站链路，不会真的发到平台）'}
+          ? '点下面的按钮放一条演示消息，立刻看到完整流程'
+          : '点下面的平台按钮，放一条示例消息试试（会真的收到一条示例消息，不会发到平台）'}
       </p>
 
       {demoMode ? (
@@ -62,7 +62,7 @@ export function QuickStart({
           onClick={() => void run('demo')}
         >
           <ThunderboltOutlined />
-          {busy === 'demo' ? '灌入中…' : '灌入一条演示消息'}
+          {busy === 'demo' ? '正在放入…' : '放一条演示消息'}
         </button>
       ) : (
         <div className="quickstart__grid">
@@ -81,7 +81,7 @@ export function QuickStart({
                   style={{ background: meta.color }}
                   aria-hidden="true"
                 />
-                {busy === platform ? '注入中…' : `注入${meta.name}示例`}
+                {busy === platform ? '正在放入…' : `放一条${meta.name}示例`}
               </button>
             );
           })}

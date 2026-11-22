@@ -9,8 +9,19 @@ import type { UnifiedMessage } from '../types';
 export type RealtimeStatus = 'connected' | 'reconnecting' | 'offline';
 
 export interface RealtimeEvent {
-  type: 'message.received' | 'message.updated' | 'message.failed' | 'connected';
+  /**
+   * heartbeat 是服务端每 25s 下发的应用层探活帧：
+   * 浏览器 JS 读不到 WebSocket 协议层 ping/pong，只能靠它判断「链路还在不在」。
+   * 客户端内部消费（刷新存活时间）后**不再向外分发**。
+   */
+  type: 'message.received' | 'message.updated' | 'message.failed' | 'connected' | 'heartbeat';
   data?: UnifiedMessage;
+  /**
+   * 仅 `connected` 帧携带：服务端是否支持应用层心跳。
+   * 旧后端没有这个字段 —— 前端此时不能按「静默超时」判断断链，
+   * 否则升级了前端、没升级后端的部署会每 75s 空重连一次。
+   */
+  heartbeat?: boolean;
 }
 
 export interface RealtimeClient {

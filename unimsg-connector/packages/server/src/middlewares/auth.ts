@@ -114,7 +114,7 @@ export function ownerOnly(svc: MessageService): RequestHandler {
     }
     res.status(403).json({
       ok: false,
-      error: '只有机器主人可以修改平台连接配置 / 导入账号；请让主人账号操作',
+      error: '这项设置管的是整台电脑上的平台连接，只有「主人账号」能改。请让主人账号操作，或换成主人账号再试。',
     });
   };
 }

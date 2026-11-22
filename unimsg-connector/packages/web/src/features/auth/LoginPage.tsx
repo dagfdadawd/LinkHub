@@ -25,7 +25,7 @@ import {
   UserOutlined,
 } from '@ant-design/icons';
 import { services, store } from '../../store';
-import { setSession, useSession } from '../../services/session';
+import { setSession, useAuthExpired, useSession } from '../../services/session';
 import type { AuthStatus } from '../../services/api';
 
 type Mode = 'login' | 'register' | 'reset';
@@ -67,6 +67,8 @@ export function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const session = useSession();
+  /** 登录过期/失效被送回来时，登录页要说清「为什么又要登录」 */
+  const authExpired = useAuthExpired();
   const [form] = Form.useForm();
   const [mode, setMode] = useState<Mode>('login');
   const [submitting, setSubmitting] = useState(false);
@@ -432,6 +434,13 @@ export function LoginPage() {
             {error ? (
               <p className="auth-error" role="alert" title={error}>
                 {error}
+              </p>
+            ) : authExpired ? (
+              <p className="auth-hint" role="status">
+                <InfoCircleOutlined aria-hidden="true" />
+                <span>
+                  登录已过期，请重新登录。账号还在，重新登录后消息都会回来。
+                </span>
               </p>
             ) : mode === 'register' && (needsInviteCode || !registrationOpen) ? (
               <p className="auth-hint" title={registration?.reason}>

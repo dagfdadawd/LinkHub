@@ -118,7 +118,7 @@ describe('状态 Tag / 推荐顺序 / 总进度', () => {
 
   it('dws 来源有中文说明', () => {
     expect(dwsSourceLabel('tools')).toContain('内置');
-    expect(dwsSourceLabel('missing')).toBe('未找到 dws');
+    expect(dwsSourceLabel('missing')).toBe('本机还没有');
     expect(dwsSourceLabel('anything')).toBe('来源未知');
   });
 });

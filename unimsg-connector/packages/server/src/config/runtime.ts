@@ -693,12 +693,12 @@ function reasonFor(
       : '邮箱轮询未启用（未配置任何账号 / 未显式开启 MAIL_ENABLED）→ 回退本地模拟（回写会标注"模拟发送"）';
   }
   if (mode === 'real') {
-    if (policy === 'real') return `已显式指定 ${MODE_ENV_KEYS[platform]}=real，强制走真实接口`;
+    if (policy === 'real') return `已明确设为「真实模式」：强制走真实接口`;
     return `${label}凭据可用 → auto 解析为真实接口`;
   }
-  if (policy === 'mock') return `已显式指定 ${MODE_ENV_KEYS[platform]}=mock，使用本地模拟`;
-  if (!cap.configured) return `${label}未配置有效凭据 → auto 回退本地模拟（回写会标注"模拟发送"）`;
-  return `${label}未完全就绪 → auto 回退本地模拟（回写会标注"模拟发送"）`;
+  if (policy === 'mock') return `已明确设为「演示模式」：不会连接真实平台`;
+  if (!cap.configured) return `${label}还没填好凭据 → 先用本地模拟（发送会标注「模拟发送」）`;
+  return `${label}还有配置没生效 → 先用本地模拟（发送会标注「模拟发送」）`;
 }
 
 /** 由凭据 + 策略解析出每平台运行时画像（纯函数，供 config / 测试 / doctor 使用） */
@@ -1233,7 +1233,7 @@ export function computeMailRuntimeAfterAccounts(args: {
   verifiedFileKeys: string[];
 }): { mode: 'real' | 'mock'; configured: boolean; canSend: boolean; canReceive: boolean; reason: string } {
   if (args.policy === 'mock') {
-    return { mode: 'mock', configured: false, canSend: false, canReceive: false, reason: 'MAIL_MODE=mock（显式关闭真实邮箱）' };
+    return { mode: 'mock', configured: false, canSend: false, canReceive: false, reason: '邮箱被设为演示模式：不会真的收信/发信' };
   }
   const usable = args.envAccounts.length + args.verifiedFileKeys.length;
   if (usable === 0) {
@@ -1244,6 +1244,6 @@ export function computeMailRuntimeAfterAccounts(args: {
   }
   return {
     mode: 'real', configured: true, canSend: true, canReceive: true,
-    reason: '有 ' + usable + ' 个可用邮箱账号（.env ' + args.envAccounts.length + ' / 已验证本地 ' + args.verifiedFileKeys.length + '）',
+    reason: '有 ' + usable + ' 个可用邮箱账号（部署配置 ' + args.envAccounts.length + ' 个 / 页面添加并验证 ' + args.verifiedFileKeys.length + ' 个）',
   };
 }

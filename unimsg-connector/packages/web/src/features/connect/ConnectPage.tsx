@@ -115,8 +115,8 @@ export function ConnectPage() {
         setError('');
       } else {
         setError(
-          '后端还没有提供授权中心接口（可能需要重启或升级后端）。'
-          + '可以先去「平台账号」页手动查看每个平台的状态。',
+          '暂时读不到连接状态（可能 LinkHub 版本较旧，或后台还没启动）。'
+          + '可以先到「平台账号」页手动查看各平台的状态。',
         );
       }
       try {
@@ -206,7 +206,7 @@ export function ConnectPage() {
       await store.refreshHealth();
       const config = await store.loadAppConfig();
       if (config.restartRequired) {
-        toast.warning('仍检测到配置未生效：请确认 LinkHub 已重启（或桌面版已重新加载）');
+        toast.warning('还没生效：请确认 LinkHub 已重新打开（桌面版可用菜单「配置 → 重新加载」）');
       } else {
         setShowRestart(false);
         setRestartApplied(true);
@@ -238,7 +238,7 @@ export function ConnectPage() {
     if (outcome.status === 'restart') {
       setConfigWarning(null);
       setShowRestart(true);
-      toast.warning('已保存，需要重启 LinkHub 后生效');
+      toast.warning('已保存，需要重新打开 LinkHub 后生效');
       return false;
     }
     if (outcome.status === 'ignored') {
@@ -301,7 +301,7 @@ export function ConnectPage() {
       if (result.ok) {
         toast.success('邮箱账号已验证，可以真实收信');
       } else {
-        toast.error(result.message ?? '验证失败：请检查邮箱授权码与 IMAP 设置');
+        toast.error(result.message ?? '验证失败：请检查邮箱授权码与收信设置');
       }
       await load(true);
     } catch (e) {
@@ -325,7 +325,7 @@ export function ConnectPage() {
   /** 打开外部链接：优先 window.open；被浏览器拦截时展示可点击链接（绝不静默失败） */
   function openLink(label: string, url?: string): void {
     if (!url) {
-      toast.warning('后端没有提供这个入口的链接，请到对应平台官网手动打开');
+      toast.warning('暂时没有这个入口的链接，请到对应平台官网手动打开');
       return;
     }
     let popup: Window | null = null;
@@ -346,7 +346,7 @@ export function ConnectPage() {
   async function copyText(text: string | undefined, what = '内容'): Promise<void> {
     const content = text?.trim();
     if (!content) {
-      toast.warning(`后端没有提供可复制的${what}`);
+      toast.warning(`暂时没有可复制的${what}`);
       return;
     }
     try {
@@ -497,7 +497,7 @@ export function ConnectPage() {
                 <span>{account.provider ? mailProviderLabel(account.provider) : account.label}</span>
               )}
               <Tag color={account.source === 'file' ? 'blue' : 'default'}>
-                {account.source === 'file' ? '本地' : '来自 .env'}
+                {account.source === 'file' ? '本地' : '来自部署配置'}
               </Tag>
               {account.verified === true && <Tag color="success">已验证</Tag>}
               {account.verified === false && <Tag color="warning">未验证</Tag>}
@@ -505,7 +505,7 @@ export function ConnectPage() {
             {account.source === 'file' ? (
               <Popconfirm
                 title="删除这个邮箱账号？"
-                description="只删除 LinkHub 本地保存的账号；.env 里的配置不受影响。"
+                description="只删除 LinkHub 里保存的账号；部署配置里的不受影响。"
                 okText="删除"
                 cancelText="取消"
                 onConfirm={() => void deleteMailAccount(account.key)}
@@ -521,7 +521,7 @@ export function ConnectPage() {
                 </Button>
               </Popconfirm>
             ) : (
-              <span className="mail-accounts__env-hint">不可在页面删除，请修改 .env 后重启</span>
+              <span className="mail-accounts__env-hint">不能在页面删除；请让管理员修改部署配置后重新打开 LinkHub</span>
             )}
             {account.verified === false && (
               <span className="mail-accounts__verify-hint">
@@ -665,7 +665,7 @@ export function ConnectPage() {
       actions.unshift({
         id: `${step.id}-configure`,
         kind: 'api',
-        label: step.id === 'feishu' ? '填写飞书应用凭据' : '填写微信 RPA 桥地址',
+        label: step.id === 'feishu' ? '填写飞书应用凭据' : '填写微信辅助程序地址（给管理员）',
       });
     }
     return actions;
@@ -850,8 +850,8 @@ export function ConnectPage() {
           className="connect-alert"
           type="info"
           showIcon
-          message="当前是纯前端演示模式（Mock），不会连接真实账号"
-          description="启动真实后端后，这里会显示各平台真实连接状态、可执行的动作与管理清单；演示模式不会伪造「已连接」。"
+          message="当前是前端演示模式：不会连接真实账号"
+          description="当前没有连上真实后台，这里不会伪造「已连接」；连上真实后台后，会显示各平台真实连接状态、可执行的动作与管理清单。"
         />
       )}
 
@@ -891,7 +891,7 @@ export function ConnectPage() {
           type="warning"
           showIcon
           closable
-          message="以下配置未生效（来自 .env）"
+          message="以下配置没有生效（由部署配置固定，页面改不了）"
           description={configWarning}
           onClose={() => setConfigWarning(null)}
         />
@@ -967,8 +967,8 @@ export function ConnectPage() {
           )}
 
           <p className="connect-page__footnote">
-            <CheckCircleOutlined /> 状态由本机后端实时探测；改完 .env 需要重启后端，平台状态才会更新。
-            本页不会显示任何 token 或邮箱授权码。
+            <CheckCircleOutlined /> 状态以 LinkHub 实时检测为准；改完部署配置要重新打开 LinkHub，平台状态才会更新。
+            本页不会显示任何密码、授权码或密钥。
           </p>
         </>
       )}

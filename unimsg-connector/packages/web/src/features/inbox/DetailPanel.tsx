@@ -363,7 +363,7 @@ export function DetailPanel({
     : replyIdentity === 'bot'
       ? '以机器人身份发出（本人账号未连接时自动兜底）'
       : replyIdentity === 'mock'
-        ? '演示模式：模拟发送，不会真的发到平台'
+        ? '演示模式：不会真的发到平台'
         : '';
 
   async function handleSend(attachments: OutboundAttachment[] = []) {
@@ -413,7 +413,7 @@ export function DetailPanel({
     try {
       const result = await store.reanalyze(message.traceId);
       if (result.message.intentSource !== 'llm') {
-        const reason = (result.llm.reason || '请检查 AI 模型配置并重启后端').slice(0, 220);
+        const reason = (result.llm.reason || '请检查 AI 模型设置后重新打开 LinkHub').slice(0, 220);
         toast.warning(`本次仍由关键词规则生成：${reason}`);
       }
     } catch (e) {
@@ -475,7 +475,7 @@ export function DetailPanel({
   async function copyTrace() {
     try {
       await navigator.clipboard.writeText(message.traceId);
-      toast.success('traceId 已复制');
+      toast.success('消息编号已复制');
     } catch {
       toast.info(message.traceId);
     }
@@ -633,13 +633,13 @@ export function DetailPanel({
     {
       key: 'trace',
       icon: <CopyOutlined />,
-      label: '复制 traceId',
+      label: '复制消息编号（技术用）',
       onClick: () => void copyTrace(),
     },
     {
       key: 'replay',
       icon: <HistoryOutlined />,
-      label: '全链路回放',
+      label: '查看消息全程记录',
       onClick: () => navigate(`/trace/${message.traceId}`),
     },
     ...(message.type === 'todo'
@@ -740,6 +740,19 @@ export function DetailPanel({
   };
 
   /**
+   * 线程渲染窗口：一个活跃群聊可能积累几千条消息，全量渲染气泡会让每次筛选 /
+   * 实时推送都掉帧（数据少时无感，重度用户最先撞上）。
+   * 只渲染最近 150 个事件节点（含回复），顶部按钮按整页回看更早消息——
+   * 数据一条不少，只是渲染延后；不做虚拟滚动，避免打断「往上翻找上下文」的语义。
+   */
+  const THREAD_PAGE_SIZE = 150;
+  const threadKey = message.conversation?.id ?? message.traceId;
+  const [threadLimit, setThreadLimit] = useState(THREAD_PAGE_SIZE);
+  useEffect(() => {
+    setThreadLimit(THREAD_PAGE_SIZE);
+  }, [threadKey]);
+
+  /**
    * 线程渲染顺序：**按事件发生时间升序**。
    * 一条入站消息 + 它的每一次回复都是独立事件，各自排序；
    * 只看 `reply` 单字段会让"后来的回复覆盖前一条"，对话框里永远只剩最后一句。
@@ -779,6 +792,35 @@ export function DetailPanel({
     return items.sort((a, b) => a.at - b.at);
   }, [visibleMessages]);
 
+  /**
+   * 锚点必可见：从搜索 / 回放深链打开的旧消息可能落在窗口外，
+   * 此时把窗口自动放宽到覆盖它——否则「点开的那条」在详情里根本看不到。
+   */
+  const anchorIndex = threadItems.findIndex((it) => it.node === 'msg' && it.m.traceId === message.traceId);
+  const anchorSpan = anchorIndex >= 0 ? threadItems.length - anchorIndex : 0;
+  const effectiveLimit = Math.max(threadLimit, anchorSpan);
+  useEffect(() => {
+    // 立即渲染用 effectiveLimit 兜底；这里把它固化下来，切换锚点后不会又缩回去
+    if (anchorSpan > threadLimit) setThreadLimit(anchorSpan);
+  }, [anchorSpan, threadLimit]);
+
+  const visibleThreadItems = threadItems.length > effectiveLimit
+    ? threadItems.slice(-effectiveLimit)
+    : threadItems;
+  const hiddenThreadItems = threadItems.length - visibleThreadItems.length;
+
+  /** 展开更早消息：新节点插在顶部，按高度差补偿 scrollTop，避免视线被顶走 */
+  const showEarlierMessages = (): void => {
+    const el = scrollRef.current;
+    const prevHeight = el?.scrollHeight ?? 0;
+    const prevTop = el?.scrollTop ?? 0;
+    setThreadLimit((n) => n + THREAD_PAGE_SIZE);
+    requestAnimationFrame(() => {
+      if (!el) return;
+      el.scrollTop = prevTop + (el.scrollHeight - prevHeight);
+    });
+  };
+
   const renderMessage = (m: UnifiedMessage) => {
     const out = isOut(m);
     const isAnchor = m.traceId === message.traceId;
@@ -801,7 +843,7 @@ export function DetailPanel({
               </div>
               <div className="bubble__meta bubble__meta--out">
                 {m.delivery?.mode === 'mock' ? (
-                  <span className="chip chip--warn">模拟发送</span>
+                  <span className="chip chip--warn">演示发送（不会真的发出）</span>
                 ) : (
                   /* 没有投递记录的出站消息 = 你在手机/桌面客户端上直接发的（钉钉回声识别）。
                      早先这里只认 delivery.identity，导致「手机发的前几条有本人、后几条没有」，
@@ -824,7 +866,7 @@ export function DetailPanel({
             className="chat-alert"
             type="warning"
             showIcon
-            message="OCR 置信度不足，已标记待人工确认"
+            message="图片 / 文件里的文字没认准，需要你亲自核对"
             description="请先人工核对图片 / 文件中的文字，再决定回复内容。"
           />
         )}
@@ -834,13 +876,13 @@ export function DetailPanel({
             className="chat-alert"
             type="error"
             showIcon
-            message="发送失败（已写入死信队列）"
+            message="发送失败（没有送达平台）"
             description={
               <div className="detail__fail">
                 <div className="detail__fail-reason">
                   {m.failureReason
                     ? `原因：${formatSendError(m.failureReason, account?.identity)}`
-                    : '暂未拿到可读原因，点「查看闭环日志」可看到完整错误。'}
+                    : '暂时没有可读的失败原因，点「查看详细记录」可以看到完整信息。'}
                 </div>
                 <div className="detail__fail-actions">
                   <Button
@@ -855,7 +897,7 @@ export function DetailPanel({
                     重试发送
                   </Button>
                   <Button size="small" onClick={() => navigate(`/trace/${m.traceId}`)}>
-                    查看闭环日志
+                    查看详细记录
                   </Button>
                   {!canRetry && (
                     <span className="detail__fail-hint">
@@ -1008,7 +1050,12 @@ export function DetailPanel({
 
           <div className="chat-scroll" ref={scrollRef} onScroll={handleChatScroll}>
             <div className="thread">
-              {threadItems.map((item) => (
+              {hiddenThreadItems > 0 && (
+                <button type="button" className="thread-more" onClick={showEarlierMessages}>
+                  查看更早的消息（还有 {hiddenThreadItems} 条）
+                </button>
+              )}
+              {visibleThreadItems.map((item) => (
                 item.node === 'reply' && item.entry
                   ? renderReplyBubble(item.m, item.entry, Boolean(item.isLatest))
                   : renderMessage(item.m)
@@ -1047,7 +1094,7 @@ export function DetailPanel({
 
               {/* 状态流转 + 消息信息：降级成可展开详情，不占阅读空间 */}
               <details className="detail__more">
-                <summary>更多信息（状态流转 / 会话 / 外部 ID / traceId / 投递方式）</summary>
+                <summary>更多信息（状态流转 / 会话 / 平台消息编号 / 消息编号 / 发送方式）</summary>
                 <dl className="meta-grid">
                   <div>
                     <dt>发送人</dt>
@@ -1070,7 +1117,7 @@ export function DetailPanel({
                     <dd>{TYPE_LABEL[message.type]}</dd>
                   </div>
                   <div>
-                    <dt>外部 ID</dt>
+                    <dt>平台消息编号</dt>
                     <dd className="mono">{message.externalId}</dd>
                   </div>
                   <div>
@@ -1098,7 +1145,7 @@ export function DetailPanel({
                     </dd>
                   </div>
                   <div className="meta-grid__wide">
-                    <dt>投递方式</dt>
+                    <dt>发送方式</dt>
                     <dd title={delivery.kind === 'none' ? undefined : delivery.text}>
                       {delivery.kind === 'none' ? (
                         '—'
@@ -1108,7 +1155,7 @@ export function DetailPanel({
                     </dd>
                   </div>
                   <div className="meta-grid__wide">
-                    <dt>traceId</dt>
+                    <dt>消息编号（技术用）</dt>
                     <dd className="mono">
                       {message.traceId}（{shortTrace(message.traceId)}）
                     </dd>

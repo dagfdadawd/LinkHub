@@ -1,5 +1,6 @@
 import { Router, type Request, type Response } from 'express';
 import { Platform, MsgStatus, type IdentityRole } from '@unimsg/shared';
+import { buildDemoSample, DEMO_INJECT_PLATFORMS, type DemoInjectPlatform } from '@unimsg/shared';
 import { MessageService, type Viewer } from '../services/message';
 import { listAccounts } from '../services/account';
 import { IdentityUnavailableError } from '../services/identity';
@@ -90,6 +91,47 @@ export function messagesRouter(svc: MessageService) {
     }
     const claimed = svc.claimUnowned(user.id);
     res.json({ ok: true, data: { claimed } });
+  });
+
+  /**
+   * 一键注入一条示例消息（空收件箱的「先体验演示」按钮）。
+   *
+   * 为什么必须是登录接口而不是直接打公共 webhook：
+   *  - webhook 收到的消息按机器级归属落到「机器主人」名下，普通账号点了按钮
+   *    只会收到「已注入」提示、收件箱依旧为空（非技术用户会以为功能坏了）；
+   *  - 这里复用同一份样例与同一条入库链路（幂等 / trace / 富化都不少），
+   *    唯一区别是把归属显式钉在**发起请求的账号**上。
+   */
+  r.post('/messages/demo', async (req: Request, res: Response) => {
+    const user = (req as AuthedRequest).user;
+    if (!user) {
+      res.status(400).json({
+        ok: false,
+        error: '需要先登录一个账号，示例消息才能放进你的收件箱',
+      });
+      return;
+    }
+    const platform = String((req.body as { platform?: unknown })?.platform ?? '');
+    if (!(DEMO_INJECT_PLATFORMS as string[]).includes(platform)) {
+      res.status(400).json({ ok: false, error: '请选择要注入的示例平台（飞书 / 钉钉 / 微信）' });
+      return;
+    }
+    const { body } = buildDemoSample(platform as DemoInjectPlatform, Date.now());
+    try {
+      const result = await svc.onPlatformEvent(platform as Platform, body, { ownerId: user.id });
+      res.status(201).json({
+        ok: true,
+        data: {
+          traceId: result.message?.traceId,
+          duplicate: result.duplicate ?? false,
+        },
+      });
+    } catch (e) {
+      res.status(500).json({
+        ok: false,
+        error: `示例消息没能放进收件箱：${e instanceof Error ? e.message : '未知错误'}`,
+      });
+    }
   });
 
   /**

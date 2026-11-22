@@ -132,11 +132,11 @@ describe('AppConfigModal（平台应用配置，白号 P0-1）', () => {
     expect(hoisted.store.saveAppConfig).toHaveBeenCalledWith({
       platforms: { dingtalk: { clientId: 'ding-123', clientSecret: 'secret-456' } },
     });
-    expect((await screen.findAllByText(/需要重启 LinkHub 生效/)).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText(/需要重新打开 LinkHub 才生效/)).length).toBeGreaterThan(0);
 
     // 模拟「已重启」：再拉配置时 restartRequired=false
     hoisted.store.loadAppConfig.mockResolvedValue(config());
-    fireEvent.click(screen.getByRole('button', { name: /我已重启，重新检测/ }));
+    fireEvent.click(screen.getByRole('button', { name: /我已重新打开，重新检测/ }));
     expect(await screen.findByText('配置已生效', {}, { timeout: 5000 })).toBeInTheDocument();
   }, 15000);
 
@@ -166,7 +166,7 @@ describe('AppConfigModal（平台应用配置，白号 P0-1）', () => {
       expect(hoisted.store.saveAppConfig).toHaveBeenCalledWith({ identity: { dingtalk: 'user' } }),
     );
     expect(await screen.findByText(/已立即生效（无需重启）/)).toBeInTheDocument();
-    expect(screen.queryByText(/需要重启 LinkHub 生效/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/需要重新打开 LinkHub 才生效/)).not.toBeInTheDocument();
   });
 
   it('成对校验：只填 App ID 不填 App Secret 时给中文错误且不保存', async () => {
@@ -201,7 +201,7 @@ describe('AppConfigModal（平台应用配置，白号 P0-1）', () => {
     fireEvent.change(screen.getByLabelText('Client Secret'), { target: { value: 'secret-1' } });
     fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
 
-    expect(await screen.findByText(/部分配置来自 .env，未被本次保存覆盖/)).toBeInTheDocument();
+    expect(await screen.findByText(/部分配置由部署配置固定，本次保存没有覆盖/)).toBeInTheDocument();
   });
 });
 
@@ -280,7 +280,7 @@ describe('AppConfigModal 保存结果判定（二轮审计 P1-2）', () => {
     await user.click(await screen.findByRole('tab', { name: '微信（RPA）' }));
     const mode = await screen.findByLabelText('运行模式');
     fireEvent.mouseDown(mode);
-    await user.click(await screen.findByText('真实 RPA（real）'));
+    await user.click(await screen.findByText('真实操作微信（real）'));
     fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
 
     await waitFor(() =>

@@ -5,10 +5,11 @@ import userEvent from '@testing-library/user-event';
  * 用 vi.mock 隔离全局 store 单例（真实 store 会创建 WebSocket），
  * 以「状态驱动」的方式覆盖：真实后端空收件箱 → 显示 QuickStart；Mock 模式 / 有消息 / 加载失败 → 不显示。
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ACCOUNTS } from '../../services/mock/fixtures';
+import { resetSessionForTest, setSession } from '../../services/session';
 import { MsgStatus, Platform } from '../../types';
 import type { UnifiedMessage } from '../../types';
 
@@ -30,8 +31,11 @@ const hoisted = vi.hoisted(() => {
     demoMode: false,
     initialized: true,
     onboarding: null as null | { firstRun?: boolean; overall?: { ready: number; total: number } },
+    hasOlder: false,
+    loadingOlder: false,
   };
-  return { state };
+  const toast = { success: vi.fn(), error: vi.fn(), warning: vi.fn() };
+  return { state, toast };
 });
 
 vi.mock('../../hooks/useAppState', () => ({
@@ -67,6 +71,10 @@ vi.mock('../../store', () => ({
     refresh: vi.fn(async () => {}),
     refreshHealth: vi.fn(),
     simulateIncoming: vi.fn(),
+    // 问题②：真实服务下点「先体验演示」走带登录态的示例接口（消息归属当前账号）
+    injectDemo: vi.fn(async () => ({ traceId: 't-demo', duplicate: false })),
+    // 问题⑤：首屏只拉第一页，更早的消息按时间游标翻
+    loadOlder: vi.fn(async () => {}),
     armFailure: vi.fn(),
     refreshOnboarding: vi.fn(async () => null),
   },
@@ -80,7 +88,7 @@ vi.mock('antd', async (importOriginal) => {
     // 给一个最小实现，避免拉取成功/失败分支因 toast 方法缺失变成 unhandled rejection。
     App: {
       useApp: () => ({
-        message: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
+        message: hoisted.toast,
       }),
     },
   };
@@ -118,6 +126,8 @@ function mockState(patch: Partial<typeof hoisted.state> = {}) {
     demoMode: false,
     initialized: true,
     onboarding: null,
+    hasOlder: false,
+    loadingOlder: false,
     ...patch,
   };
 }
@@ -139,16 +149,27 @@ function renderInboxPage(path = '/inbox') {
 
 beforeEach(() => {
   window.localStorage.clear();
+  // 会话是模块级单例（localStorage 持久化）：每个用例都从「未登录」开始
+  resetSessionForTest();
+  vi.clearAllMocks();
+});
+
+afterEach(() => {
+  resetSessionForTest();
+  vi.unstubAllGlobals();
 });
 
 describe('InboxPage 首启空态接线', () => {
-  it('真实后端 + 空收件箱：首屏只给客户引导（去连接账号 / 先体验演示），不再堆叠三重引导', () => {
-    mockState({ demoMode: false, accounts: ACCOUNTS, health: { received: 0 } });
+  it('真实服务 + 空收件箱：首屏只给客户引导（去连接账号 / 先体验演示），不再堆叠三重引导', () => {
+    // 旧实现依赖 health.received===0 才显示引导：这里故意让进程计数非 0，
+    // 验证成员账号的空收件箱仍能看到引导（问题④）
+    mockState({ demoMode: false, accounts: ACCOUNTS, health: { received: 7 } });
     renderInboxPage();
 
     // P1-3 / P0-1：首启引导必须真的渲染到页面上，且不再把开发者命令铺在首屏
     expect(screen.getByTestId('first-run-guide')).toBeInTheDocument();
-    expect(screen.getByText('后端已连上，但还没有消息')).toBeInTheDocument();
+    expect(screen.getByText('欢迎使用 LinkHub')).toBeInTheDocument();
+    expect(document.body.textContent ?? '').not.toContain('后端已连上');
     expect(screen.getAllByRole('button', { name: /去连接账号/ }).length).toBeGreaterThan(0);
     expect(
       screen.getAllByRole('button', { name: /先体验演示（注入示例消息）/ }).length,
@@ -157,13 +178,102 @@ describe('InboxPage 首启空态接线', () => {
     // 首启引导还在时，空态不重复堆注入入口（P2-9）；只显示「还没有收到消息」+ 引导
     expect(screen.queryByTestId('quickstart')).not.toBeInTheDocument();
     expect(screen.getByText('还没有收到消息')).toBeInTheDocument();
-    expect(screen.queryByText('没有匹配的消息')).not.toBeInTheDocument();
+    // 不再显示误导性的「没有匹配的会话 / 换一个渠道或状态」
+    expect(screen.queryByText('没有匹配的会话')).not.toBeInTheDocument();
     expect(screen.queryByText('清空筛选')).not.toBeInTheDocument();
 
     // 点「知道了」后引导收起，空态恢复一键注入入口
     fireEvent.click(screen.getByRole('button', { name: '知道了' }));
     expect(screen.queryByTestId('first-run-guide')).not.toBeInTheDocument();
     expect(screen.getByTestId('quickstart')).toBeInTheDocument();
+  });
+
+  it('新账号（已登录、0 条消息、无筛选）：显示「这个账号还没有消息」和可点的注入入口', async () => {
+    setSession({
+      token: 'token-member',
+      user: { id: 'u-member', username: 'member', displayName: '成员', createdAt: '2026-11-01T00:00:00.000Z' },
+    });
+    mockState({ demoMode: false, accounts: ACCOUNTS });
+    renderInboxPage();
+
+    expect(screen.getByText('这个账号还没有消息')).toBeInTheDocument();
+    expect(
+      screen.getByText(/点下面按钮注入一条示例消息试试。/),
+    ).toBeInTheDocument();
+    // 不再把「没归属给我」当成空收件箱的原因（问题②/④）
+    expect(screen.queryByText('没有匹配的会话')).not.toBeInTheDocument();
+    expect(screen.queryByText(/认领无主的历史消息/)).not.toBeInTheDocument();
+
+    const { store } = await import('../../store');
+    fireEvent.click(screen.getByRole('button', { name: /注入一条飞书示例消息/ }));
+    await vi.waitFor(() => expect(store.injectDemo).toHaveBeenCalledWith(Platform.FEISHU));
+    expect(hoisted.toast.success).toHaveBeenCalledWith('已注入一条飞书示例消息，就在当前账号的收件箱里');
+  });
+
+  it('点「先体验演示」：走登录态的示例接口（消息归属当前账号），提示里不出现 webhook / API', async () => {
+    const { store } = await import('../../store');
+    mockState({ demoMode: false, accounts: ACCOUNTS });
+    renderInboxPage();
+
+    fireEvent.click(screen.getByRole('button', { name: /先体验演示（注入示例消息）/ }));
+
+    await vi.waitFor(() => expect(store.injectDemo).toHaveBeenCalledWith(Platform.FEISHU));
+    expect(hoisted.toast.success).toHaveBeenCalledWith('已注入一条飞书示例消息，就在当前账号的收件箱里');
+    const shown = String(hoisted.toast.success.mock.calls[0][0]);
+    expect(shown).not.toMatch(/webhook|API|后端/i);
+  });
+
+  it('旧版本服务没有示例接口（404）：回退公开 webhook 注入并提示已注入，不把 404 抛给用户', async () => {
+    const { store } = await import('../../store');
+    vi.mocked(store.injectDemo).mockRejectedValueOnce(
+      Object.assign(new Error('资源不存在'), { status: 404 }),
+    );
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => new Response('{"ok":true}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    mockState({ demoMode: false, accounts: ACCOUNTS });
+    renderInboxPage();
+
+    fireEvent.click(screen.getByRole('button', { name: /先体验演示（注入示例消息）/ }));
+
+    await vi.waitFor(() => expect(store.refresh).toHaveBeenCalled());
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(vi.mocked(fetchMock).mock.calls[0][0])).toContain('/api/webhook/feishu');
+    expect(hoisted.toast.success).toHaveBeenCalledWith('已注入一条飞书示例消息');
+    expect(hoisted.toast.error).not.toHaveBeenCalled();
+  });
+
+  it('注入失败（非 404）：给人话错误提示，不假装成功', async () => {
+    const { store } = await import('../../store');
+    vi.mocked(store.injectDemo).mockRejectedValueOnce(
+      new Error('示例消息没能放进收件箱：服务繁忙'),
+    );
+    mockState({ demoMode: false, accounts: ACCOUNTS });
+    renderInboxPage();
+
+    fireEvent.click(screen.getByRole('button', { name: /先体验演示（注入示例消息）/ }));
+
+    await vi.waitFor(() =>
+      expect(hoisted.toast.error).toHaveBeenCalledWith(
+        '没能注入示例消息：示例消息没能放进收件箱：服务繁忙',
+      ),
+    );
+    expect(hoisted.toast.success).not.toHaveBeenCalled();
+  });
+
+  it('有更早的消息：会话列表下方显示「加载更早的消息」，点击调用 store.loadOlder', async () => {
+    const { store } = await import('../../store');
+    mockState({ messages: [MESSAGE], accounts: ACCOUNTS, hasOlder: true });
+    renderInboxPage();
+
+    const button = screen.getByRole('button', { name: /加载更早的消息/ });
+    fireEvent.click(button);
+    expect(store.loadOlder).toHaveBeenCalledTimes(1);
+  });
+
+  it('没有更早的消息（hasOlder=false）：不显示「加载更早的消息」', () => {
+    mockState({ messages: [MESSAGE], accounts: ACCOUNTS, hasOlder: false });
+    renderInboxPage();
+    expect(screen.queryByRole('button', { name: /加载更早的消息/ })).not.toBeInTheDocument();
   });
 
   it('前端 Mock 演示模式：空收件箱不渲染注入入口（无平台可假装）', () => {
@@ -179,7 +289,7 @@ describe('InboxPage 首启空态接线', () => {
   });
 
   it('加载失败：不渲染注入入口，空态提示「消息加载失败」而不是「没收到消息」', () => {
-    mockState({ error: '无法连接后端服务，请确认服务已启动' });
+    mockState({ error: '无法连接 LinkHub 服务，请确认它还在运行' });
     renderInboxPage();
     expect(screen.queryByTestId('quickstart')).not.toBeInTheDocument();
     expect(screen.getByText('消息加载失败')).toBeInTheDocument();

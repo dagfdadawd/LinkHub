@@ -7,19 +7,24 @@
  *      · `requireLogin=true`（显式开启，或本机已经建过账号）→ 跳 /login；
  *      · 否则（纯前端 Mock / 旧后端 / 还没建账号）→ 直接放行，演示照旧可用。
  *
- * 会话过期也在这里兜底：httpApi 收到 401 会清掉本地会话，本组件订阅到 session 变化后
- * 重新求值，用户会立刻被送回登录页而不是停在一个永远空白的收件箱。
+ * 会话失效（401）也在这里兜底：
+ *  - httpApi 收到 401 会打上 `markAuthExpired()` 并清掉本地会话；
+ *  - 本组件订阅会话与「已失效」标记，**只要标记在就强制去登录页**——
+ *    不能只等 `requireLogin`：账号库被重置/清空时后端会说「不要求登录」，
+ *    按旧逻辑会把用户放行到一个只会弹「数据加载异常」的空页面；
+ *  - 登录成功后 setSession 会清掉标记，用户自然回到正常页面。
  */
 import { useEffect, useState } from 'react';
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { Spin } from 'antd';
 import { services, store } from '../../store';
-import { useSession } from '../../services/session';
+import { useAuthExpired, useSession } from '../../services/session';
 
 type GateState = 'checking' | 'open' | 'login';
 
 export function AuthGate() {
   const session = useSession();
+  const expired = useAuthExpired();
   const location = useLocation();
   const [gate, setGate] = useState<GateState>(session ? 'open' : 'checking');
 
@@ -51,6 +56,17 @@ export function AuthGate() {
       alive = false;
     };
   }, [session]);
+
+  // 登录已失效：无论后端说要不要登录，都必须回登录页并说明原因
+  if (expired && !session) {
+    return (
+      <Navigate
+        to="/login"
+        replace
+        state={{ from: location.pathname, expired: true }}
+      />
+    );
+  }
 
   if (gate === 'login') {
     // 记住来路：登录成功后可以回到原来想看的页面

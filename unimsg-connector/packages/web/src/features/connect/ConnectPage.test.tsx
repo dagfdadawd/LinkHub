@@ -200,7 +200,7 @@ describe('连接账号页（授权中心）渲染', () => {
 
     expect(await screen.findByText('已就绪 1 / 4')).toBeInTheDocument();
     expect(screen.getByText(/按 邮箱 → 钉钉 → 飞书 → 微信 的顺序连接/)).toBeInTheDocument();
-    expect(screen.getByText(/内置 tools 目录/)).toBeInTheDocument();
+    expect(screen.getByText(/LinkHub 内置/)).toBeInTheDocument();
 
     const cards = Array.from(document.querySelectorAll('[data-testid^="connect-step-"]'));
     expect(cards.map((el) => el.getAttribute('data-testid'))).toEqual([
@@ -235,8 +235,8 @@ describe('连接账号页（授权中心）渲染', () => {
     expect(within(list).getByText('m***e@qq.com')).toBeInTheDocument();
     expect(within(list).getByText('z***n@163.com')).toBeInTheDocument();
     expect(within(list).getByText('本地')).toBeInTheDocument();
-    expect(within(list).getByText('来自 .env')).toBeInTheDocument();
-    expect(within(list).getByText(/不可在页面删除，请修改 .env 后重启/)).toBeInTheDocument();
+    expect(within(list).getByText('来自部署配置')).toBeInTheDocument();
+    expect(within(list).getByText(/不能在页面删除；请让管理员修改部署配置后重新打开 LinkHub/)).toBeInTheDocument();
     // env 来源没有删除按钮；file 来源有
     expect(within(list).getAllByRole('button', { name: /删\s*除/ })).toHaveLength(1);
 
@@ -265,7 +265,7 @@ describe('连接账号页（授权中心）渲染', () => {
       }),
     );
     renderPage();
-    expect(await screen.findByText(/当前是纯前端演示模式（Mock）/)).toBeInTheDocument();
+    expect(await screen.findByText(/当前是前端演示模式：不会连接真实账号/)).toBeInTheDocument();
     expect(screen.getByText('已就绪 0 / 4')).toBeInTheDocument();
     expect(screen.getAllByText('演示模式').length).toBe(4);
   });
@@ -274,7 +274,7 @@ describe('连接账号页（授权中心）渲染', () => {
     hoisted.store.refreshOnboarding.mockResolvedValue(null);
     renderPage();
     expect(await screen.findByText('授权中心暂不可用')).toBeInTheDocument();
-    expect(screen.getByText(/可能需要重启或升级后端/)).toBeInTheDocument();
+    expect(screen.getByText(/暂时读不到连接状态/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /重\s*试/ })).toBeInTheDocument();
   });
 });
@@ -451,7 +451,7 @@ describe('白号改造：缺凭据 / 一登即用 / 邮箱验证', () => {
     await waitFor(() =>
       expect(hoisted.store.saveAppConfig).toHaveBeenCalledWith({ modes: { mail: 'real' } }),
     );
-    expect(await screen.findByText(/需要重启 LinkHub 生效/)).toBeInTheDocument();
+    expect(await screen.findByText(/需要重新打开 LinkHub 才生效/)).toBeInTheDocument();
   });
 });
 
@@ -549,7 +549,7 @@ describe('二轮 UI 复验：钉钉登录时序 / 未登录提示 / .env 锁定'
     expect(footerClose).not.toBeNull();
     fireEvent.click(footerClose as HTMLElement);
     expect(hoisted.store.saveAppConfig).not.toHaveBeenCalled();
-    expect(screen.queryByText(/需要重启 LinkHub 生效/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/需要重新打开 LinkHub 才生效/)).not.toBeInTheDocument();
   });
 });
 
@@ -595,7 +595,7 @@ describe('二轮复验：身份热应用 / 飞书真实模式动作', () => {
       expect(hoisted.store.saveAppConfig).toHaveBeenCalledWith({ identity: { dingtalk: 'user' } }),
     );
     expect(await screen.findByText(/已立即生效（无需重启）/)).toBeInTheDocument();
-    expect(screen.queryByText(/需要重启 LinkHub 生效/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/需要重新打开 LinkHub 才生效/)).not.toBeInTheDocument();
   });
 
   it('feishu-mode-real：保存 modes.feishu=real 是静态键，走重启提示', async () => {
@@ -632,7 +632,7 @@ describe('二轮复验：身份热应用 / 飞书真实模式动作', () => {
     await waitFor(() =>
       expect(hoisted.store.saveAppConfig).toHaveBeenCalledWith({ modes: { feishu: 'real' } }),
     );
-    expect(await screen.findByText(/需要重启 LinkHub 生效/)).toBeInTheDocument();
+    expect(await screen.findByText(/需要重新打开 LinkHub 才生效/)).toBeInTheDocument();
   });
 });
 

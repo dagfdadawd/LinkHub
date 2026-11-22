@@ -109,10 +109,10 @@ export function AiSuggestion({
     : '较低';
   const sourceLabel = sourceIsLlm
     ? (message.aiProvider ? `${message.aiProvider} 识别` : '大模型识别')
-    : '规则兜底';
+    : '关键词规则';
   const sourceTitle = sourceIsLlm
     ? `由真实大模型识别${message.aiModel ? `（模型 ${message.aiModel}）` : ''}${lowPrecision ? '；本次信息量较少，属低精度结果' : ''}`
-    : '真实模型不可用，已回退关键词规则';
+    : 'AI 模型暂时不可用，已改用关键词规则';
 
   /** 建议动作：按现有状态做确定性推断，不是模型输出，所以单独标注 */
   const nextAction = message.needsReview
@@ -120,7 +120,7 @@ export function AiSuggestion({
     : message.done
       ? '已处理完成，无需再跟进'
       : message.reply
-        ? '已回写，如需补充可继续发送'
+        ? '已回复，如需补充可继续发送'
         : '待回复';
 
   async function copyDraft() {
@@ -142,7 +142,7 @@ export function AiSuggestion({
       onClick: onMarkRead,
     },
     onMarkDone && { key: 'done', icon: <CheckOutlined />, label: '标记完成', onClick: onMarkDone },
-    onTrace && { key: 'trace', icon: <HistoryOutlined />, label: '全链路回放', onClick: onTrace },
+    onTrace && { key: 'trace', icon: <HistoryOutlined />, label: '查看消息全程记录', onClick: onTrace },
   ].filter(Boolean) as Array<{ key: string; icon: ReactNode; label: string; onClick: () => void }>;
 
   return (
@@ -153,7 +153,7 @@ export function AiSuggestion({
         </span>
         <span className="ai-panel__titles">
           <span className="ai-panel__title">AI 智能助手</span>
-          <span className="ai-panel__sub">意图识别 · 回复建议 · 快捷操作</span>
+          <span className="ai-panel__sub">消息理解 · 回复建议 · 快捷操作</span>
         </span>
         {/* 重新分析作用于整条消息（意图 + 草稿），所以放在面板级，切标签也随时可用 */}
         <Tooltip title="用当前 AI 配置重新分析这条消息">
@@ -219,7 +219,7 @@ export function AiSuggestion({
             {tab === 'analyze' && (
               <>
                 <section className="ai-block" aria-label="消息理解">
-                  <h4 className="ai-block__label">意图识别</h4>
+                  <h4 className="ai-block__label">消息意图</h4>
                   <div className="ai-intent">
                     {pending ? (
                       <span className="ai-facts__muted">分析中…</span>
@@ -236,7 +236,7 @@ export function AiSuggestion({
                         )}
                         {fallback && (
                           <span className="ai-facts__muted">
-                            {sourceIsLlm ? '信息不足，模型暂未归类' : '未识别，已回退未分类'}
+                            {sourceIsLlm ? '信息不足，模型暂未归类' : '没识别出来，暂归为「未分类」'}
                           </span>
                         )}
                       </>

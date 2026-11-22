@@ -108,7 +108,7 @@ export function MailAccountForm({
     } catch (e) {
       const failure: MailAccountTestResult = {
         ok: false,
-        message: e instanceof Error ? e.message : '测试连接失败，请检查后端服务',
+        message: e instanceof Error ? e.message : '测试连接失败，请检查 LinkHub 是否在运行',
       };
       setResult(failure);
       setTestedOk(false);
@@ -145,8 +145,8 @@ export function MailAccountForm({
       });
       message.success(
         testedOk
-          ? '邮箱账号已保存并生效（已通过测试验证，可直接真实收信；首轮只建立 UID 基线，不会导入历史邮件）。'
-          : '邮箱账号已保存为未验证账号：点「测试连接」验证通过后才会真实收信（首轮只建立 UID 基线，不会导入历史邮件）。',
+          ? '邮箱账号已保存并生效（已通过测试验证，可直接真实收信；第一次只从新邮件开始收，不会导入历史邮件）。'
+          : '邮箱账号已保存为未验证账号：点「测试连接」验证通过后才会真实收信（第一次只从新邮件开始收，不会导入历史邮件）。',
       );
       form.resetFields();
       form.setFieldsValue({
@@ -221,7 +221,7 @@ export function MailAccountForm({
         <Form.Item
           name="authCode"
           label="授权码"
-          extra="授权码不是邮箱登录密码：在服务商网页版「设置 → 账户 / 安全」里开启 IMAP 并生成；点右侧眼睛图标可显示。"
+          extra="授权码不是邮箱登录密码：在服务商网页版「设置 → 账户 / 安全」里开启收信服务（IMAP）并生成；点右侧眼睛图标可显示。"
           rules={[{ required: true, message: '请填写邮箱授权码（不是登录密码）' }]}
         >
           <Input.Password placeholder="粘贴邮箱授权码" autoComplete="off" />
@@ -234,37 +234,37 @@ export function MailAccountForm({
           items={[
             {
               key: 'advanced',
-              label: '高级设置（IMAP / SMTP 服务器）',
+              label: '高级设置（收信 / 发信服务器，一般不用改）',
               // 折叠时也保持字段注册：测试连接 / 保存需要平台预设的服务器与端口
               forceRender: true,
               children: (
                 <div className="mail-form__grid">
                   <Form.Item
                     name="imapHost"
-                    label="IMAP 服务器"
+                    label="收信服务器地址"
                     rules={
                       provider === 'custom'
-                        ? [{ required: true, message: '请填写 IMAP 服务器地址' }]
+                        ? [{ required: true, message: '请填写收信服务器地址' }]
                         : []
                     }
                   >
                     <Input placeholder="imap.example.com" />
                   </Form.Item>
-                  <Form.Item name="imapPort" label="IMAP 端口">
+                  <Form.Item name="imapPort" label="收信端口">
                     <InputNumber min={1} max={65535} style={{ width: '100%' }} />
                   </Form.Item>
                   <Form.Item
                     name="smtpHost"
-                    label="SMTP 服务器"
+                    label="发信服务器地址"
                     rules={
                       provider === 'custom'
-                        ? [{ required: true, message: '请填写 SMTP 服务器地址' }]
+                        ? [{ required: true, message: '请填写发信服务器地址' }]
                         : []
                     }
                   >
                     <Input placeholder="smtp.example.com" />
                   </Form.Item>
-                  <Form.Item name="smtpPort" label="SMTP 端口">
+                  <Form.Item name="smtpPort" label="发信端口">
                     <InputNumber min={1} max={65535} style={{ width: '100%' }} />
                   </Form.Item>
                 </div>
@@ -285,13 +285,12 @@ export function MailAccountForm({
             <div>
               <div>
                 {result.ok
-                  ? (result.message ?? 'IMAP / SMTP 登录成功。')
-                  : (result.message ?? '请检查邮箱地址、授权码（不是登录密码）与服务商 IMAP 设置。')}
+                  ? (result.message ?? '收信 / 发信服务器都登录成功。')
+                  : (result.message ?? '请检查邮箱地址、授权码（不是登录密码）和邮箱服务商的收信设置。')}
               </div>
               {!result.ok && (
                 <div className="mail-form__hint-source">
-                  这是页面添加的账号：请核对邮箱地址 / 授权码 / IMAP 服务器；
-                  如果是 .env 里的旧账号，请修改 .env 后重启后端。
+                  请核对邮箱地址、授权码（不是登录密码）和收信服务器；如果是部署配置里的旧账号，请让管理员修改后重新打开 LinkHub。
                 </div>
               )}
               {result.details && result.details.length > 0 && (
@@ -333,7 +332,7 @@ export function MailAccountForm({
         )}
       </div>
       <div className="mail-form__note">
-        <LinkOutlined /> 保存后立即生效（首轮只建立 UID 基线，不会导入历史邮件）；授权码只发送给本机后端，不会写进浏览器存储。
+        <LinkOutlined /> 保存后立即生效（第一次只从新邮件开始收，不会导入历史邮件）；授权码只发送给本机 LinkHub，不会写进浏览器存储。
       </div>
     </div>
   );

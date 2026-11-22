@@ -219,7 +219,7 @@ test('mode：显式 mock 即使有凭据也走本地模拟（绝不偷偷打真�
   });
   assert.equal(rt[Platform.FEISHU].mode, 'mock');
   assert.equal(rt[Platform.FEISHU].policy, 'mock');
-  assert.match(rt[Platform.FEISHU].reason, /显式指定/);
+  assert.match(rt[Platform.FEISHU].reason, /演示模式/);
 });
 
 test('mode：微信 auto 恒为 mock（桥地址有默认值，不能因“凭据齐全”误判真实）；显式 real 才 real', () => {
@@ -326,7 +326,7 @@ test('capability：邮箱有账号 → 收发均 ✓；MAIL_ENABLED=false 时只
 test('capability：邮箱一个账号都没配时，reason 不误报 MAIL_ENABLED=false', () => {
   const rt = runtimeOf({}, { mailAccounts: [], mailEnabled: false });
   assert.doesNotMatch(rt[Platform.MAIL].reason, /MAIL_ENABLED=false/);
-  assert.match(rt[Platform.MAIL].reason, /未配置|未就绪/);
+  assert.match(rt[Platform.MAIL].reason, /还没填好|没生效/);
 });
 
 test('readPlatformCredentials：旧钉钉变量名兼容 + baseUrl 可覆盖并可去尾斜杠', () => {

@@ -257,7 +257,7 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
   }
 
   const localBackendText = state.demoMode
-    ? '演示模式（未接后端）'
+    ? '演示模式（未连接后台）'
     : state.error
       ? '连接异常'
       : state.connection === 'connected'
@@ -694,7 +694,7 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
                 ) : (
                   <>
                     <p className="set-hint">
-                      当前未登录（正在使用部署令牌，适合本机演示）。
+                      当前未登录（正在用演示访问方式，适合本机试用）。
                       登录后所有消息与发送记录都会归属到你的账号。
                     </p>
                     <Button type="primary" onClick={() => navigate('/login')}>
@@ -720,15 +720,15 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
                     <b>v{APP_VERSION}</b>
                   </div>
                   <div>
-                    <span>前端构建</span>
+                    <span>界面构建时间</span>
                     <b className="mono">{BUILD_TIME}</b>
                   </div>
                   <div>
-                    <span>接口地址</span>
+                    <span>服务地址</span>
                     <b className="mono">{API_BASE || '未配置（前端演示模式）'}</b>
                   </div>
                   <div>
-                    <span>本地后端</span>
+                    <span>本机服务</span>
                     <b>{localBackendText}</b>
                   </div>
                   <div>

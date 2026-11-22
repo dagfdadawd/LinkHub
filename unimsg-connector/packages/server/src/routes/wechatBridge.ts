@@ -2,7 +2,7 @@
  * A 形态（后端与微信桌面端同机）的微信 RPA 桥管理接口。
  * 只允许本机回环；启动参数由服务端固定，前端不能传命令。
  */
-import { Router, type Request, type Response } from 'express';
+import { Router, type Request, type RequestHandler, type Response } from 'express';
 import {
   wechatBridgeManager,
   type WechatBridgeManager,
@@ -12,7 +12,7 @@ function fail(res: Response, e: unknown): void {
   res.status(500).json({ ok: false, error: e instanceof Error ? e.message : String(e) });
 }
 
-export function wechatBridgeRouter(manager: WechatBridgeManager = wechatBridgeManager()): Router {
+export function wechatBridgeRouter(manager: WechatBridgeManager = wechatBridgeManager(), guard?: RequestHandler): Router {
   const r = Router();
 
   r.get('/wechat/bridge/status', async (_req: Request, res: Response) => {
@@ -24,7 +24,8 @@ export function wechatBridgeRouter(manager: WechatBridgeManager = wechatBridgeMa
     }
   });
 
-  r.post('/wechat/bridge/start', async (_req: Request, res: Response) => {
+  // 读状态对所有登录用户开放；启停是本机级能力，只有机器主人能操作
+  r.post('/wechat/bridge/start', ...(guard ? [guard] : []), async (_req: Request, res: Response) => {
     try {
       const data = await manager.start();
       res.status(data.started || data.alreadyRunning ? 200 : 409).json({
@@ -37,7 +38,7 @@ export function wechatBridgeRouter(manager: WechatBridgeManager = wechatBridgeMa
     }
   });
 
-  r.post('/wechat/bridge/stop', async (_req: Request, res: Response) => {
+  r.post('/wechat/bridge/stop', ...(guard ? [guard] : []), async (_req: Request, res: Response) => {
     try {
       const data = await manager.stop();
       res.status(data.stopped ? 200 : 409).json({

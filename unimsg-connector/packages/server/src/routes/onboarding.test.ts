@@ -140,7 +140,7 @@ test('GET /api/onboarding：WECHAT_MODE=real 但桥连不上 → 微信步骤 ne
     assert.equal(wechat.state, 'needs_install', '桥没起来时不能给 ready');
     assert.equal(wechat.detail.mode, 'real');
     assert.equal(wechat.detail.bridge.reachable, false);
-    assert.match(wechat.summary, /连不上本机 RPA 桥/);
+    assert.match(wechat.summary, /连不上本机辅助程序/);
   } finally {
     real.mode = prevMode;
     config.platforms.wechat.bridgeUrl = prevUrl;

@@ -114,8 +114,11 @@ export function FeishuOAuthHelp({
       description={
         <div className="feishu-oauth-help" data-testid="feishu-oauth-unfinished">
           <p className="feishu-oauth-help__guide">{FEISHU_OAUTH_REDIRECT_GUIDE}</p>
+          <p className="feishu-oauth-help__guide">
+            下面的地址要填进飞书后台（普通用户不用管，可直接复制发给企业管理员）。
+          </p>
           <div className="feishu-oauth-help__uri">
-            <span className="feishu-oauth-help__label">本次真实回调地址：</span>
+            <span className="feishu-oauth-help__label">本次的回调地址：</span>
             {redirectUri ? (
               <Typography.Text className="mono" code data-testid="feishu-oauth-redirect-uri">
                 {redirectUri}

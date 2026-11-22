@@ -222,7 +222,7 @@ export class MessageService {
    * 平台原始事件入库：先由连接器 receive() 解析成统一消息，再走统一的幂等/入库通道。
    * 机器人 webhook / Stream 走这里。
    */
-  async ingest(platform: Platform, raw: unknown): Promise<IngestResult> {
+  async ingest(platform: Platform, raw: unknown, ownerId?: string): Promise<IngestResult> {
     // 入参守卫（P0）：空 body / 空对象必须在 receive、写 trace、写幂等表之前拒绝。
     // 旧实现里 mock 验签会放行 `{}`，receive 兜底出 externalId='unknown'，
     // 首条空事件就会永久占住去重键，后续真实消息也进不来。
@@ -232,7 +232,7 @@ export class MessageService {
 
     const connector = this.connectors[platform];
     const incoming = connector.receive(raw);
-    return this.ingestUnified(platform, incoming);
+    return this.ingestUnified(platform, incoming, ownerId);
   }
 
   /**
@@ -351,7 +351,7 @@ export class MessageService {
     return original ?? incoming;
   }
 
-  async ingestUnified(platform: Platform, incoming: UnifiedMessage): Promise<IngestResult> {
+  async ingestUnified(platform: Platform, incoming: UnifiedMessage, ownerId?: string): Promise<IngestResult> {
     // 平台侧唯一 ID 是幂等键的唯一来源：缺失/兜底成 'unknown' 时必须拒收，
     // 否则多条不同消息会互相去重（或占死 unknown 键）。
     const externalId = typeof incoming.externalId === 'string' ? incoming.externalId.trim() : '';
@@ -392,8 +392,11 @@ export class MessageService {
       return { message: echo, duplicate: true };
     }
 
-    // 平台连接是机器级的：收到的消息默认归属「机器主人」，没有主人时保持无主（等认领）
-    if (this.defaultOwnerId && !incoming.ownerId) incoming.ownerId = this.defaultOwnerId;
+    // 平台连接是机器级的：收到的消息默认归属「机器主人」，没有主人时保持无主（等认领）。
+    // `ownerId` 是显式归属（示例消息注入用）：演示消息只应出现在发起人的收件箱，
+    // 不能落到机器主人名下——否则普通账号点了「先体验演示」什么也看不到。
+    if (ownerId && !incoming.ownerId) incoming.ownerId = ownerId;
+    else if (this.defaultOwnerId && !incoming.ownerId) incoming.ownerId = this.defaultOwnerId;
 
     this.repo.save(incoming);
     counters.received += 1;
@@ -960,7 +963,7 @@ export class MessageService {
         m,
         'sent',
         result.mode === 'mock'
-          ? '模拟发送（本地 Mock，未调用真实平台接口）'
+          ? '模拟发送（本地演示，未调用真实平台接口）'
           : `真实接口${identityNote}${result.platformReply ? ` · ${result.platformReply}` : ''}`,
       );
       this.broadcast({ type: 'message.updated', data: m });
@@ -983,7 +986,7 @@ export class MessageService {
           this.repo,
           m,
           'synced',
-          result.mode === 'mock' ? '模拟状态回流（本地 Mock）' : '平台状态回流',
+          result.mode === 'mock' ? '模拟状态回流（本地演示）' : '平台状态回流',
         );
       } else {
         writeTrace(this.repo, m, 'synced', '发送已完成；状态已被人工前跳，不再回写 synced');
@@ -1102,7 +1105,7 @@ export class MessageService {
         m,
         'status_notified',
         result.mode === 'mock'
-          ? '模拟发送状态回执（本地 Mock，未调用真实平台接口）'
+          ? '模拟发送状态回执（本地演示，未调用真实平台接口）'
           : `真实发送状态回执${result.platformReply ? ` · ${result.platformReply}` : ''}`,
       );
       const latest = this.repo.get(id) ?? m;
@@ -1368,6 +1371,7 @@ export class MessageService {
   async onPlatformEvent(
     platform: Platform,
     raw: unknown,
+    opts: { ownerId?: string } = {},
   ): Promise<{ applied: boolean; message?: UnifiedMessage; duplicate?: boolean }> {
     // 用户身份发出的消息可能被机器人原样收回（飞书单聊必现）：
     // 在写 trace / 幂等表之前丢弃，避免自己给自己造一条新消息。
@@ -1383,7 +1387,7 @@ export class MessageService {
       const r = await this.syncStatus(target.traceId, d.platformStatus);
       return { applied: r.applied, message: r.message ?? this.repo.get(target.traceId) };
     }
-    const r = await this.ingest(platform, raw);
+    const r = await this.ingest(platform, raw, opts.ownerId);
     return { applied: true, message: r.message, duplicate: r.duplicate };
   }
 

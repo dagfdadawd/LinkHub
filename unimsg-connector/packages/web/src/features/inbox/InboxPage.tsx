@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { App as AntApp, Button, Input, Modal, Popover, Select, Skeleton } from 'antd';
-import { CloseOutlined, FilterOutlined, SearchOutlined, SyncOutlined } from '@ant-design/icons';
+import { CloseOutlined, FilterOutlined, PlayCircleOutlined, SearchOutlined, SyncOutlined } from '@ant-design/icons';
 import { useAppState } from '../../hooks/useAppState';
 import { useHotkeys } from '../../hooks/useHotkeys';
 import { store, services } from '../../store';
@@ -58,6 +58,14 @@ function focusReplyComposer() {
     return true;
   };
   if (!focus()) window.setTimeout(focus, 80);
+}
+
+/**
+ * 旧版本服务没有「带登录态的示例消息」接口（404）：只有这种情况才回退公开 webhook。
+ * 用 status 字段判断而不是 `instanceof ApiError`，避免页面层硬依赖 httpApi 实现。
+ */
+function isNotFoundError(e: unknown): boolean {
+  return typeof e === 'object' && e !== null && (e as { status?: unknown }).status === 404;
 }
 
 /**
@@ -354,21 +362,39 @@ export function InboxPage() {
   /** 打开会话：走共享元素转场；不支持的环境自动退化为普通跳转 */
   const openConversation = (id: string) => navigateWithMorph(navigate, `/inbox/${id}`);
 
-  /** 空态一键注入：真实后端走 webhook（真实入站链路），Mock 模式走本地模拟 */
+  /**
+   * 空态一键注入（问题②）：
+   *  - Mock 模式：本地模拟一条（没有真实平台可注入）；
+   *  - 真实服务：优先调带登录态的示例接口，消息归属**当前账号**，普通成员也能在自己的
+   *    收件箱里看到；只有旧版本服务没有该接口（404）时才回退公开 webhook（兜底）。
+   *  - 提示一律说人话，不出现 webhook / API / 后端 等字样。
+   */
   const handleInject = async (platform?: InjectPlatform) => {
+    const target = platform ?? Platform.FEISHU;
+    const label = PLATFORM_META[target].name;
     try {
       if (state.demoMode) {
         await store.simulateIncoming();
         return;
       }
-      // 真实后端：未指定平台时默认注入一条飞书示例（与首启 CTA 对应）
-      const target = platform ?? Platform.FEISHU;
-      const base = import.meta.env.VITE_API_BASE ?? '';
-      await injectSample(target, injectSeq.current++, base);
-      await store.refresh();
-      toast.success(`已注入一条${PLATFORM_META[target].name}消息`);
+      try {
+        const result = await store.injectDemo(target);
+        toast.success(
+          result.duplicate
+            ? `已有一条${label}示例消息在收件箱里，可以直接打开查看`
+            : `已注入一条${label}示例消息，就在当前账号的收件箱里`,
+        );
+        return;
+      } catch (e) {
+        if (!isNotFoundError(e)) throw e;
+        // 旧版本服务：退回公开 webhook，消息会归到这台电脑的主人账号
+        const base = import.meta.env.VITE_API_BASE ?? '';
+        await injectSample(target, injectSeq.current++, base);
+        await store.refresh();
+        toast.success(`已注入一条${label}示例消息`);
+      }
     } catch (e) {
-      toast.error(`注入失败：${e instanceof Error ? e.message : '未知错误'}`);
+      toast.error(`没能注入示例消息：${e instanceof Error ? e.message : '请稍后重试'}`);
     }
   };
 
@@ -473,16 +499,19 @@ export function InboxPage() {
     },
   });
 
+  /**
+   * 空收件箱（问题④）：只看「真实服务 + 当前账号 0 条消息」，不再看进程级的
+   * `health.received`。那个计数统计的是整台机器收到的消息（可能是别人的账号），
+   * 重启后还会归零，拿它判断会让成员账号既看不到引导、又显示「没有匹配的会话」。
+   */
   const isEmptyInbox = isEmptyFirstRun({
     demoMode: state.demoMode,
     messageCount: state.messages.length,
-    received: state.health?.received ?? 0,
   });
   // 首启 3 步引导是否正在展示（决定空态是否再叠加注入入口，避免三重引导）
   const firstRunVisible = shouldShowFirstRun({
     demoMode: state.demoMode,
     messageCount: state.messages.length,
-    received: state.health?.received ?? 0,
     dismissed: firstRunDismissed,
   });
 
@@ -541,13 +570,22 @@ export function InboxPage() {
     state.error ? (
       <EmptyState
         title="消息加载失败"
-        description="按上方错误提示排查后端（是否启动、端口与 token 是否一致）后刷新页面重试。"
+        description="按上方提示确认 LinkHub 服务在运行、网络正常后刷新页面重试。"
       />
-    ) : isEmptyInbox ? (
+    ) : isEmptyInbox && !hasFilter ? (
       session ? (
         <EmptyState
-          title="这个账号下还没有消息"
-          description="历史消息如果还没归属到你，请到「设置 → 账号 → 数据归属」点「认领无主的历史消息」。"
+          title="这个账号还没有消息"
+          description="点下面按钮注入一条示例消息试试。若这台电脑连着平台账号，新收到的消息会先归到主人账号。"
+          action={
+            <Button
+              type="primary"
+              icon={<PlayCircleOutlined />}
+              onClick={() => void handleInject()}
+            >
+              注入一条飞书示例消息
+            </Button>
+          }
         />
       ) : firstRunVisible ? (
         <EmptyState
@@ -638,6 +676,20 @@ export function InboxPage() {
         </section>
       )}
 
+      {/* 分页（问题⑤）：首屏只拉第一页，更早的消息用时间游标往下翻。
+          过滤/搜索时也保留入口——分页是数据层，和本地筛选互不影响。 */}
+      {!previewMode && state.hasOlder && state.messages.length > 0 && (
+        <div className="conv-list__older">
+          <Button
+            size="small"
+            loading={state.loadingOlder}
+            onClick={() => void store.loadOlder()}
+          >
+            加载更早的消息
+          </Button>
+        </div>
+      )}
+
       <div className="list-summary">
         <span>
           共 {filteredConversations.length} 个会话 · {filteredMessageCount} 条消息
@@ -663,11 +715,10 @@ export function InboxPage() {
           selfServiceCount={needsAuthCount}
         />
       )}
-      {/* 首启 3 步引导：真实后端 + 无消息时显示（组件内部含「知道了」记忆与严格显示条件） */}
+      {/* 首启 3 步引导：真实服务 + 当前账号无消息时显示（组件内部含「知道了」记忆与严格显示条件） */}
       <FirstRunGuide
         demoMode={state.demoMode}
         messageCount={state.messages.length}
-        received={state.health?.received ?? 0}
         accounts={state.accounts}
         connection={state.connection}
         apiBase={import.meta.env.VITE_API_BASE}

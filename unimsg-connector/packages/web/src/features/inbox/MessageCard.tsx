@@ -167,8 +167,8 @@ export function MessageCard({
             <button
               type="button"
               className="msg-action"
-              aria-label="全链路回放"
-              title="全链路回放"
+              aria-label="查看消息全程记录"
+              title="查看消息全程记录"
               onClick={isolate(onTrace)}
             >
               <HistoryOutlined />

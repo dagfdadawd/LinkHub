@@ -125,6 +125,34 @@ describe('HttpApi', () => {
     expect(await api.get('missing')).toBeUndefined();
   });
 
+  it('injectDemo：POST /api/messages/demo 带登录态，解包 201 的 { traceId, duplicate }', async () => {
+    const fn = mockFetch(
+      jsonResponse({ ok: true, data: { traceId: 't-demo', duplicate: false } }, 201),
+    );
+    const api = new HttpApi(BASE, () => 'session-token');
+
+    const result = await api.injectDemo(Platform.FEISHU);
+
+    expect(result).toEqual({ traceId: 't-demo', duplicate: false });
+    const [url, init] = callArgs(fn);
+    expect(url).toBe(`${BASE}/api/messages/demo`);
+    expect(init.method).toBe('POST');
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer session-token');
+    expect(JSON.parse(String(init.body))).toEqual({ platform: Platform.FEISHU });
+  });
+
+  it('injectDemo：旧服务没有该接口（404）时抛带 status 的错误，供页面回退', async () => {
+    mockFetch(jsonResponse({ ok: false, error: 'not found' }, 404));
+    const api = new HttpApi(BASE, TOKEN);
+    await expect(api.injectDemo(Platform.FEISHU)).rejects.toMatchObject({ status: 404 });
+  });
+
+  it('injectDemo：后端缺 duplicate 字段时按 false 处理，不把 undefined 传给界面', async () => {
+    mockFetch(jsonResponse({ ok: true, data: { traceId: 't-demo' } }, 201));
+    const api = new HttpApi(BASE, TOKEN);
+    expect(await api.injectDemo(Platform.DINGTALK)).toEqual({ traceId: 't-demo', duplicate: false });
+  });
+
   it('reply：POST text，解包 202 的 { message, taskId }', async () => {
     const fn = mockFetch(
       jsonResponse({ ok: true, message: message({ status: MsgStatus.REPLIED }), taskId: 't-1' }, 202),
@@ -480,7 +508,7 @@ describe('HttpApi', () => {
     const api = new HttpApi(BASE, TOKEN);
     await expect(api.list()).rejects.toMatchObject({
       name: 'ApiError',
-      message: expect.stringContaining('超时'),
+      message: expect.stringContaining('等太久'),
     });
   });
 });
@@ -514,7 +542,7 @@ describe('授权中心 / 邮箱账号接口', () => {
   it('onboarding：后端没有 data.steps 时抛中文错误（不把 undefined 传给页面）', async () => {
     mockFetch(jsonResponse({ ok: true, data: {} }));
     const api = new HttpApi(BASE, TOKEN);
-    await expect(api.onboarding()).rejects.toThrow(/未返回授权中心数据/);
+    await expect(api.onboarding()).rejects.toThrow(/没有返回授权中心数据/);
   });
 
   it('mailAccounts：兼容 data 数组 / data.accounts 包法，并过滤无 key 条目', async () => {
@@ -791,6 +819,32 @@ describe('GET /api/app-config 契约对齐（二轮审计 P3 #8）', () => {
     expect(result.message.intent).toBe('待办');
     expect(result.llm.mode).toBe('real');
     expect(result.llm.providerLabel).toBe('火山方舟');
+  });
+
+  it('reanalyze：慢端点放宽到 60s（普通请求仍 8s，避免把「慢」误判成「挂」）', async () => {
+    mockFetch(jsonResponse({ ok: true, data: message({ intent: '待办' }) }));
+    const api = new HttpApi(BASE, TOKEN);
+    const spy = vi.spyOn(globalThis, 'setTimeout');
+
+    await api.reanalyze('t-1');
+
+    const delays = spy.mock.calls.map((c) => c[1]);
+    expect(delays).toContain(60_000);
+    expect(delays).not.toContain(8_000);
+    spy.mockRestore();
+  });
+
+  it('runDoctor：自检串行探针放宽到 300s（邮箱 50s/账号 + LLM 20s，8s 必然先 abort）', async () => {
+    mockFetch(jsonResponse({ ok: true, data: { generatedAt: '2026-11-23T00:00:00.000Z', checks: [] } }));
+    const api = new HttpApi(BASE, TOKEN);
+    const spy = vi.spyOn(globalThis, 'setTimeout');
+
+    await api.runDoctor();
+
+    const delays = spy.mock.calls.map((c) => c[1]);
+    expect(delays).toContain(300_000);
+    expect(delays).not.toContain(8_000);
+    spy.mockRestore();
   });
 
   it('reanalyze：旧后端只回 {ok:true} 时重取消息兜底', async () => {

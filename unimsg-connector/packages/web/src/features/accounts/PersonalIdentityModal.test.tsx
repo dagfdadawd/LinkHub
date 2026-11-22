@@ -125,7 +125,7 @@ describe('PersonalIdentityModal（钉钉本人账号连接引导）', () => {
     });
     const { onRefresh } = renderModal({ identity });
 
-    expect(screen.getByText('本机还没有安装 dws（钉钉工作台 CLI）')).toBeInTheDocument();
+    expect(screen.getByText('这台电脑还没装钉钉官方登录工具')).toBeInTheDocument();
     expect(screen.getByText(DWS_DOWNLOAD_URL)).toBeInTheDocument();
     expect(screen.getByText(DWS_BIN_EXAMPLE)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /用浏览器登录/ })).toBeNull();
@@ -153,7 +153,7 @@ describe('PersonalIdentityModal（钉钉本人账号连接引导）', () => {
 
     expect(await screen.findByTestId('login-active-browser')).toBeInTheDocument();
     expect(screen.getByText(/已尝试在本机打开浏览器/)).toBeInTheDocument();
-    expect(screen.getByText(/127\.0\.0\.1 回调/)).toBeInTheDocument();
+    expect(screen.getByText(/只能在运行 LinkHub 的这台电脑上打开/)).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /直接点这里打开授权链接/ })).toHaveAttribute(
       'href',
       expect.stringContaining('login.dingtalk.com'),
@@ -351,14 +351,14 @@ describe('PersonalIdentityModal（钉钉本人账号连接引导）', () => {
   it('平台 Mock 模式：允许先登录本人账号，并如实提示登录后还需启用「仅用本人身份」（P1-1）', async () => {
     vi.spyOn(store, 'dingtalkPersonalStatus').mockResolvedValue(statusBase());
     renderModal({ mockMode: true });
-    expect(await screen.findByText(/钉钉当前是 Mock 运行态：可以先登录本人账号/)).toBeInTheDocument();
+    expect(await screen.findByText(/钉钉当前是演示模式：可以先登录本人账号/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /用浏览器登录（推荐）/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /使用设备码登录（远程\/无浏览器）/ })).toBeInTheDocument();
   });
 
   it('后端未返回身份状态：给出刷新按钮，不假装已连接', () => {
     const { onRefresh } = renderModal({ identity: undefined });
-    expect(screen.getByText('后端还没有返回钉钉身份状态')).toBeInTheDocument();
+    expect(screen.getByText('暂时读不到钉钉的连接状态')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /刷新状态/ }));
     expect(onRefresh).toHaveBeenCalledTimes(1);
   });

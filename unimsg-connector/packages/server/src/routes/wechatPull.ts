@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type RequestHandler } from 'express';
 import { bridgeUrl } from '../connectors/wechat';
 
 /**
@@ -11,10 +11,12 @@ import { bridgeUrl } from '../connectors/wechat';
  *
  * 语义：**不做任何假装**。桥说拉不到，就把桥的原因原样给前端。
  */
-export function wechatPullRouter(): Router {
+export function wechatPullRouter(guard?: RequestHandler): Router {
   const r = Router();
 
-  r.post('/wechat/pull', async (req, res) => {
+  // 写操作才需要「机器主人」守卫：守卫挂在路由上（而不是 app.use('/api')），
+  // 否则任何未匹配的 POST/PUT/DELETE 都会先撞上守卫、回一个误导性的 403。
+  r.post('/wechat/pull', ...(guard ? [guard] : []), async (req, res) => {
     const body = (req.body ?? {}) as {
       conversation?: unknown;
       conversationType?: unknown;

@@ -390,7 +390,7 @@ function sendHint(
   canSend: boolean,
   unlinkedHint: string,
 ): string {
-  if (mode === 'mock') return '模拟发送（本地 Mock，界面标注「模拟发送」，不调用真实平台）';
+  if (mode === 'mock') return '模拟发送（在 LinkHub 本地演示，不会调用真实平台）';
   if (policy === 'user' && !linked) return `已固定本人身份但未连接：发送会显式失败（${unlinkedHint}）`;
   if (policy === 'bot') return '机器人身份发送（FEISHU_IDENTITY/DINGTALK_IDENTITY=bot）';
   if (linked) return '本人身份发送（用户授权有效）';

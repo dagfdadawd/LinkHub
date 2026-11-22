@@ -45,9 +45,9 @@ describe('邮箱添加表单（个人版核心）', () => {
     expect(screen.getByLabelText('授权码')).toHaveAttribute('type', 'password');
     expect(screen.getByText(/QQ 邮箱网页版 → 设置/)).toBeInTheDocument();
     // 高级设置默认收起，但表单值已按 QQ 预设填好（展开后可见）
-    fireEvent.click(screen.getByText('高级设置（IMAP / SMTP 服务器）'));
-    expect(screen.getByLabelText('IMAP 服务器')).toHaveValue('imap.qq.com');
-    expect(screen.getByLabelText('SMTP 服务器')).toHaveValue('smtp.qq.com');
+    fireEvent.click(screen.getByText('高级设置（收信 / 发信服务器，一般不用改）'));
+    expect(screen.getByLabelText('收信服务器地址')).toHaveValue('imap.qq.com');
+    expect(screen.getByLabelText('发信服务器地址')).toHaveValue('smtp.qq.com');
   });
 
   it('切换服务商自动带出对应服务器；Gmail 提示应用专用密码', async () => {
@@ -57,9 +57,9 @@ describe('邮箱添加表单（个人版核心）', () => {
     await waitFor(() => {
       expect(screen.getByText(/应用专用密码/)).toBeInTheDocument();
     });
-    fireEvent.click(screen.getByText('高级设置（IMAP / SMTP 服务器）'));
-    expect(screen.getByLabelText('IMAP 服务器')).toHaveValue('imap.gmail.com');
-    expect(screen.getByLabelText('SMTP 服务器')).toHaveValue('smtp.gmail.com');
+    fireEvent.click(screen.getByText('高级设置（收信 / 发信服务器，一般不用改）'));
+    expect(screen.getByLabelText('收信服务器地址')).toHaveValue('imap.gmail.com');
+    expect(screen.getByLabelText('发信服务器地址')).toHaveValue('smtp.gmail.com');
   });
 
   it('测试连接：提交完整 payload（含服务器/端口），展示成功明细', async () => {
@@ -149,13 +149,13 @@ describe('邮箱添加表单（个人版核心）', () => {
     renderForm();
     fireEvent.mouseDown(screen.getByLabelText('服务商'));
     fireEvent.click(await screen.findByTitle('自定义 / 企业邮箱'));
-    fireEvent.click(screen.getByText('高级设置（IMAP / SMTP 服务器）'));
+    fireEvent.click(screen.getByText('高级设置（收信 / 发信服务器，一般不用改）'));
     fireEvent.change(screen.getByLabelText('邮箱地址'), { target: { value: 'me@company.com' } });
     fireEvent.change(screen.getByLabelText('授权码'), { target: { value: 'secret-code' } });
     fireEvent.click(screen.getByRole('button', { name: /保存账号/ }));
 
-    expect(await screen.findByText('请填写 IMAP 服务器地址')).toBeInTheDocument();
-    expect(screen.getByText('请填写 SMTP 服务器地址')).toBeInTheDocument();
+    expect(await screen.findByText('请填写收信服务器地址')).toBeInTheDocument();
+    expect(screen.getByText('请填写发信服务器地址')).toBeInTheDocument();
     expect(hoisted.store.mailAccountCreate).not.toHaveBeenCalled();
   });
 });

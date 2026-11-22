@@ -25,6 +25,7 @@ import { autoRulesRouter } from './routes/autoRules';
 import { ingestRouter } from './routes/ingest';
 import { statsRouter } from './routes/stats';
 import { diagnosticsRouter } from './routes/diagnostics';
+import { doctorRouter, type DoctorRouterDeps } from './routes/doctor';
 import type { AutoRuleStore } from './services/autoReply';
 import type { StatsSource } from './services/stats';
 import { apiAuth, ownerOnly } from './middlewares/auth';
@@ -89,6 +90,13 @@ export interface CreateAppOptions {
   autoRules?: AutoRuleStore;
   /** 统计看板数据源：传入才挂 /stats/overview */
   statsSource?: StatsSource;
+  /**
+   * 一键自检路由依赖（单测注入抛错桩用）。
+   *
+   * 为什么必须在 createApp 内部挂载：createApp 末尾有「未匹配 /api → 404」兜底，
+   * 应用创建后再 `app.use('/api', doctorRouter())` 会排在兜底之后，永远走不到（恒 404）。
+   */
+  doctor?: DoctorRouterDeps;
 }
 
 export function createApp(svc: MessageService, options: CreateAppOptions = {}) {
@@ -122,22 +130,33 @@ export function createApp(svc: MessageService, options: CreateAppOptions = {}) {
   app.use('/api', apiAuth, contactsRouter()); // Bearer 鉴权：发送目标名录（会话名，只读）
   // 微信 RPA 操作的是「本机微信窗口」，和平台凭据一样属于机器级能力：
   // 读状态可以给所有登录用户看，但拉取/启停桥只允许机器主人。
-  app.use('/api', apiAuth, ownerOnly(svc), wechatPullRouter());
-  app.use('/api', apiAuth, ownerOnly(svc), wechatBridgeRouter());  // 通用接入：任何外部采集器按统一格式推消息进来，与平台 webhook 共用幂等/trace/富化链路
+  // 注意：机器主人守卫必须挂在「具体路由」上（见各路由工厂的 guard 参数），
+  // 不能放在 app.use('/api') 这一层——那会让任意未匹配的 POST/PUT/DELETE
+  // 先撞上守卫、收到一个与实际无关的 403，把「接口不存在」伪装成「你没权限」。
+  app.use('/api', apiAuth, wechatPullRouter(ownerOnly(svc)));
+  app.use('/api', apiAuth, wechatBridgeRouter(undefined, ownerOnly(svc)));  // 通用接入：任何外部采集器按统一格式推消息进来，与平台 webhook 共用幂等/trace/富化链路
   app.use('/api', apiAuth, ingestRouter(svc));
   // 只读诊断摘要：进程内状态，不发任何出站请求
   app.use('/api', apiAuth, diagnosticsRouter());
+  // 一键自检（账号页数据源）：必须挂在下面的 404 兜底之前
+  app.use('/api', apiAuth, doctorRouter(options.doctor));
   // 自动回复规则管理：传了存储才挂（单测 / 纯人工模式可不挂）。
   // 规则命中后会用机器主人的真实账号外发——与 compose/forward 同一条边界，
   // 因此写操作挂 ownerOnly（GET 放行、部署令牌放行，成员写 403）。
   if (options.autoRules) {
-    app.use('/api', apiAuth, ownerOnly(svc), autoRulesRouter(options.autoRules));
+    app.use('/api', apiAuth, autoRulesRouter(options.autoRules, ownerOnly(svc)));
   }
   // 统计看板：传了数据源才挂。
   // 口径说明：这是**机器全局**聚合（含所有登录用户消息的计数与平均处理时长），
   // 不含任何正文/traceId 内容。与 messages 列表按 viewer 过滤不同，这里刻意全局——
   // 看板回答「这台机器的闭环跑得怎么样」。若未来要多租户隔离，改 statsSource 按 viewer 过滤即可。
   if (options.statsSource) app.use('/api', apiAuth, statsRouter(options.statsSource));
+
+  // 未匹配的 /api 路径统一回 JSON 404（而不是 Express 默认的 HTML 报错页）：
+  // 前端能拿到可读原因，也避免把「接口不存在」误判成后端挂了。
+  app.use('/api', (_req, res) => {
+    res.status(404).json({ ok: false, error: '这个功能不存在或当前版本还没有：请确认 LinkHub 已更新到最新版本' });
+  });
 
   // 同源部署（Docker 单容器）：server 直接托管前端构建产物 + SPA 回退。
   // 只在 WEB_DIST 指向真实 index.html 时启用，本地 dev 走 Vite 5173 不受影响。

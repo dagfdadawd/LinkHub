@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { AppStore, filterMessages } from './appStore';
+import { AppStore, PAGE_SIZE, filterMessages } from './appStore';
 import { EmitterRealtime } from '../services/realtime';
 import { MockApi } from '../services/mock/mockApi';
 import { MsgStatus, Platform } from '../types';
+import type { UnifiedMessage } from '../types';
 import type { MessageApi } from '../services/api';
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -245,5 +246,121 @@ markTodo: async () => Promise.reject(new Error('unused')),
 
     store.dismissSendFailure();
     expect(store.getSnapshot().sendFailure).toBeNull();
+  });
+});
+
+/** 生成降序消息：index 越大越早（模拟服务端「最新在前」的返回） */
+function bulkMessages(count: number, offset = 0): UnifiedMessage[] {
+  return Array.from({ length: count }, (_, i) => {
+    const n = offset + i;
+    const iso = new Date(Date.UTC(2026, 10, 23, 12, 0, 0) - n * 60_000).toISOString();
+    return {
+      traceId: `t-bulk-${n}`,
+      platform: Platform.FEISHU,
+      externalId: `e-bulk-${n}`,
+      sender: { id: `u-${n}`, name: `发送人${n}` },
+      type: 'text' as const,
+      body: `消息 ${n}`,
+      status: MsgStatus.RECEIVED,
+      createdAt: iso,
+      updatedAt: iso,
+    };
+  });
+}
+
+describe('消息分页（评审 P0-3 / 问题⑤）', () => {
+  it('首屏只请求 PAGE_SIZE+1 条判断 hasOlder，列表只保留 PAGE_SIZE 条', async () => {
+    const { store, api } = makeStore();
+    const listSpy = vi.spyOn(api, 'list').mockResolvedValue(bulkMessages(PAGE_SIZE + 1));
+
+    await store.init();
+
+    // 多取 1 条只用于探测「还有更早的」，不能把第 201 条也留在首屏
+    expect(listSpy).toHaveBeenCalledWith({ limit: PAGE_SIZE + 1 });
+    const state = store.getSnapshot();
+    expect(state.messages).toHaveLength(PAGE_SIZE);
+    expect(state.hasOlder).toBe(true);
+  });
+
+  it('loadOlder：用最老一条的 createdAt 做 before，合并去重后仍按最新在前排序', async () => {
+    const { store, api } = makeStore();
+    const first = bulkMessages(PAGE_SIZE + 1);
+    const older = bulkMessages(5, PAGE_SIZE + 1);
+    const listSpy = vi
+      .spyOn(api, 'list')
+      .mockImplementation(async (filter) => (filter?.before ? older : first));
+
+    await store.init();
+    await store.loadOlder();
+
+    expect(listSpy).toHaveBeenLastCalledWith({
+      before: first[PAGE_SIZE - 1].createdAt,
+      limit: PAGE_SIZE + 1,
+    });
+    const state = store.getSnapshot();
+    expect(state.messages).toHaveLength(PAGE_SIZE + 5);
+    expect(state.hasOlder).toBe(false);
+    expect(state.loadingOlder).toBe(false);
+    expect(state.messages[0].traceId).toBe('t-bulk-0');
+    expect(state.messages[state.messages.length - 1].traceId).toBe('t-bulk-205');
+  });
+
+  it('reload（刷新/重连）后回到第一页，分页状态被重置', async () => {
+    const { store, api } = makeStore();
+    const first = bulkMessages(PAGE_SIZE + 1);
+    const older = bulkMessages(5, PAGE_SIZE + 1);
+    vi.spyOn(api, 'list').mockImplementation(async (filter) => (filter?.before ? older : first));
+
+    await store.init();
+    await store.loadOlder();
+    expect(store.getSnapshot().messages).toHaveLength(PAGE_SIZE + 5);
+
+    await store.refresh();
+    const state = store.getSnapshot();
+    expect(state.messages).toHaveLength(PAGE_SIZE);
+    expect(state.hasOlder).toBe(true);
+    expect(state.loadingOlder).toBe(false);
+  });
+
+  it('旧服务忽略 limit/before 返回全量：消息一条不丢、hasOlder=false、不报错', async () => {
+    const { store, api } = makeStore();
+    const all = bulkMessages(500);
+    const listSpy = vi.spyOn(api, 'list').mockResolvedValue(all);
+
+    await store.init();
+    const state = store.getSnapshot();
+    expect(state.messages).toHaveLength(500);
+    expect(state.hasOlder).toBe(false);
+    expect(state.error).toBeNull();
+
+    // 没有更早的：不会再多发一次请求，也不会报错
+    await store.loadOlder();
+    expect(listSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('示例消息注入（问题②）', () => {
+  it('injectDemo：走登录态的示例接口，成功后重拉列表并返回 traceId/duplicate', async () => {
+    const list = vi.fn(async () => bulkMessages(1));
+    const api = {
+      injectDemo: vi.fn(async () => ({ traceId: 't-demo', duplicate: false })),
+      list,
+      accounts: vi.fn(async () => []),
+      health: vi.fn(async () => ({ received: 0, deduped: 0, sent: 0, failed: 0, dlq: 0 })),
+    } as unknown as MessageApi;
+    const store = new AppStore(api, new EmitterRealtime());
+
+    const result = await store.injectDemo(Platform.FEISHU);
+
+    expect(result).toEqual({ traceId: 't-demo', duplicate: false });
+    expect(api.injectDemo).toHaveBeenCalledWith(Platform.FEISHU);
+    // 注入后要重拉：消息已经归到当前账号名下，列表里能直接看到
+    expect(list).toHaveBeenCalledWith({ limit: PAGE_SIZE + 1 });
+    expect(store.getSnapshot().messages).toHaveLength(1);
+  });
+
+  it('injectDemo：数据源不支持该能力时报中文错误，不静默假装成功', async () => {
+    const { store } = makeStore();
+    await expect(store.injectDemo(Platform.FEISHU)).rejects.toThrow(/当前版本不支持注入示例消息/);
   });
 });

@@ -41,17 +41,17 @@ export function RestartNotice({
       type="warning"
       showIcon
       message={
-        detected ? '.env 已修改，需要重启后端才生效' : '已保存，需要重启 LinkHub 生效'
+        detected ? '配置已修改，需要重新打开 LinkHub 才生效' : '已保存，需要重新打开 LinkHub 才生效'
       }
       description={
         <div className="restart-notice__body">
           <span>
             {detected
-              ? '检测到 .env 文件比后端启动时间新；当前运行中的后端仍在使用启动时读取的配置，重启后才会生效。'
-              : '应用凭据在后端启动时读取。开发版请重启后端；桌面版请用菜单「配置 → 重新加载」。'}
+              ? '检测到配置文件在 LinkHub 上次启动后被修改过；当前运行的 LinkHub 还在用启动时读到的配置，重新打开后才会生效。'
+              : '应用凭据只在 LinkHub 启动时读取。桌面版请用菜单「配置 → 重新加载」；开发版请重启后台服务。'}
           </span>
           <span className="restart-notice__row">
-            <span>重启命令：</span>
+            <span>给管理员的重启命令：</span>
             <Typography.Text
               code
               copyable={{ text: SERVER_RESTART_COMMAND, tooltips: ['复制重启命令', '已复制'] }}
@@ -68,7 +68,7 @@ export function RestartNotice({
           loading={rechecking}
           onClick={onRecheck}
         >
-          我已重启，重新检测
+          我已重新打开，重新检测
         </Button>
       }
     />

@@ -133,15 +133,15 @@ export function overallProgress(view?: OnboardingView | null): OnboardingProgres
 export function dwsSourceLabel(source: string | undefined): string {
   switch (source) {
     case 'env':
-      return '来自 .env 的 DWS_BIN';
+      return 'LinkHub 配置里指定的位置';
     case 'tools':
-      return '内置 tools 目录（无需手动安装）';
+      return 'LinkHub 内置（无需安装）';
     case 'user_profile':
-      return '用户目录 ~/.local/bin';
+      return '已安装在本机用户目录';
     case 'path':
-      return '系统 PATH';
+      return '已安装在系统里';
     case 'missing':
-      return '未找到 dws';
+      return '本机还没有';
     default:
       return '来源未知';
   }

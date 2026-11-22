@@ -103,7 +103,7 @@ export function AppConfigModal({
       setWechatBridge(await store.wechatBridgeStatus());
     } catch (e) {
       setWechatBridge(null);
-      toast.warning(e instanceof Error ? e.message : '检测 RPA 桥失败');
+      toast.warning(e instanceof Error ? e.message : '检测本机辅助程序失败');
     }
   }
 
@@ -113,10 +113,10 @@ export function AppConfigModal({
       const result = await store.startWechatBridge();
       setWechatBridge(result);
       if (result.error) toast.error(result.error);
-      else if (result.alreadyRunning) toast.info('RPA 桥已在运行');
-      else toast.success('RPA 桥已启动；请确认微信桌面端已登录');
+      else if (result.alreadyRunning) toast.info('本机辅助程序已在运行');
+      else toast.success('本机辅助程序已启动；请确认微信桌面端已登录');
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '启动 RPA 桥失败');
+      toast.error(e instanceof Error ? e.message : '启动本机辅助程序失败');
       await loadWechatBridge();
     } finally {
       setBridgeBusy(false);
@@ -129,9 +129,9 @@ export function AppConfigModal({
       const result = await store.stopWechatBridge();
       setWechatBridge(result);
       if (result.error) toast.error(result.error);
-      else toast.success('RPA 桥已停止');
+      else toast.success('本机辅助程序已停止');
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '停止 RPA 桥失败');
+      toast.error(e instanceof Error ? e.message : '停止本机辅助程序失败');
       await loadWechatBridge();
     } finally {
       setBridgeBusy(false);
@@ -148,7 +148,7 @@ export function AppConfigModal({
       setWechatMode(mode === 'real' || mode === 'mock' ? mode : 'auto');
       setError('');
     } catch (e) {
-      setError(e instanceof Error ? e.message : '读取平台应用配置失败，请确认后端已启动');
+      setError(e instanceof Error ? e.message : '读取平台应用配置失败，请确认 LinkHub 后台已启动');
     } finally {
       setLoading(false);
     }
@@ -288,7 +288,7 @@ export function AppConfigModal({
         toast.success(outcome.message);
       } else if (outcome.status === 'restart') {
         setApplied(false);
-        toast.warning('已保存，需要重启 LinkHub 生效');
+        toast.warning('已保存，需要重新打开 LinkHub 才生效');
       } else if (outcome.status === 'ignored') {
         // .env 锁定 / 未热应用：绝不提示成功；具体被忽略的键在页面 Alert 中可见
         setApplied(false);
@@ -315,7 +315,7 @@ export function AppConfigModal({
       const view = await store.loadAppConfig();
       setConfig(view);
       if (view.restartRequired) {
-        toast.warning('仍检测到配置未生效：请确认 LinkHub 已重启（或桌面版已重新加载）');
+        toast.warning('还没生效：请确认 LinkHub 已重新打开（桌面版可用菜单「配置 → 重新加载」）');
       } else {
         setConfig(view);
         setApplied(true);
@@ -364,7 +364,7 @@ export function AppConfigModal({
             />
             <span className="app-config-field__note">
               {switchValue(group.id, def.key) ? '已开启' : '已关闭'}
-              {existing?.source === 'none' ? '（默认开启长连接；关闭需保存并重启）' : ''}
+              {existing?.source === 'none' ? '（默认开启长连接；关闭需保存后重新打开 LinkHub）' : ''}
             </span>
           </div>
         ) : def.secret ? (
@@ -406,7 +406,7 @@ export function AppConfigModal({
           <strong>只想用本人身份？不需要钉钉应用</strong>
           <span>
             勾选后保存，会把身份模式切到「仅本人身份」——
-            后端热应用、<strong>不需要重启</strong>；之后用「连接账号」页的「用钉钉本人账号登录」完成授权即可。
+            立即生效、<strong>不需要重启</strong>；之后用「连接账号」页的「用钉钉本人账号登录」完成授权即可。
           </span>
         </div>
         <div className="app-config-personal__row">
@@ -417,7 +417,9 @@ export function AppConfigModal({
             onChange={setPersonalOnly}
           />
           <span>仅用本人身份（无需机器人凭据）</span>
-          <Tag color={mode === 'user' ? 'success' : 'default'}>当前：{mode}</Tag>
+          <Tag color={mode === 'user' ? 'success' : 'default'}>
+            当前：{mode === 'user' ? '仅本人' : mode === 'bot' ? '仅机器人' : '自动'}
+          </Tag>
           {locked && (
             <span className="app-config-field__note">
               <LockOutlined /> 由部署配置固定（身份策略），不可在此覆盖
@@ -436,14 +438,14 @@ export function AppConfigModal({
       : !b?.reachable
         ? '未连接'
         : b.mode === 'rpa'
-          ? '在线（真实 RPA）'
+          ? '在线（真实可用）'
           : b.mode === 'mock'
-            ? '在线但为 mock 模式'
+            ? '在线（演示模式）'
             : '在线，模式未知';
     return (
       <div className="app-config-wechat-rpa" data-testid="app-config-wechat-rpa">
         <div className="app-config-wechat-rpa__head">
-          <strong>本机 RPA 桥</strong>
+          <strong>本机辅助程序</strong>
           <Tag color={online ? 'success' : b?.reachable ? 'warning' : 'default'}>{stateText}</Tag>
         </div>
         <div className="app-config-wechat-rpa__row">
@@ -454,21 +456,21 @@ export function AppConfigModal({
             style={{ width: 210 }}
             onChange={(v) => setWechatMode(v)}
             options={[
-              { value: 'auto', label: '自动（微信默认模拟）' },
-              { value: 'mock', label: '强制模拟（mock）' },
-              { value: 'real', label: '真实 RPA（real）' },
+              { value: 'auto', label: '自动（默认演示）' },
+              { value: 'mock', label: '强制演示（不连真实微信）' },
+              { value: 'real', label: '真实操作微信（real）' },
             ]}
           />
           <span className="app-config-field__note">
-            真实模式保存后需重启 LinkHub；桥本身可以现在先启动。
+            切到真实模式后要重新打开 LinkHub 才生效；辅助程序可以现在先启动。
           </span>
         </div>
         <div className="app-config-wechat-rpa__row">
           <span className="app-config-field__note">
-            桥地址默认 <code>http://127.0.0.1:8787</code>；如果改了端口，请在上面的「RPA 桥地址」同步。
+            给管理员：辅助程序地址默认在本机 8787 端口；改过端口请在上面的「辅助程序地址」同步。
           </span>
           <Button size="small" onClick={() => void loadWechatBridge()} disabled={bridgeBusy}>
-            检测桥
+            检测辅助程序
           </Button>
           <Button
             size="small"
@@ -477,18 +479,18 @@ export function AppConfigModal({
             loading={bridgeBusy}
             disabled={online}
           >
-            启动桥
+            启动辅助程序
           </Button>
           <Button size="small" danger onClick={() => void stopWechatBridge()} disabled={bridgeBusy || !wechatBridge?.managed}>
-            停止桥
+            停止辅助程序
           </Button>
         </div>
         {b && (
           <div className="app-config-wechat-rpa__status">
             {b.reachable
-              ? `${b.mode === 'rpa' ? 'RPA 已连接' : '桥可达'} · ${b.receiveMode === 'auto' ? '自动接收' : b.receiveMode === 'pull' ? '按需拉取' : '接收未就绪'} · ${b.receiveReason}`
+              ? `${b.mode === 'rpa' ? '辅助程序已连接' : '辅助程序可访问'} · ${b.receiveMode === 'auto' ? '自动接收' : b.receiveMode === 'pull' ? '按需拉取' : '接收未就绪'} · ${b.receiveReason}`
               : `未连接：${b.error ?? b.receiveReason}`}
-            {b.client?.kind === 'weixin4' && '（微信 4.x：自动轮询不可用，接收用按需拉取）'}
+            {b.client?.kind === 'weixin4' && '（微信 4.x：不能自动收消息，请在收件箱按需拉取）'}
           </div>
         )}
       </div>
@@ -502,7 +504,7 @@ export function AppConfigModal({
         <p className="app-config-group__hint">{group.hint}</p>
         {missing.length > 0 && (
           <div className="app-config-group__missing">
-            还缺：{missing.join('、')}（填写并保存后补齐；应用凭据需要重启 LinkHub 生效）
+            还缺：{missing.join('、')}（填写并保存后补齐；应用凭据需要重新打开 LinkHub 才生效）
           </div>
         )}
         {group.id === 'dingtalk' && renderPersonalOnly()}
@@ -540,7 +542,7 @@ export function AppConfigModal({
           type="info"
           showIcon
           message="当前是纯前端演示模式（Mock）"
-          description="演示模式不会保存真实凭据；启动真实后端后再填写 App ID / Secret 等配置。"
+          description="演示模式下不会保存真实凭据；连上真实后台后再填写 App ID / Secret 等配置。"
         />
       )}
 
@@ -579,8 +581,8 @@ export function AppConfigModal({
               className="app-config-alert"
               type="warning"
               showIcon
-              message="部分配置来自 .env，未被本次保存覆盖"
-              description={`以下配置来自 .env，页面不能覆盖：${humanizeMissingKeys(saveResult.ignoredByEnv).join('、')}。如需修改，请改 .env 后重启。`}
+              message="部分配置由部署配置固定，本次保存没有覆盖"
+              description={`下面这些配置由部署配置固定，页面改不了：${humanizeMissingKeys(saveResult.ignoredByEnv).join('、')}。如需修改，请让管理员改部署配置后重新打开 LinkHub。`}
             />
           )}
 
@@ -620,7 +622,7 @@ export function AppConfigModal({
           />
 
           <p className="app-config-footnote">
-            已有值只显示脱敏信息；Secret / API Key 保存后不会回显。由部署配置固定的项优先且不可在界面覆盖。
+            已填的值只显示打码信息，密钥保存后不再回显；下面这些通常由企业管理员提供，普通用户不用管。由部署配置固定的项页面改不了。
           </p>
         </>
       ) : null}

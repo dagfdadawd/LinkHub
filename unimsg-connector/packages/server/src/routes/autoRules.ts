@@ -10,7 +10,7 @@
  * 字段校验（platform 枚举 / replyText 非空 / priority 范围）由仓库统一负责，
  * 路由层只把仓库抛出的中文 Error 转成 400，保证「直接用仓库」与「走 HTTP」行为一致。
  */
-import { Router, type Request, type Response } from 'express';
+import { Router, type Request, type RequestHandler, type Response } from 'express';
 import type { AutoRuleInput } from '@unimsg/shared';
 import { AutoRuleStore } from '../services/autoReply';
 
@@ -34,14 +34,16 @@ function ruleInputOf(req: Request): AutoRuleInput {
   return input as AutoRuleInput;
 }
 
-export function autoRulesRouter(store: AutoRuleStore): Router {
+export function autoRulesRouter(store: AutoRuleStore, guard?: RequestHandler): Router {
   const r = Router();
 
   r.get('/auto-rules', (_req: Request, res: Response) => {
     res.json({ ok: true, data: store.list() });
   });
 
-  r.post('/auto-rules', (req: Request, res: Response) => {
+  // 规则命中会用机器主人的真实账号外发 → 写操作只允许机器主人（守卫挂在路由上，
+  // 不挂在 app.use('/api')，否则未匹配路径会先吃一个误导性的 403）
+  r.post('/auto-rules', ...(guard ? [guard] : []), (req: Request, res: Response) => {
     try {
       const rule = store.create(ruleInputOf(req));
       res.status(201).json({ ok: true, data: rule });
@@ -50,7 +52,7 @@ export function autoRulesRouter(store: AutoRuleStore): Router {
     }
   });
 
-  r.patch('/auto-rules/:id', (req: Request, res: Response) => {
+  r.patch('/auto-rules/:id', ...(guard ? [guard] : []), (req: Request, res: Response) => {
     try {
       const rule = store.update(req.params.id, ruleInputOf(req));
       if (!rule) {
@@ -63,7 +65,7 @@ export function autoRulesRouter(store: AutoRuleStore): Router {
     }
   });
 
-  r.delete('/auto-rules/:id', (req: Request, res: Response) => {
+  r.delete('/auto-rules/:id', ...(guard ? [guard] : []), (req: Request, res: Response) => {
     if (!store.remove(req.params.id)) {
       sendError(res, 404, '规则不存在');
       return;

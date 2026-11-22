@@ -18,9 +18,18 @@ import type {
   ReanalyzeResult, WechatBridgeInfo, WechatBridgeStartResult, WechatBridgeStopResult,
 } from '../services/api';
 import { isDemoApi } from '../services/api';
+import type { InjectPlatform } from '../services/demoSamples';
 import { getSession } from '../services/session';
 import type { RealtimeClient, RealtimeStatus } from '../services/realtime';
 import { sortMessages } from '../utils/format';
+
+/**
+ * 首屏每次最多拉多少条消息（问题⑤）。
+ *
+ * 之前 `api.list()` 不传 limit，后端内存里攒了几千条就全量返回、全量渲染，
+ * 首屏越来越慢。现在首屏只取一页，更早的用「加载更早的消息」按时间游标翻。
+ */
+export const PAGE_SIZE = 200;
 
 export interface Filters {
   platform?: Platform;
@@ -62,6 +71,10 @@ export interface AppState {
   onboarding: OnboardingView | null;
   /** 平台应用凭据 / 运行配置（GET /api/app-config）；旧后端不支持时为 null */
   appConfig: AppConfigView | null;
+  /** 服务端是否还有比当前列表更早的消息（首屏只拉了第一页，问题⑤） */
+  hasOlder: boolean;
+  /** 「加载更早的消息」进行中：防重复点击、按钮转圈 */
+  loadingOlder: boolean;
 }
 
 export const DEFAULT_FILTERS: Filters = {
@@ -96,6 +109,21 @@ export function filterMessages(messages: UnifiedMessage[], filters: Filters): Un
   return sortMessages(items);
 }
 
+/**
+ * 一页切分（问题⑤）。
+ *
+ * - 支持 `limit` 的服务端：请求 `PAGE_SIZE + 1` 最多只会返回 `PAGE_SIZE + 1` 条，
+ *   多出来的那 1 条只用于判断「还有更早的」，返回前裁掉；
+ * - 旧服务端忽略 `limit` / `before` 时会返回全量（条数通常不等于 `PAGE_SIZE + 1`），
+ *   此时按「没有更早的」处理：消息一条不丢、不报错，行为与改造前一致。
+ */
+export function slicePage(items: UnifiedMessage[]): { messages: UnifiedMessage[]; hasOlder: boolean } {
+  if (items.length === PAGE_SIZE + 1) {
+    return { messages: items.slice(0, PAGE_SIZE), hasOlder: true };
+  }
+  return { messages: items, hasOlder: false };
+}
+
 export class AppStore {
   private state: AppState = {
     messages: [],
@@ -110,6 +138,8 @@ export class AppStore {
     sendFailure: null,
     onboarding: null,
     appConfig: null,
+    hasOlder: false,
+    loadingOlder: false,
   };
 
   private listeners = new Set<() => void>();
@@ -149,8 +179,8 @@ export class AppStore {
     this.set({ initialized: true });
 
     try {
-      const [messages, accounts, health] = await this.fetchAll();
-      this.set({ messages, accounts, health, loading: false, error: null });
+      const { messages, accounts, health, hasOlder } = await this.fetchAll();
+      this.set({ messages, accounts, health, hasOlder, loading: false, error: null });
       // 授权中心是首启锦上添花：旧后端没有该接口时不阻塞主流程
       void this.refreshOnboarding();
       // 平台应用凭据（白号配置入口）：旧后端没有该接口时同样静默
@@ -328,6 +358,20 @@ export class AppStore {
     await this.refreshHealth();
   }
 
+  /**
+   * 注入一条示例消息（问题②）：真实后端走带登录态的 `POST /api/messages/demo`，
+   * 消息归属**当前登录账号**，因此注入后 `reload()` 就能在自己的收件箱里看到。
+   * 旧后端 / Mock 没有该能力时抛出中文错误，由页面决定是否回退（页面只在 404 时回退）。
+   */
+  async injectDemo(platform: InjectPlatform): Promise<{ traceId?: string; duplicate: boolean }> {
+    if (!this.api.injectDemo) {
+      throw new Error('当前版本不支持注入示例消息，请先更新/重启 LinkHub 再试');
+    }
+    const result = await this.api.injectDemo(platform);
+    await this.reload();
+    return result;
+  }
+
   armFailure(): void {
     if (isDemoApi(this.api)) this.api.armNextSendFailure();
   }
@@ -461,11 +505,12 @@ export class AppStore {
     return result;
   }
 
-  /** 静默重拉全量数据（断线重连后的状态兜底；失败则保持现有数据） */
+  /** 静默重拉第一页（断线重连 / 注入后的状态兜底；失败则保持现有数据） */
   private async reload(): Promise<void> {
     try {
-      const [messages, accounts, health] = await this.fetchAll();
-      this.set({ messages, accounts, health, error: null });
+      const { messages, accounts, health, hasOlder } = await this.fetchAll();
+      // reload 回到第一页：hasOlder 由第一页是否被截断重新计算
+      this.set({ messages, accounts, health, hasOlder, loadingOlder: false, error: null });
       void this.refreshOnboarding();
       void this.refreshAppConfig();
     } catch {
@@ -473,9 +518,49 @@ export class AppStore {
     }
   }
 
-  /** 全量拉取（消息 + 账号 + 健康指标）：init 与静默重拉共用同一组调用与顺序 */
-  private fetchAll(): Promise<[UnifiedMessage[], AccountInfo[], HealthInfo]> {
-    return Promise.all([this.api.list(), this.api.accounts(), this.api.health()]);
+  /**
+   * 加载更早的消息（问题⑤：首屏不再全量拉取）。
+   *
+   * 用当前列表里**最老一条**的 createdAt 作为时间游标，只向服务端要下一页。
+   * 合并时按 traceId 去重（实时推送可能已经把某条塞进来了），再按原有
+   * `sortMessages` 规则排序，保证「紧急 / 时间」顺序与首屏一致。
+   */
+  async loadOlder(): Promise<void> {
+    if (this.state.loadingOlder || !this.state.hasOlder) return;
+    const oldest = this.state.messages[this.state.messages.length - 1];
+    if (!oldest) return;
+    this.set({ loadingOlder: true });
+    try {
+      const page = await this.api.list({ before: oldest.createdAt, limit: PAGE_SIZE + 1 });
+      const { messages: older, hasOlder } = slicePage(page);
+      const seen = new Set(this.state.messages.map((m) => m.traceId));
+      const merged = sortMessages([
+        ...this.state.messages,
+        ...older.filter((m) => !seen.has(m.traceId)),
+      ]);
+      this.set({ messages: merged, hasOlder, loadingOlder: false, error: null });
+    } catch (e) {
+      this.set({
+        loadingOlder: false,
+        error: e instanceof Error ? e.message : '加载更早的消息失败，请稍后重试',
+      });
+    }
+  }
+
+  /** 拉取第一页（消息 + 账号 + 健康指标）：init 与静默重拉共用同一组调用与顺序 */
+  private async fetchAll(): Promise<{
+    messages: UnifiedMessage[];
+    accounts: AccountInfo[];
+    health: HealthInfo;
+    hasOlder: boolean;
+  }> {
+    const [listed, accounts, health] = await Promise.all([
+      this.api.list({ limit: PAGE_SIZE + 1 }),
+      this.api.accounts(),
+      this.api.health(),
+    ]);
+    const { messages, hasOlder } = slicePage(listed);
+    return { messages, accounts, health, hasOlder };
   }
 
   private onRealtime(event: { type: string; data?: UnifiedMessage }): void {

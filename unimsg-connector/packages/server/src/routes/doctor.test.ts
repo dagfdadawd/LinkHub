@@ -15,19 +15,23 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { createApp } from '../app';
 import { MessageService } from '../services/message';
-import { apiAuth, resolveApiToken } from '../middlewares/auth';
+import { resolveApiToken } from '../middlewares/auth';
 import { config } from '../config';
-import { doctorRouter, type DoctorRouterDeps } from './doctor';
+import type { DoctorRouterDeps } from './doctor';
 
 const TOKEN = resolveApiToken(config.apiToken);
 
-/** 与 index.ts 完全一致的挂载方式（apiAuth 在前）；路由挂载常规在 app.ts，白名单外故这里手动追加 */
+/**
+ * 走 createApp 的真实装配：doctorRouter 必须在「未匹配 /api → JSON 404」兜底之前挂载，
+ * 否则 /api/doctor 会先被 404 兜住（应用创建后再 app.use 追加已经验证不可行）。
+ * 探针依赖通过 CreateAppOptions.doctor 注入：生产不传，单测可注入 runProbes 抛错桩。
+ * 这样同时覆盖「生产挂载顺序」与「探针失败不 500」两条契约。
+ */
 async function withDoctorApp(
   deps: DoctorRouterDeps | undefined,
   fn: (base: string) => Promise<void>,
 ): Promise<void> {
-  const app = createApp({} as unknown as MessageService);
-  app.use('/api', apiAuth, doctorRouter(deps));
+  const app = createApp({} as unknown as MessageService, deps ? { doctor: deps } : {});
   const server = http.createServer(app);
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;

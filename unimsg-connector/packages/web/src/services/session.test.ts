@@ -14,10 +14,13 @@ import {
   clearSession,
   currentToken,
   getSession,
+  isAuthExpired,
   listSessions,
+  markAuthExpired,
   removeSession,
   resetSessionForTest,
   setSession,
+  subscribeSession,
   switchSession,
 } from './session';
 
@@ -140,5 +143,42 @@ describe('多账号会话', () => {
     const fresh = await import('./session');
     expect(fresh.getSession()).toBeNull();
     expect(fresh.listSessions()).toHaveLength(0);
+  });
+});
+
+describe('登录失效标记（401 兜底）', () => {
+  it('默认没有失效标记', () => {
+    expect(isAuthExpired()).toBe(false);
+  });
+
+  it('标记失效后即使会话被清空，也能区分「过期」与「主动退出」', () => {
+    setSession(alice);
+    markAuthExpired();
+    clearSession();
+    expect(getSession()).toBeNull();
+    expect(isAuthExpired()).toBe(true);
+  });
+
+  it('重新登录成功会清掉失效标记（否则登录页会一直提示已过期）', () => {
+    markAuthExpired();
+    setSession(bob);
+    expect(isAuthExpired()).toBe(false);
+  });
+
+  it('主动退出全部账号不算「失效」，不需要提示重新登录', () => {
+    setSession(alice);
+    clearAllSessions();
+    expect(isAuthExpired()).toBe(false);
+  });
+
+  it('标记变化会通知订阅者（登录守卫据此立即跳登录页）', () => {
+    const listener = vi.fn();
+    const off = subscribeSession(listener);
+    markAuthExpired();
+    expect(listener).toHaveBeenCalledTimes(1);
+    // 重复标记不重复通知
+    markAuthExpired();
+    expect(listener).toHaveBeenCalledTimes(1);
+    off();
   });
 });

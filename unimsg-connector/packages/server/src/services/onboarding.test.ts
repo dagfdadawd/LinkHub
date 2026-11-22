@@ -151,7 +151,7 @@ test('钉钉 P0-2：linked + mock 绝不得 ready（给热应用动作）；link
   assert.equal(enable.path, '/api/app-config');
   assert.equal(enable.method, 'PUT');
   assert.deepEqual(enable.payload, { identity: { dingtalk: 'user' } });
-  assert.match(linkedMock.summary, /模拟模式/);
+  assert.match(linkedMock.summary, /演示模式/);
 
   const linkedReal = step('dingtalk', deps({
     dingtalk: {
@@ -237,7 +237,7 @@ test('钉钉显式 mock 策略 → 如实 mock 且仍给恢复动作；飞书 li
   assert.match(feishuLinkedMock.summary, /演示模式/);
   assert.doesNotMatch(feishuLinkedMock.summary, /缺少.*凭据/);
   assert.ok(feishuLinkedMock.actions.some((a) => a.id === 'feishu-mode-real' && a.path === '/api/app-config'));
-  assert.match(feishuLinkedMock.actions.find((a) => a.id === 'feishu-mode-real')!.label, /需重启/);
+  assert.match(feishuLinkedMock.actions.find((a) => a.id === 'feishu-mode-real')!.label, /重新打开/);
 
   const feishuLinkedMockNoCreds = step('feishu', deps({
     feishu: {
@@ -275,14 +275,14 @@ test('邮箱（P2-1/P2-2）：白号 auto 提示「验证后自动启用、无�
   assert.ok(none.actions.some((a) => a.id === 'mail-add-account' && a.kind === 'form'));
   const whiteText = none.hints.join('\n');
   assert.ok(whiteText.includes('测试连接'), '白号应引导测试连接');
-  assert.ok(whiteText.includes('无需改 .env') || whiteText.includes('无需重启'), '白号应说明验证后自动启用、无需改 .env/重启');
+  assert.ok(whiteText.includes('无需改 .env') || whiteText.includes('不需要改配置'), '白号应说明验证后自动启用、无需改配置/重启');
   assert.ok(!whiteText.includes('显式 MAIL_MODE=mock'), '白号 auto 回退 mock 不得说成显式 mock（P2-1）');
 
   // 显式 MAIL_MODE=mock 才写 env 文案
   const explicitMock = step('mail', deps({
     mail: { accounts: [], filePath: 'x', issues: [], mode: 'mock', policy: 'mock', pollSeconds: 45 },
   }));
-  assert.ok(explicitMock.hints.join('\n').includes('MAIL_MODE=mock'), '显式 mock 场景才提 MAIL_MODE=mock');
+  assert.ok(explicitMock.hints.join('\n').includes('演示模式'), '显式 mock 场景要如实说成演示模式');
 
   const unverified = step('mail', deps({
     mail: { accounts: [masked({ verified: false })], filePath: 'x', issues: [], mode: 'mock', policy: 'auto', pollSeconds: 45 },
@@ -328,7 +328,7 @@ test('overall：任一 ready 后 firstRun=false、needsAction 递减；安全：
 test('P2-5/P3：管理员清单为纯文本（无 Markdown 星号）、按钮名与实际一致、登录命令不含本机绝对路径', () => {
   const feishu = feishuAdminChecklist('http://127.0.0.1:3001/api/feishu/oauth/callback', ['im:message', 'im:message.p2p_msg:readonly']);
   assert.ok(!feishu.includes('**'), 'copy 是纯文本，不能出现 Markdown 星号');
-  assert.match(feishu, /填写飞书应用凭据（App ID \/ App Secret）/);
+  assert.match(feishu, /填写飞书应用凭据/);
   assert.match(feishu, /连接飞书本人账号/);
   assert.match(feishu, /Verify Token[\s\S]*可不填/);
   assert.match(feishu, /重启后端/);
@@ -345,8 +345,8 @@ test('P2-6：飞书缺凭据时 missing 只有 App ID/Secret，hint 说明长连
   assert.equal(d.state, 'needs_admin');
   const joined = d.hints.join('\n');
   assert.ok(!joined.includes('FEISHU_VERIFY_TOKEN'), '默认长连接不应把 Verify Token 列为缺失');
-  assert.match(joined, /Verify Token 可不填/);
-  assert.match(joined, /FEISHU_STREAM=true/);
+  assert.match(joined, /校验用的几项都可以不填/);
+  assert.match(joined, /长连接/);
 });
 
 // ---------------------------------------------------------------------------
@@ -387,7 +387,7 @@ function bridge(over: Partial<WechatBridgeStatus> = {}): WechatBridgeStatus {
 test('微信 P0：WECHAT_MODE=real 但从没探测到桥 → needs_install，绝不 ready', () => {
   const s = step('wechat', deps({ wechat: { runtime: wechatRealRuntime(), bridge: null } }));
   assert.equal(s.state, 'needs_install');
-  assert.match(s.summary, /还没有探测到本机 RPA 桥/);
+  assert.match(s.summary, /还没检测到本机辅助程序/);
   assert.ok(s.detail.bridge === null);
 });
 
@@ -402,7 +402,7 @@ test('微信 P0：桥连不上 → needs_install，且给出启动命令', () =>
     },
   }));
   assert.equal(s.state, 'needs_install');
-  assert.match(s.summary, /连不上本机 RPA 桥/);
+  assert.match(s.summary, /连不上本机辅助程序/);
   assert.ok(s.hints.join('\n').includes('--mode rpa'));
 });
 
@@ -411,7 +411,7 @@ test('微信 P0：桥在 mock 模式 → needs_install（发送会被拒绝，�
     wechat: { runtime: wechatRealRuntime(), bridge: bridge({ state: 'mock', mode: 'mock', canReceive: false, receiveReason: '桥运行在 mock 模式' }) },
   }));
   assert.equal(s.state, 'needs_install');
-  assert.match(s.summary, /mock 模式/);
+  assert.match(s.summary, /「演示」模式/);
 });
 
 test('微信 P0：桥 rpa 但接收没就绪 → needs_install，说明"能发不能收"', () => {

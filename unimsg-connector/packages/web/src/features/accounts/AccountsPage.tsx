@@ -34,17 +34,17 @@ import { AppConfigModal } from '../connect/AppConfigModal';
 import { FeishuOAuthHelp } from './FeishuOAuthHelp';
 import { useFeishuOAuth } from './useFeishuOAuth';
 
-/** 本次实际通道：真实接口=绿，Mock 模拟=橙（Mock 结果绝不伪装成真实成功） */
+/** 本次实际通道：真实接口=绿，演示模式=橙（模拟结果绝不伪装成真实成功） */
 const MODE_META: Record<DeliveryMode, { label: string; color: 'success' | 'warning' }> = {
-  real: { label: '真实接口', color: 'success' },
-  mock: { label: '未配置（演示模式）', color: 'warning' },
+  real: { label: '真实连接', color: 'success' },
+  mock: { label: '演示模式（未连接）', color: 'warning' },
 };
 
 /** 通道策略文案（后端 policy 字段；未知值原样展示，避免前端写死后端取值） */
 const POLICY_LABEL: Record<string, string> = {
-  auto: '策略 auto（按凭据自动）',
-  real: '策略 real（强制真实）',
-  mock: '策略 mock（强制模拟）',
+  auto: '自动选择（按凭据）',
+  real: '仅真实连接',
+  mock: '仅演示模式',
 };
 
 function policyLabel(policy: string): string {
@@ -106,13 +106,13 @@ export function accountConclusion(account: AccountInfo): string {
   if (account.reason) return account.reason;
   const mailCount = account.platform === Platform.MAIL ? account.accounts?.length ?? 0 : 0;
   if (mailCount > 0) return `已添加 ${mailCount} 个邮箱账号，等待首封邮件验证连通`;
-  if (!account.configured) return '尚未配置：到「平台应用配置」填写凭据并重启后端';
-  if (account.mode === 'mock') return '当前为演示模式：不会真实收发';
-  return '凭据已填齐，建议在「详情」里跑一次自检确认平台连通';
+  if (!account.configured) return '还没配置：到「平台应用配置」填写凭据，保存后重新打开 LinkHub';
+  if (account.mode === 'mock') return '当前是演示模式：不会真实收发';
+  return '凭据已填好，可在「详情」里做一次自检，确认真的连得上';
 }
 
-/** 每个平台的策略说明：让用户知道界面状态由哪条策略决定（可替换性） */
-const IDENTITY_POLICY_TITLE = '身份策略决定以谁的身份收发；可在「连接账号 → 平台应用配置」修改；凭据类变更需重启后端才生效';
+/** 每个平台的策略说明：让用户知道界面状态由哪条设置决定 */
+const IDENTITY_POLICY_TITLE = '身份设置决定以谁的身份收发；可在「连接账号 → 平台应用配置」修改；应用凭据改动后需重新打开 LinkHub 才生效';
 
 /** 邮箱平台下的单个账号：只展示地址 / host / 监听目录，授权码永不下发 */
 function MailAccountRow({ account }: { account: MailAccountInfo }) {
@@ -132,12 +132,12 @@ function MailAccountRow({ account }: { account: MailAccountInfo }) {
       </div>
       <div className="mail-account__addr mono">{account.address}</div>
       <div className="mail-account__line">
-        IMAP <span className="mono">{account.imapHost}</span>
+        收信服务器 <span className="mono">{account.imapHost}</span>
       </div>
       <div className="mail-account__line">
-        SMTP <span className="mono">{account.smtpHost}</span>
+        发信服务器 <span className="mono">{account.smtpHost}</span>
       </div>
-      <div className="mail-account__line">监听目录：{account.folders.join('、')}</div>
+      <div className="mail-account__line">收信文件夹：{account.folders.join('、')}</div>
     </div>
   );
 }
@@ -280,7 +280,7 @@ function IdentityBlock({
         <span className="identity-block__title">身份 · 谁在收、谁在发</span>
         {IDENTITY_POLICY_LABEL[identity.policy] && (
           <span className="identity-block__policy" title={IDENTITY_POLICY_TITLE}>
-            身份策略：{IDENTITY_POLICY_LABEL[identity.policy]}
+            身份设置：{IDENTITY_POLICY_LABEL[identity.policy]}
           </span>
         )}
       </div>
@@ -291,7 +291,7 @@ function IdentityBlock({
             <span className="identity-block__row-label">状态</span>
             <Tag color="warning">本人身份（未登录）</Tag>
             <span className="identity-block__row-text">
-              身份策略已固定为「仅本人」，未登录期间不会以本人身份收发；请点下方按钮重新登录。
+              身份设置已固定为「仅本人」，未登录期间不会以本人身份收发；请点下方按钮重新登录。
             </span>
           </div>
         ) : (
@@ -320,8 +320,8 @@ function IdentityBlock({
       {mockMode && (
         <div className="identity-block__hint">
           {platform === Platform.DINGTALK && user.canLink
-            ? '当前平台是「演示模式」运行态（不会真实收发）：可以先登录本人账号（无需机器人应用）；登录后到「连接账号」启用「仅用本人身份」（热应用、无需重启），才会真实收发。'
-            : '当前平台通道是「演示模式」：不会真实收发。可到「连接账号 → 平台应用配置」填写应用凭据并重启后端，再回来连接。'}
+            ? '当前平台是「演示模式」运行态（不会真实收发）：可以先登录本人账号（无需机器人应用）；登录后到「连接账号」启用「仅用本人身份」（立即生效、无需重启），才会真实收发。'
+            : '当前平台通道是「演示模式」：不会真实收发。可到「连接账号 → 平台应用配置」填写应用凭据，保存后重新打开 LinkHub，再回来连接。'}
         </div>
       )}
 
@@ -368,7 +368,7 @@ function IdentityBlock({
           {canStart && linked && platform === Platform.DINGTALK && onLogout && (
             <Popconfirm
               title="注销钉钉本人身份？"
-              description="注销后收发会回到机器人（或 Mock）通道，之后可随时重新登录。"
+              description="退出后收发会回到机器人（或演示模式），之后可随时重新登录。"
               okText="注销"
               cancelText="取消"
               onConfirm={onLogout}
@@ -440,8 +440,8 @@ export function AccountCard({
           <div className="account-card__name">{account.label ?? meta.name}</div>
           <div className="account-card__sub">
             {account.platform === Platform.MAIL
-              ? 'IMAP 轮询收 · SMTP 发送 · 可挂多账号'
-              : 'Webhook 接入 · 统一消息模型'}
+              ? '自动收邮件 · 可挂多个邮箱'
+              : '平台连接 · 消息自动汇总'}
           </div>
         </div>
         {mode && (
@@ -522,7 +522,7 @@ export function AccountCard({
                 <div className="account-card__verify" data-testid={`verify-${account.platform}`}>
                   <div className="account-card__verify-line">
                     <WarningOutlined />
-                    <span>变量齐了 ≠ 平台能连通，请运行自检确认：</span>
+                    <span>变量齐了 ≠ 平台能连通，请运行自检确认（技术操作，可转给管理员）：</span>
                   </div>
                   <Typography.Text
                     className="account-card__doctor mono"
@@ -536,7 +536,7 @@ export function AccountCard({
 
               {missing.length > 0 && (
                 <div className="account-card__missing">
-                  缺少环境变量：<code>{missing.join('、')}</code>
+                  还缺配置项：<code>{missing.join('、')}</code>
                 </div>
               )}
 
@@ -578,8 +578,10 @@ export function AccountCard({
 
 /**
  * 一键自检结果面板（评审 P1-9）：/api/doctor 的报告渲染成可读结论。
- * 纯展示组件——PASS/FAIL/SKIP 各自配色，FAIL/SKIP 的 hint（下一步怎么做）全量展示。
+ * 纯展示组件——通过/失败/跳过各自配色，失败/跳过的 hint（下一步怎么做）全量展示。
  */
+const CHECK_STATUS_LABEL: Record<string, string> = { pass: '通过', fail: '失败', skip: '跳过' };
+
 export function DoctorPanel({ report }: { report: DoctorReport }) {
   const counts = report.checks.reduce(
     (acc, c) => {
@@ -604,7 +606,7 @@ export function DoctorPanel({ report }: { report: DoctorReport }) {
             key={c.id}
             className={`doctor-panel__row doctor-panel__row--${c.status.toLowerCase()}`}
           >
-            <span className="doctor-panel__status">{c.status}</span>
+            <span className="doctor-panel__status">{CHECK_STATUS_LABEL[c.status.toLowerCase()] ?? c.status}</span>
             <div className="doctor-panel__body">
               <span className="doctor-panel__title">{c.title}</span>
               <span className="doctor-panel__detail">{c.detail}</span>
@@ -646,7 +648,7 @@ export function AccountsPage() {
   const logoutDingtalk = async (): Promise<void> => {
     try {
       await store.dingtalkPersonalLogout();
-      message.success('已注销钉钉本人身份，收发已回到机器人 / Mock 通道');
+      message.success('已退出钉钉本人身份，收发会回到机器人（或演示模式）');
     } catch (e) {
       message.error(e instanceof Error ? e.message : '注销失败，请稍后重试');
     }
@@ -664,7 +666,7 @@ export function AccountsPage() {
     note?: string;
   }> = [
     { key: 'received', label: '接收', value: health?.received, icon: <InboxOutlined /> },
-    { key: 'deduped', label: '幂等去重', value: health?.deduped, icon: <DatabaseOutlined /> },
+    { key: 'deduped', label: '去重消息', value: health?.deduped, icon: <DatabaseOutlined /> },
     {
       key: 'sent',
       label: '发送共',
@@ -681,7 +683,7 @@ export function AccountsPage() {
     },
     {
       key: 'dlq',
-      label: '死信队列',
+      label: '发送失败待处理',
       value: health?.dlq,
       icon: <WarningOutlined />,
       tone: 'danger' as const,
@@ -718,8 +720,8 @@ export function AccountsPage() {
           <Tooltip
             title={
               canSelfCheck
-                ? '跑一遍服务端自检（doctor）：真实模式要连平台，邮箱账号多时较慢'
-                : '演示模式没有可自检的真实通道；连接真实平台后可用'
+                ? '检查各平台是否真的连得上（会真实连接；邮箱账号多时较慢）'
+                : '演示模式下没有真实通道可检查；连接真实平台后可用'
             }
           >
             <Button
@@ -747,8 +749,8 @@ export function AccountsPage() {
         机器人身份保留为兜底。下面每张卡片的「接收 / 发送」就是当前生效身份，未连接时会告诉你下一步点哪里。
       </p>
       <p className="accounts-intro accounts-intro--verify">
-        「已配置 / 真实接口」只代表<strong>变量填齐、通道按真实接口工作</strong>，不代表平台一定连得通；
-        真实模式的卡片里有可复制的自检命令（doctor），跑一次就能确认平台是否真的可用。
+        「已配置」只代表<strong>凭据填好了、通道按真实方式工作</strong>，不代表平台一定连得通；
+        真实模式的卡片展开「详情」可以做一次自检，确认平台是否真的可用（技术操作，可转给管理员）。
       </p>
 
       {/* 一键自检（评审 P1-9）：结果与 pnpm doctor 同源；失败也有可读结论，绝不静默 */}
@@ -757,23 +759,23 @@ export function AccountsPage() {
       )}
       {doctorReport && <DoctorPanel report={doctorReport} />}
 
-      {/* P1-5：.env 改了但后端没重启——最常见的小白困惑，必须显式提示 */}
+      {/* P1-5：配置文件改了但没重新加载——最常见的小白困惑，必须显式提示 */}
       {envRestart.needed && (
         <Alert
           className="accounts-alert"
           type="warning"
           showIcon
-          message=".env 已修改，需要重启后端才生效"
+          message="配置已修改，需要重新打开 LinkHub 才生效"
           description={
             <div className="accounts-alert__detail">
               <div>
-                当前运行中的后端仍在用「启动时读取的配置」：.env 修改于{' '}
-                {formatDateTime(new Date(envRestart.envMtime ?? 0).toISOString())}，后端启动于{' '}
+                当前运行的 LinkHub 还在用「启动时读到的配置」：配置修改于{' '}
+                {formatDateTime(new Date(envRestart.envMtime ?? 0).toISOString())}，LinkHub 启动于{' '}
                 {formatDateTime(new Date(envRestart.startedAt ?? 0).toISOString())}。
-                重启后账号状态才会变——不用怀疑变量名或填写位置。
+                重新打开后账号状态才会变，不用怀疑自己填错了位置。
               </div>
               <div className="accounts-alert__row">
-                <span>重启命令：</span>
+                <span>给管理员的重启命令：</span>
                 <Typography.Text
                   className="mono"
                   code

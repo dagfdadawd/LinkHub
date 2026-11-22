@@ -12,6 +12,8 @@ import type {
 } from '@unimsg/shared';
 import type { MsgType, TraceEntry, UnifiedMessage } from '../types';
 import type { Platform, MsgStatus } from '../types';
+import type { InjectPlatform } from './demoSamples';
+export type { InjectPlatform };
 
 /** 微信 4.x「按需拉取」请求：拉的是「当前在微信里打开的那个会话」 */
 export interface WechatPullRequest {
@@ -543,6 +545,13 @@ export interface DoctorReport {
 export interface MessageApi {
   list(filter?: MessageFilter): Promise<UnifiedMessage[]>;
   get(id: string): Promise<UnifiedMessage | undefined>;
+  /**
+   * 注入一条示例消息（真实后端 `POST /api/messages/demo`，需登录）。
+   * 消息走真实入站管线（幂等 / trace / 富化），但归属**当前登录账号**，
+   * 普通成员点了才能在「自己的收件箱」里看到。旧后端没有该接口（404）时回退公开 webhook。
+   * Mock 不实现：演示模式仍走 `simulateIncoming`。
+   */
+  injectDemo?(platform: InjectPlatform): Promise<{ traceId?: string; duplicate: boolean }>;
   /** 文本与附件可同时发送（赛题 A 功能需求 3） */
   reply(
     id: string,

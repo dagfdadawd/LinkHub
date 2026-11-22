@@ -35,6 +35,7 @@ import type {
   DingtalkPersonalStatus,
   FeishuOAuthStart,
   HealthInfo,
+  InjectPlatform,
   MailAccountInput,
   MailAccountTestResult,
   MailAccountView,
@@ -51,7 +52,7 @@ import type {
   WechatBridgeStopResult,
 } from './api';
 import { APP_CONFIG_LLM_FIELD_KEYS, APP_CONFIG_PLATFORM_FIELD_KEYS } from './api';
-import { clearSession, getSession } from './session';
+import { clearSession, getSession, markAuthExpired } from './session';
 import { sortMessages } from '../utils/format';
 import { filenameFromContentDisposition } from '../utils/download';
 
@@ -80,6 +81,17 @@ const CREDENTIAL_CHECK_PATHS = [
 function isCredentialCheckPath(path: string): boolean {
   return CREDENTIAL_CHECK_PATHS.some((p) => path === p || path.startsWith(`${p}?`));
 }
+
+/**
+ * 慢端点超时（普通请求仍走构造器的 8s 默认值）。
+ *
+ * doctor 的上界不是「一次探针 25s」：每个邮箱账号要**串行**跑 IMAP 与 SMTP，
+ * 各自 25s 且 SMTP 不因 IMAP 失败而跳过（最坏 50s/账号），再加飞书/钉钉各 8s、
+ * LLM 20s、微信桥。5 分钟覆盖 4-5 个账号的最坏情况；真正的单项上限仍由
+ * 服务端每个探针自己的 timeout 决定，这里只是客户端兜底，不能比服务端更早放弃。
+ */
+const DOCTOR_TIMEOUT_MS = 300_000;
+const REANALYZE_TIMEOUT_MS = 60_000;
 
 export class HttpApi implements MessageApi {
   private readonly baseUrl: string;
@@ -139,6 +151,24 @@ export class HttpApi implements MessageApi {
       if (e instanceof ApiError && e.status === 404) return undefined;
       throw e;
     }
+  }
+
+  /**
+   * 注入一条示例消息（真实后端 `POST /api/messages/demo`，需登录）。
+   *
+   * 为什么不用公开 webhook：webhook 按机器级归属把消息挂到「机器主人」名下，
+   * 普通成员点了只会看到「已注入」提示、自己的收件箱依然为空（问题②）。
+   * 这个接口复用同一份样例与同一条入库链路，只把归属钉在请求者账号上。
+   */
+  async injectDemo(platform: InjectPlatform): Promise<{ traceId?: string; duplicate: boolean }> {
+    const body = await this.request<{ data?: { traceId?: unknown; duplicate?: unknown } }>(
+      '/api/messages/demo',
+      { method: 'POST', body: JSON.stringify({ platform }) },
+    );
+    return {
+      ...(typeof body.data?.traceId === 'string' ? { traceId: body.data.traceId } : {}),
+      duplicate: body.data?.duplicate === true,
+    };
   }
 
   async reply(
@@ -229,9 +259,16 @@ export class HttpApi implements MessageApi {
     return body.data;
   }
 
-  /** 一键自检（评审 P1-9）：真实模式下探针要连平台（邮箱 25s+/账号），调用方防重复点击 */
+  /**
+   * 一键自检（评审 P1-9）：服务端探针是**串行**的，真实模式下单邮箱账号最坏 50s
+   * （IMAP 25s + SMTP 25s，SMTP 不因 IMAP 失败跳过）、LLM 20s，叠加后普通请求的 8s
+   * 必然先掐断（等于功能永远失败）。超时单独放宽到 300s；调用方仍需防重复点击，
+   * 并如实提示「真实模式较慢」。
+   */
   async runDoctor(): Promise<DoctorReport> {
-    const body = await this.request<{ data?: DoctorReport }>('/api/doctor');
+    const body = await this.request<{ data?: DoctorReport }>('/api/doctor', undefined, {
+      timeoutMs: DOCTOR_TIMEOUT_MS,
+    });
     return body.data ?? { generatedAt: new Date().toISOString(), checks: [] };
   }
 
@@ -253,7 +290,7 @@ export class HttpApi implements MessageApi {
     const body = await this.request<{
       data?: { user: PublicUser; token: string; recoveryCode: string };
     }>('/api/auth/register', { method: 'POST', body: JSON.stringify(input) });
-    if (!body.data) throw new ApiError('注册失败：后端没有返回会话', 500);
+    if (!body.data) throw new ApiError('注册失败：LinkHub 服务没有返回登录信息', 500);
     return body.data;
   }
 
@@ -262,7 +299,7 @@ export class HttpApi implements MessageApi {
       '/api/auth/login',
       { method: 'POST', body: JSON.stringify(input) },
     );
-    if (!body.data) throw new ApiError('登录失败：后端没有返回会话', 500);
+    if (!body.data) throw new ApiError('登录失败：LinkHub 服务没有返回登录信息', 500);
     return body.data;
   }
 
@@ -363,7 +400,7 @@ export class HttpApi implements MessageApi {
       '/api/feishu/oauth/start',
       { method: 'POST', body: '{}' },
     );
-    if (!body.data?.url) throw new ApiError('后端未返回飞书授权地址', 0);
+    if (!body.data?.url) throw new ApiError('LinkHub 服务没有返回飞书授权地址', 0);
     return body.data;
   }
 
@@ -374,7 +411,7 @@ export class HttpApi implements MessageApi {
       '/api/dingtalk/personal/login',
       { method: 'POST', body: JSON.stringify(options) },
     );
-    if (!body.data) throw new ApiError('后端未返回钉钉登录指引', 0);
+    if (!body.data) throw new ApiError('LinkHub 服务没有返回钉钉登录指引', 0);
     return body.data;
   }
 
@@ -382,7 +419,7 @@ export class HttpApi implements MessageApi {
     const body = await this.request<{ data?: DingtalkPersonalStatus }>(
       '/api/dingtalk/personal/status',
     );
-    if (!body.data) throw new ApiError('后端未返回钉钉身份状态', 0);
+    if (!body.data) throw new ApiError('LinkHub 服务没有返回钉钉身份状态', 0);
     return body.data;
   }
 
@@ -394,7 +431,7 @@ export class HttpApi implements MessageApi {
     // 后端聚合「连接账号」需要的全部状态；旧后端没有此接口时由页面给出升级提示
     const body = await this.request<{ data?: OnboardingView }>('/api/onboarding');
     if (!body.data || !Array.isArray(body.data.steps)) {
-      throw new ApiError('后端未返回授权中心数据（可能需要重启或升级后端）', 0);
+      throw new ApiError('LinkHub 服务没有返回授权中心数据（可能需要更新或重启 LinkHub）', 0);
     }
     return body.data;
   }
@@ -416,6 +453,7 @@ export class HttpApi implements MessageApi {
         signal: ctrl.signal,
       });
       if (resp.status === 401) {
+        markAuthExpired();
         clearSession();
         throw new ApiError('登录已过期，请重新登录', 401);
       }
@@ -438,7 +476,7 @@ export class HttpApi implements MessageApi {
 
   async wechatBridgeStatus(): Promise<WechatBridgeInfo> {
     const body = await this.request<{ data?: WechatBridgeInfo }>('/api/wechat/bridge/status');
-    if (!body.data) throw new ApiError('后端未返回 RPA 桥状态', 0);
+    if (!body.data) throw new ApiError('LinkHub 服务没有返回微信桥状态', 0);
     return body.data;
   }
 
@@ -462,7 +500,8 @@ export class HttpApi implements MessageApi {
       signal: AbortSignal.timeout(15_000),
     });
     if (res.status === 401) {
-      // 会话过期 / 令牌失效：清掉本地登录态，让 AuthGate 回登录页
+      // 会话过期 / 令牌失效：打「已失效」标记并清掉本地登录态，让 AppShell 主动回登录页
+      markAuthExpired();
       clearSession();
       throw new ApiError('登录已过期，请重新登录', 401);
     }
@@ -545,7 +584,9 @@ export class HttpApi implements MessageApi {
         mode?: string; reason?: string; providerLabel?: string;
         precision?: 'high' | 'low'; confidence?: number;
       };
-    }>(`/api/messages/${encodeURIComponent(id)}/reanalyze`, { method: 'POST', body: '{}' });
+    }>(`/api/messages/${encodeURIComponent(id)}/reanalyze`, { method: 'POST', body: '{}' }, {
+      timeoutMs: REANALYZE_TIMEOUT_MS,
+    });
     const message = body.data ?? await this.get(id);
     if (!message) throw new ApiError('资源不存在', 404);
     return {
@@ -636,7 +677,7 @@ export class HttpApi implements MessageApi {
       if ((e as Error)?.name === 'AbortError') {
         throw new ApiError('附件下载超时，请稍后重试', 0);
       }
-      throw new ApiError('附件下载失败：无法连接后端服务', 0);
+      throw new ApiError('附件下载失败：无法连接 LinkHub 服务', 0);
     } finally {
       clearTimeout(timer);
     }
@@ -644,6 +685,7 @@ export class HttpApi implements MessageApi {
     if (!res.ok) {
       const body = await res.json().catch(() => null) as { error?: string } | null;
       if (res.status === 401) {
+        markAuthExpired();
         clearSession();
         throw new ApiError('登录已过期，请重新登录', 401);
       }
@@ -691,14 +733,20 @@ export class HttpApi implements MessageApi {
     };
   }
 
-  /** 统一请求入口：鉴权头 + 超时控制 + 信封解包 + 错误码映射 */
+  /**
+   * 统一请求入口：鉴权头 + 超时控制 + 信封解包 + 错误码映射。
+   *
+   * `opts.timeoutMs` 只给**确实慢**的端点用（自检探针、AI 重分析）：
+   * 默认 8s 是给普通 CRUD 的兜底，套在串行探针上会把「慢」误判成「挂」——
+   * 邮箱单账号探针 25s、LLM 探针 20s，8s 必然先 abort。
+   */
   private async request<T>(
     path: string,
     init?: RequestInit,
-    opts: { allowOkFalse?: boolean } = {},
+    opts: { allowOkFalse?: boolean; timeoutMs?: number } = {},
   ): Promise<T> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? this.timeoutMs);
     let res: Response;
     try {
       res = await fetch(`${this.baseUrl}${path}`, {
@@ -712,10 +760,10 @@ export class HttpApi implements MessageApi {
       });
     } catch (e) {
       if ((e as Error)?.name === 'AbortError') {
-        throw new ApiError('请求超时，请检查后端服务状态', 0);
+        throw new ApiError('这次请求等太久了，请稍后重试；如果一直这样，确认 LinkHub 服务还在运行', 0);
       }
       // 网络层异常（后端未启动 / 断网 / CORS 拒绝）
-      throw new ApiError('无法连接后端服务，请确认服务已启动', 0);
+      throw new ApiError('无法连接 LinkHub 服务，请确认它还在运行', 0);
     } finally {
       clearTimeout(timer);
     }
@@ -733,16 +781,17 @@ export class HttpApi implements MessageApi {
         throw new ApiError(String(body?.error ?? '用户名或密码不正确'), 401);
       }
       if (getSession()) {
+        markAuthExpired();
         clearSession();
         throw new ApiError('登录已过期，请重新登录', 401);
       }
-      throw new ApiError('未授权：API Token 无效或缺失', 401);
+      throw new ApiError('需要重新登录后再试', 401);
     }
     if (res.status === 404) {
       // 账号接口是新增的：旧后端没有这些路由，提示「重启」比「资源不存在」有用得多
       throw new ApiError(
         path.startsWith('/api/auth/') || path === '/api/messages/claim'
-          ? '当前后端版本过旧，没有账号接口：请重启 LinkHub Server 后再试'
+          ? '当前版本较旧，暂时没有账号功能：请先更新/重启 LinkHub 再试'
           : '资源不存在',
         404,
       );

@@ -56,9 +56,9 @@ describe('AiSuggestion 识别来源标注', () => {
     expect(screen.queryByText(/MiMo/)).not.toBeInTheDocument();
   });
 
-  it('规则兜底时标注「规则兜底」，不冒充大模型', () => {
+  it('关键词规则时标注「关键词规则」，不冒充大模型', () => {
     setup({ intent: '待办', replyDraft: '收到。', intentSource: 'rules' });
-    expect(screen.getByText('规则兜底')).toBeInTheDocument();
+    expect(screen.getByText('关键词规则')).toBeInTheDocument();
     expect(screen.queryByText(/MiMo/)).not.toBeInTheDocument();
   });
 
@@ -66,13 +66,13 @@ describe('AiSuggestion 识别来源标注', () => {
     setup({});
     expect(screen.getByText('分析中…')).toBeInTheDocument();
     expect(screen.queryByText(/MiMo/)).not.toBeInTheDocument();
-    expect(screen.queryByText('规则兜底')).not.toBeInTheDocument();
+    expect(screen.queryByText('关键词规则')).not.toBeInTheDocument();
   });
 
   it('旧数据没有 intentSource 时不显示来源标注', () => {
     setup({ intent: '待办', replyDraft: '收到。' });
     expect(screen.queryByText(/MiMo/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/规则兜底/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/关键词规则/)).not.toBeInTheDocument();
   });
 });
 
@@ -114,7 +114,7 @@ describe('AiSuggestion 三标签面板（消息分析 / 智能回复 / 快捷工
     fireEvent.click(screen.getByRole('tab', { name: '快捷工具' }));
     fireEvent.click(screen.getByRole('button', { name: /复制消息内容/ }));
     fireEvent.click(screen.getByRole('button', { name: /标为已读/ }));
-    fireEvent.click(screen.getByRole('button', { name: /全链路回放/ }));
+    fireEvent.click(screen.getByRole('button', { name: /查看消息全程记录/ }));
 
     expect(onCopyBody).toHaveBeenCalledTimes(1);
     expect(onMarkRead).toHaveBeenCalledTimes(1);
@@ -130,7 +130,7 @@ describe('AiSuggestion 三标签面板（消息分析 / 智能回复 / 快捷工
 });
 
 describe('AiSuggestion 低精度结果（信息量不足但不回退规则）', () => {
-  it('仍标注真实模型，展示低精度提示，不写成规则兜底', () => {
+  it('仍标注真实模型，展示低精度提示，不写成关键词规则', () => {
     setup({
       intent: '未分类', replyDraft: '请问您具体需要什么？', intentSource: 'llm',
       aiProvider: '火山方舟', aiConfidence: 0.3, aiPrecision: 'low',
@@ -138,8 +138,8 @@ describe('AiSuggestion 低精度结果（信息量不足但不回退规则）', 
     expect(screen.getByText('火山方舟 识别')).toBeInTheDocument();
     expect(screen.getByText(/信息量较少 · 模型把握 30%/)).toBeInTheDocument();
     expect(screen.getByText('信息不足，模型暂未归类')).toBeInTheDocument();
-    expect(screen.queryByText('规则兜底')).not.toBeInTheDocument();
-    expect(screen.queryByText('未识别，已回退未分类')).not.toBeInTheDocument();
+    expect(screen.queryByText('关键词规则')).not.toBeInTheDocument();
+    expect(screen.queryByText('没识别出来，暂归为「未分类」')).not.toBeInTheDocument();
   });
 
   it('高精度结果不显示低精度提示', () => {

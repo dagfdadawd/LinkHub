@@ -926,6 +926,17 @@ button {
   line-height: 1.6;
 }
 
+/* 技术细节默认折叠：普通用户看不到术语，需要的人再展开 */
+.alert-detail__dev {
+  margin-top: 6px;
+  font-size: 0.75rem;
+  color: var(--text-3);
+}
+
+.alert-detail__dev summary {
+  cursor: pointer;
+}
+
 .app-main {
   flex: 1;
   min-width: 0;
@@ -8155,6 +8166,25 @@ html.vt-morph .detail {
 }
 
 .conv-list__more:hover {
+  color: var(--text-2);
+  border-color: var(--text-4, var(--border));
+}
+
+/* 详情线程顶部「查看更早的消息」：与列表的「显示更多会话」同一视觉语言 */
+.thread-more {
+  align-self: center;
+  margin: 4px 0 8px;
+  padding: 6px 12px;
+  border: 1px dashed var(--border);
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--text-3);
+  font-size: 0.8125rem;
+  cursor: pointer;
+  transition: color var(--t-fast), border-color var(--t-fast);
+}
+
+.thread-more:hover {
   color: var(--text-2);
   border-color: var(--text-4, var(--border));
 }

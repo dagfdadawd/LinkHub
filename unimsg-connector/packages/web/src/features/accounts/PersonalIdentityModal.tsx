@@ -47,7 +47,7 @@ export const DINGTALK_SUCCESS_TOAST = '钉钉本人身份已连接，后续消�
 /** 设备码模式的有效期说明（避免用户继续输入过期码） */
 export const DEVICE_CODE_TTL_HINT =
   '设备码有有效期（见下方倒计时，通常 15 分钟）。过期后请点「重新获取授权码」，'
-  + '不要继续输入旧码，否则钉钉页面会提示 Invalid or expired user code。';
+  + '不要继续输入旧码，否则钉钉页面会提示「授权码无效或已过期」。';
 
 const COPY_TOOLTIPS: [string, string] = ['复制命令', '已复制'];
 const COPY_CODE_TOOLTIPS: [string, string] = ['复制授权码', '已复制'];
@@ -159,12 +159,12 @@ function WhyLogin() {
         回复也以你本人发出。
       </li>
       <li>
-        <strong>登录的是本机 dws 官方 CLI</strong>：授权在钉钉官方页面完成，LinkHub 只读取
+        <strong>登录用的是本机的钉钉官方工具</strong>：授权在钉钉官方页面完成，LinkHub 只读取
         「已登录 / 未登录」状态，不接触你的密码。
       </li>
       <li>
-        <strong>随时可回退</strong>：不登录或注销后，消息会自动走机器人通道兜底；也可以把
-        身份策略已被部署配置固定为「只用机器人」。
+        <strong>随时可回退</strong>：不登录或退出后，消息会自动走机器人通道兜底；如果部署时
+        固定成「只用机器人」，则不登录也能照常收发。
       </li>
     </ul>
   );
@@ -252,8 +252,8 @@ export function PersonalIdentityModal({
     if (mockModeRef.current) {
       // P0-2：登录成功 ≠ 能真实收发——运行态仍是 Mock 时必须如实提醒
       toast.warning(
-        '钉钉本人账号已登录，但平台当前仍是 Mock 运行态：'
-        + '请在「连接账号」启用「仅用本人身份」（热应用，无需重启）后才会真实收发。',
+        '钉钉本人账号已登录，但钉钉当前仍是演示模式：'
+        + '请到「连接账号」启用「仅用本人身份」（立即生效，无需重启）后才会真实收发。',
       );
     } else {
       toast.success(successToastRef.current ?? DINGTALK_SUCCESS_TOAST);
@@ -416,7 +416,7 @@ export function PersonalIdentityModal({
       setNow(Date.now());
       if (start.started === false) {
         // 后端把 dws 的启动失败/回退原因放在 instructions 里：不假装在等，直接给可操作提示
-        setError(start.instructions || '登录未能自动启动，请重试或在终端手动执行 dws auth login。');
+        setError(start.instructions || '登录未能自动启动，请重试；或在终端手动执行登录命令（高级）。');
         setPhase('error');
       } else {
         setPhase('waiting');
@@ -466,7 +466,7 @@ export function PersonalIdentityModal({
       setPhase('timeout');
       toast.info('还没检测到登录：请先在浏览器 / 设备完成钉钉授权，再点「我已登录，刷新状态」');
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '刷新状态失败，请检查后端服务');
+      toast.error(e instanceof Error ? e.message : '刷新状态失败，请检查 LinkHub 是否在运行');
     } finally {
       setRefreshing(false);
     }
@@ -485,7 +485,7 @@ export function PersonalIdentityModal({
   async function logout(): Promise<void> {
     try {
       await store.dingtalkPersonalLogout();
-      toast.success('已注销钉钉本人身份，收发已回到机器人 / Mock 通道');
+      toast.success('已退出钉钉本人身份，收发会回到机器人（或演示模式）');
       onRefreshRef.current?.();
       onCloseRef.current();
     } catch (e) {
@@ -499,12 +499,12 @@ export function PersonalIdentityModal({
         <Alert
           type="warning"
           showIcon
-          message="本机还没有安装 dws（钉钉工作台 CLI）"
-          description="钉钉没有「一登录就自动生效」的云端接口：本人身份收发依赖本机运行官方 dws。装好并登录后，LinkHub 就能以你本人身份收发。"
+          message="这台电脑还没装钉钉官方登录工具"
+          description="钉钉没有「网页登录一下就自动生效」的方式：本人身份收发需要在这台电脑上运行钉钉官方工具。装好并登录后，LinkHub 就能以你本人身份收发。"
         />
         <ol className="personal-modal__steps">
           <li>
-            打开官方下载页，下载 Windows 版 <strong>dws.exe</strong>：
+            打开官方下载页，下载 Windows 版工具（<strong>dws.exe</strong>）：
             <div className="personal-modal__line">
               <Typography.Text className="personal-modal__link" copyable={{ text: DWS_DOWNLOAD_URL, tooltips: COPY_TOOLTIPS }}>
                 {DWS_DOWNLOAD_URL}
@@ -512,13 +512,13 @@ export function PersonalIdentityModal({
             </div>
           </li>
           <li>
-            把 dws.exe 放到系统 PATH 里的目录（例如 <code>C:\Users\你的用户名\.local\bin</code>），
-            或改 .env 指定绝对路径：
+            把这个工具放到系统能找到的目录（例如 <code>C:\Users\你的用户名\.local\bin</code>），
+            或让管理员在部署配置里写明它的位置（.env 写法）：
             <div className="personal-modal__line">
               <Command text={DWS_BIN_EXAMPLE} />
             </div>
           </li>
-          <li>重启后端（让新配置生效），回到本页点「重新检测」。</li>
+          <li>重新打开 LinkHub（让新配置生效），回到本页点「重新检测」。</li>
         </ol>
         {user?.hint && <div className="personal-modal__hint">{user.hint}</div>}
         <div className="personal-modal__actions">
@@ -554,7 +554,7 @@ export function PersonalIdentityModal({
           type="success"
           showIcon
           message="现在谁在收、谁在发"
-          description="钉钉消息会以你本人身份接收（按 DINGTALK_USER_EVENT_KINDS 的范围），发送也以你本人发出。机器人通道保留为兜底，换账号只需重新登录。"
+          description="钉钉消息会以你本人身份接收（消息范围由管理员设定），发送也以你本人发出。机器人通道保留为兜底，换账号只需重新登录。"
         />
         <div className="personal-modal__actions">
           <Button
@@ -566,7 +566,7 @@ export function PersonalIdentityModal({
           </Button>
           <Popconfirm
             title="注销钉钉本人身份？"
-            description="注销后收发会回到机器人（或 Mock）通道，可随时重新登录。"
+            description="退出后收发会回到机器人（或演示模式），可随时重新登录。"
             okText="注销"
             cancelText="取消"
             onConfirm={() => void logout()}
@@ -621,7 +621,7 @@ export function PersonalIdentityModal({
         </div>
 
         <details className="personal-modal__details">
-          <summary>终端手动登录（高级，可选）</summary>
+          <summary>终端手动登录（高级 / 开发者，可选）</summary>
           <div className="personal-modal__line">
             在运行 LinkHub 的机器终端执行：<Command text={user?.loginCommand ?? 'dws auth login'} />
           </div>
@@ -683,7 +683,7 @@ export function PersonalIdentityModal({
             message="登录流程已过期"
             description={
               isDevice
-                ? '授权码已过期，请点「重新获取授权码」后再输入；不要继续使用旧码，否则钉钉页面会提示 Invalid or expired user code。'
+                ? '授权码已过期，请点「重新获取授权码」后再输入；不要继续使用旧码，否则钉钉页面会提示「授权码无效或已过期」。'
                 : '本次浏览器登录已超时，请点「重新发起」重新打开授权页。'
             }
           />
@@ -701,8 +701,7 @@ export function PersonalIdentityModal({
             type="info"
             showIcon
             message="没有拿到授权链接"
-            description="点「我已登录，刷新状态」同步登录流程，或重新发起登录。"
-          />
+            description="点「我已登录，刷新状态」同步登录流程，或重新发起登录。"          />
         )}
 
         {isDevice && (
@@ -766,7 +765,7 @@ export function PersonalIdentityModal({
         <div className="personal-modal__hint">
           {isDevice
             ? '授权链接可以在另一台有浏览器的设备打开；设备码请在有效期内输入。'
-            : '授权地址是运行 LinkHub 这台机器的 127.0.0.1 回调，必须在同一台机器的浏览器打开；远程 / 无浏览器请改用设备码登录。'}
+            : '授权地址只能在运行 LinkHub 的这台电脑上打开；如果 LinkHub 跑在服务器 / 容器里，请改用设备码登录。'}
         </div>
 
         {popupBlocked && (
@@ -780,7 +779,7 @@ export function PersonalIdentityModal({
 
         {info.command && (
           <div className="personal-modal__line">
-            终端等价命令：<Command text={info.command} />
+            对应的终端命令（高级）：<Command text={info.command} />
           </div>
         )}
 
@@ -861,7 +860,7 @@ export function PersonalIdentityModal({
             type="error"
             showIcon
             message="拉起登录失败"
-            description={error || '请检查后端是否运行、dws 是否可用，然后重试。'}
+            description={error || '请检查 LinkHub 是否在运行、本机工具是否可用，然后重试。'}
           />
         )}
         {phase === 'timeout' && !active && (
@@ -889,7 +888,7 @@ export function PersonalIdentityModal({
               我已登录，刷新状态
             </Button>
             <Button type="link" loading={refreshing} onClick={() => void refreshDetection()}>
-              重新检测本机 dws
+              重新检测本机工具
             </Button>
           </div>
         )}
@@ -906,13 +905,13 @@ export function PersonalIdentityModal({
         showIcon
         message={
           linked
-            ? '本人账号已登录，但平台当前仍是 Mock 运行态'
-            : '钉钉当前是 Mock 运行态：可以先登录本人账号'
+            ? '本人账号已登录，但钉钉当前仍是演示模式（不会真实收发）'
+            : '钉钉当前是演示模式：可以先登录本人账号'
         }
         description={
           linked
-            ? '登录本身已成功，但收发仍走模拟通道。请到「连接账号」页启用「仅用本人身份」（后端热应用，无需重启），之后消息才会以本人身份真实收发。'
-            : '没有企业机器人应用也能用本人身份：登录后到「连接账号」页点「用钉钉本人账号登录（推荐）」，会先切换身份模式（热应用、无需重启），再用浏览器完成授权。Mock 下不会真实收发，也不会假成功。'
+            ? '登录本身已成功，但收发仍是模拟。请到「连接账号」页启用「仅用本人身份」（立即生效，无需重启），之后消息才会以本人身份真实收发。'
+            : '没有企业机器人应用也能用本人身份：登录后到「连接账号」页点「用钉钉本人账号登录（推荐）」，会先切换身份模式（立即生效、无需重启），再用浏览器完成授权。演示模式下不会真实收发，也不会假成功。'
         }
       />
     );
@@ -929,8 +928,8 @@ export function PersonalIdentityModal({
         <Alert
           type="info"
           showIcon
-          message="后端还没有返回钉钉身份状态"
-          description="可能是后端版本较旧或账号接口暂不可用；刷新后重试。"
+          message="暂时读不到钉钉的连接状态"
+          description="可能是 LinkHub 版本较旧，或服务暂时不可用；刷新后重试。"
         />
         <Button icon={<ReloadOutlined />} loading={refreshing} onClick={() => void refreshDetection()}>
           刷新状态

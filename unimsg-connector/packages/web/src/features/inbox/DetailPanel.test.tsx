@@ -34,6 +34,68 @@ function renderPanel(message: UnifiedMessage = FAILED) {
 afterEach(() => vi.restoreAllMocks());
 
 
+describe('大群聊渲染窗口（几千条消息不能一次全铺）', () => {
+  function threadOf(count: number): UnifiedMessage[] {
+    return Array.from({ length: count }, (_, i) => ({
+      ...FAILED,
+      traceId: `t-w-${i}`,
+      externalId: `om_w_${i}`,
+      body: `第 ${i} 条消息`,
+      status: MsgStatus.RECEIVED,
+      failureReason: undefined,
+      reply: undefined,
+      createdAt: new Date(Date.UTC(2026, 10, 1, 0, 0, i)).toISOString(),
+      updatedAt: new Date(Date.UTC(2026, 10, 1, 0, 0, i)).toISOString(),
+    }));
+  }
+
+  function renderThread(thread: UnifiedMessage[]) {
+    render(
+      <MemoryRouter>
+        <AntApp>
+          <DetailPanel message={thread[thread.length - 1]} thread={thread} />
+        </AntApp>
+      </MemoryRouter>,
+    );
+  }
+
+  it('默认只渲染最近 150 条，并提示还有多少条更早的消息', () => {
+    renderThread(threadOf(400));
+
+    expect(screen.getByText(/查看更早的消息（还有 250 条）/)).toBeInTheDocument();
+    expect(screen.getByText('第 399 条消息')).toBeInTheDocument();
+    // 最早的消息没有进入 DOM（数据还在，只是没渲染）
+    expect(screen.queryByText('第 0 条消息')).not.toBeInTheDocument();
+  });
+
+  it('点「查看更早的消息」按整页展开，已渲染的内容不丢', () => {
+    renderThread(threadOf(400));
+
+    fireEvent.click(screen.getByRole('button', { name: /查看更早的消息/ }));
+
+    // 400 - 300 = 100 条仍在窗口外
+    expect(screen.getByText(/查看更早的消息（还有 100 条）/)).toBeInTheDocument();
+    expect(screen.getByText('第 100 条消息')).toBeInTheDocument();
+    expect(screen.getByText('第 399 条消息')).toBeInTheDocument();
+  });
+
+  it('深链/搜索打开窗口外的旧消息：锚点自动进入窗口，不能被窗口藏掉', () => {
+    const thread = threadOf(400);
+    // 锚点是最早那条：全量渲染时代它一定可见，窗口化后也必须可见
+    render(
+      <MemoryRouter>
+        <AntApp>
+          <DetailPanel message={thread[0]} thread={thread} />
+        </AntApp>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText('第 0 条消息')).toBeInTheDocument();
+    expect(screen.getByText('第 399 条消息')).toBeInTheDocument();
+    expect(screen.queryByText(/查看更早的消息/)).not.toBeInTheDocument();
+  });
+});
+
 describe('引用回复：默认普通发送，显式引用才有引用条', () => {
   const inbound: UnifiedMessage = {
     ...FAILED,
@@ -250,7 +312,7 @@ describe('发送中的回复气泡（不能让用户以为消息没发出去）'
 describe('DetailPanel 发送失败原因（P1-2）', () => {
   it('失败区域直接展示可读原因，不再只让用户去回放里翻', () => {
     renderPanel();
-    expect(screen.getByText('发送失败（已写入死信队列）')).toBeInTheDocument();
+    expect(screen.getByText('发送失败（没有送达平台）')).toBeInTheDocument();
     expect(screen.getByText(/原因：飞书 tenant_access_token 获取失败/)).toBeInTheDocument();
     expect(screen.getByTestId('retry-send')).toBeEnabled();
   });
@@ -267,8 +329,8 @@ describe('DetailPanel 发送失败原因（P1-2）', () => {
 
   it('没有可读原因时给回放兜底文案，并提供「查看闭环日志」入口', () => {
     renderPanel({ ...FAILED, failureReason: undefined });
-    expect(screen.getByText(/暂未拿到可读原因/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /查看闭环日志/ })).toBeInTheDocument();
+    expect(screen.getByText(/暂时没有可读的失败原因/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /查看详细记录/ })).toBeInTheDocument();
   });
 
   it('含附件的失败消息禁用重试，说明需要重新附加文件', () => {

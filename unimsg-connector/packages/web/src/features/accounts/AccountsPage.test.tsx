@@ -61,8 +61,8 @@ describe('AccountCard 基础信息', () => {
     expect(screen.getByText('me@qq.com')).toBeInTheDocument();
     expect(screen.getByText('imap.qq.com')).toBeInTheDocument();
     expect(screen.getByText('smtp.qq.com')).toBeInTheDocument();
-    expect(screen.getByText(/监听目录：INBOX、Junk/)).toBeInTheDocument();
-    expect(screen.getAllByText('真实接口').length).toBeGreaterThan(0);
+    expect(screen.getByText(/收信文件夹：INBOX、Junk/)).toBeInTheDocument();
+    expect(screen.getAllByText('真实连接').length).toBeGreaterThan(0);
     // D2 评审：配置问题（issues）收进「详情」折叠区，默认收起不占卡片密度
     expect(screen.queryByText(/MAIL_WORK_PROVIDER=custom/)).not.toBeInTheDocument();
     openDetails(Platform.MAIL);
@@ -76,7 +76,7 @@ describe('AccountCard 基础信息', () => {
     render(<AccountCard account={accountOf(Platform.WECHAT)} />);
 
     expect(screen.getByText('已配置')).toBeInTheDocument();
-    expect(screen.getByText('未配置（演示模式）')).toBeInTheDocument();
+    expect(screen.getByText('演示模式（未连接）')).toBeInTheDocument();
     // D2 评审：RPA 依赖告警（长警告）收进「详情」折叠区，默认收起
     openDetails(Platform.WECHAT);
     // 如实说明这条通道靠什么跑，不把 RPA 说成官方 API
@@ -94,7 +94,7 @@ describe('AccountCard 基础信息', () => {
 
     // P1-1：变量齐了 ≠ 平台连得通，不能只显示得像「已经连上」
     expect(screen.getByText('已配置（未验证）')).toBeInTheDocument();
-    expect(screen.getByText('真实接口')).toBeInTheDocument();
+    expect(screen.getByText('真实连接')).toBeInTheDocument();
     expect(screen.getByText('凭据齐全，auto → 真实接口')).toBeInTheDocument();
     // D2 评审：doctor 自检命令收进「详情」折叠区，默认收起、展开后可复制
     expect(screen.queryByTestId('verify-feishu')).toBeNull();
@@ -130,7 +130,7 @@ describe('身份块（谁在收、谁在发）', () => {
     expect(within(block).getByText('身份 · 谁在收、谁在发')).toBeInTheDocument();
     // 两枚身份 Tag 都是机器人；策略变量名可追溯
     expect(within(block).getAllByText('机器人')).toHaveLength(2);
-    expect(within(block).getByText(/身份策略：自动（本人优先）/)).toBeInTheDocument();
+    expect(within(block).getByText(/身份设置：自动（本人优先）/)).toBeInTheDocument();
     expect(within(block).getByText('机器人长连接（webhook）')).toBeInTheDocument();
     expect(within(block).getByText('机器人接口发送')).toBeInTheDocument();
     // 小白用户最关心的「为什么登录、不用拉群」
@@ -167,7 +167,7 @@ describe('身份块（谁在收、谁在发）', () => {
     render(<AccountCard account={dingtalkAccount(identity)} actionsEnabled onDingtalkConnect={() => {}} />);
 
     const block = screen.getByTestId('identity-block-dingtalk');
-    expect(within(block).getByText(/身份策略：仅机器人/)).toBeInTheDocument();
+    expect(within(block).getByText(/身份设置：仅机器人/)).toBeInTheDocument();
     expect(within(block).queryByRole('button', { name: /连接本人账号/ })).toBeNull();
   });
 
@@ -249,7 +249,7 @@ describe('身份块（谁在收、谁在发）', () => {
     expect(within(block).getAllByText('本人')).toHaveLength(2);
     expect(within(block).queryByText(/当前平台通道是「演示模式」/)).toBeNull();
     expect(within(block).getByRole('button', { name: /重新登录/ })).toBeInTheDocument();
-    expect(screen.getAllByText('未配置（演示模式）').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('演示模式（未连接）').length).toBeGreaterThan(0);
   });
 
   it('纯前端演示模式（actionsEnabled=false）：不渲染连接按钮，避免点了没有后端', () => {
@@ -284,12 +284,12 @@ describe('账号页工具函数（指标口径 / 自检命令）', () => {
     expect(accountConclusion(accountOf(Platform.FEISHU))).toBe('凭据齐全，auto → 真实接口');
     // 无 reason 的 mock 通道：如实说「演示模式」，不冒充真实
     expect(accountConclusion({ ...accountOf(Platform.WECHAT), reason: undefined })).toBe(
-      '当前为演示模式：不会真实收发',
+      '当前是演示模式：不会真实收发',
     );
     // 未配置：结论直接指向下一步（去哪配、配完要重启）
     expect(
       accountConclusion({ ...accountOf(Platform.WECHAT), configured: false, reason: undefined }),
-    ).toBe('尚未配置：到「平台应用配置」填写凭据并重启后端');
+    ).toBe('还没配置：到「平台应用配置」填写凭据，保存后重新打开 LinkHub');
   });
 });
 
@@ -347,7 +347,7 @@ describe('NEW-P2-1：卡片摘要能力 chip 与身份块口径一致（不打�
 
     expect(screen.getByText(/已添加 1 个账号（演示模式）/)).toBeInTheDocument();
     expect(screen.getByText(/已添加 1 个账号（未验证）/)).toBeInTheDocument();
-    expect(screen.queryByText('未配置（演示模式）')).toBeNull();
+    expect(screen.queryByText('演示模式（未连接）')).toBeNull();
   });
 
   it('Mock / 无身份视图：能力 chip 保持原口径，不显示「本人可收」这类不实信息', () => {

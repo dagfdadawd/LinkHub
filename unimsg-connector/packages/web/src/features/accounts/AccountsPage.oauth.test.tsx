@@ -132,9 +132,9 @@ describe('账号页 P1-5：.env 改了没重启', () => {
     });
     renderPage();
 
-    expect(await screen.findByText('.env 已修改，需要重启后端才生效')).toBeInTheDocument();
+    expect(await screen.findByText('配置已修改，需要重新打开 LinkHub 才生效')).toBeInTheDocument();
     expect(screen.getByText('pnpm --filter @unimsg/server start')).toBeInTheDocument();
-    expect(screen.getByText(/当前运行中的后端仍在用「启动时读取的配置」/)).toBeInTheDocument();
+    expect(screen.getByText(/当前运行的 LinkHub 还在用「启动时读到的配置」/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /重新检查/ }));
     expect(hoisted.store.refreshHealth).toHaveBeenCalledTimes(1);
@@ -156,7 +156,7 @@ describe('账号页 P1-5：.env 改了没重启', () => {
   it('健康数据缺 startedAt/envFile（旧后端）时不提示重启', () => {
     makeState();
     renderPage();
-    expect(screen.queryByText(/需要重启后端才生效/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/需要重新打开 LinkHub 才生效/)).not.toBeInTheDocument();
   });
 });
 

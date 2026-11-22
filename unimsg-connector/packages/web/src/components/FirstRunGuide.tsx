@@ -1,8 +1,9 @@
 /**
- * 首启引导：真实后端已连上、但还没有收到任何消息时，给出「3 步上手」。
+ * 首启引导：真实服务下还没有收到任何消息时，给出「3 步上手」。
  *
- * 客户化（白号 P1-5/P2-9）：
- *  - 不再把 DINGTALK_AES_TOKEN 这类环境变量名堆给客户；管理员项折叠为「需要管理员配置（N 项）」；
+ * 客户化（白号 P1-5/P2-9 / 问题④）：
+ *  - 首屏只说人话（「欢迎使用」/「示例消息」），不再出现「后端已连上」这类说法；
+ *  - 不把 DINGTALK_AES_TOKEN 这类环境变量名堆给客户；管理员项折叠为「需要管理员配置（N 项）」；
  *  - 主 CTA：「去连接账号」；次 CTA：「先体验演示（注入示例消息）」；
  *  - 去掉指向不存在按钮的文案（不再写「到平台账号页点连接本人账号」）；
  *  - 开发者命令收进折叠区，普通客户默认看不到。
@@ -10,7 +11,9 @@
  * 设计约束（为了零学习成本 + 可独立单测）：
  *  - 纯 props 驱动：不直接读 store，页面负责把 AppState 的关键字段传进来；
  *  - localStorage 可注入：key = linkhub.firstRunDismissed，读写失败一律降级为「未关闭」；
- *  - 显示条件严格：非 Mock 演示 + 0 条消息 + 后端从未收到消息 + 未点过「知道了」。
+ *  - 显示条件严格：非 Mock 演示 + **当前账号** 0 条消息 + 未点过「知道了」。
+ *    不再看进程级的 `health.received`：那是「本机服务收到的消息数」（可能是别人的账号、
+ *    重启后还会归零），用它判断会让成员账号的空收件箱既看不到引导、又显示「没有匹配的会话」。
  */
 import { useState } from 'react';
 import { Button, Card, Tag, Typography } from 'antd';
@@ -34,17 +37,17 @@ export type FirstRunStorage = Pick<Storage, 'getItem' | 'setItem'>;
 /** 四类数据源的展示顺序（与侧边栏 / 账号页一致） */
 const PLATFORM_ORDER: Platform[] = [Platform.FEISHU, Platform.DINGTALK, Platform.WECHAT, Platform.MAIL];
 
-/** 本次实际通道：real=真实接口，mock=本地模拟（Mock 绝不伪装成真实成功） */
+/** 本次实际通道：real=真实平台，mock=演示模式（演示模式绝不伪装成已连接） */
 const MODE_META: Record<string, { label: string; color: string }> = {
-  real: { label: '真实接口', color: 'success' },
+  real: { label: '真实平台', color: 'success' },
   mock: { label: '演示模式', color: 'warning' },
 };
 
-/** 实时连接状态：说「后端已连上」的同时如实展示连接质量 */
+/** 连接状态：用普通用户能懂的话如实说明同步质量 */
 const CONNECTION_META: Record<RealtimeStatus, { label: string; color: string }> = {
-  connected: { label: '实时连接正常', color: 'success' },
-  reconnecting: { label: '实时连接重连中', color: 'warning' },
-  offline: { label: '实时连接已断开', color: 'error' },
+  connected: { label: '消息同步正常', color: 'success' },
+  reconnecting: { label: '正在重新连接…', color: 'warning' },
+  offline: { label: '暂时连不上', color: 'error' },
 };
 
 const COPY_TOOLTIPS: [string, string] = ['复制命令', '已复制'];
@@ -68,20 +71,18 @@ export function readFirstRunDismissed(storage?: FirstRunStorage): boolean {
   }
 }
 
-/** 空首启判定（与「知道了」无关）：真实后端 + 收件箱为空 + 后端从未收到消息 */
+/** 空首启判定（与「知道了」无关）：真实服务 + **当前账号** 收件箱为空 */
 export function isEmptyFirstRun(input: {
   demoMode: boolean;
   messageCount: number;
-  received: number;
 }): boolean {
-  return !input.demoMode && input.messageCount === 0 && input.received === 0;
+  return !input.demoMode && input.messageCount === 0;
 }
 
 /** 显示条件（严格）：空首启 && 用户没点过「知道了」 */
 export function shouldShowFirstRun(input: {
   demoMode: boolean;
   messageCount: number;
-  received: number;
   dismissed: boolean;
 }): boolean {
   return isEmptyFirstRun(input) && !input.dismissed;
@@ -107,8 +108,6 @@ export interface FirstRunGuideProps {
   demoMode: boolean;
   /** 当前收件箱消息数（>0 时说明已有数据，不显示） */
   messageCount: number;
-  /** 后端健康指标 health.received（>0 时说明后端已收到过消息，不显示） */
-  received: number;
   /** /api/accounts 的四平台通道状态（mode / missing 用于展示） */
   accounts: AccountInfo[];
   /** 实时连接状态（如实展示，不参与显示条件） */
@@ -119,7 +118,7 @@ export interface FirstRunGuideProps {
   apiBase?: string;
   /** 是否仍在加载：加载中不显示，避免数据未就绪时误报「空收件箱」 */
   loading?: boolean;
-  /** 加载错误：请求失败时绝不显示（不能在后端不可用时谎称「后端已连上」） */
+  /** 加载错误：请求失败时绝不显示（不能在校验服务不可用时谎称已连接） */
   error?: string | null;
   /** 来自 onboarding steps：needs_admin/needs_install 数量（与横幅统一口径） */
   needsAdminCount?: number;
@@ -136,7 +135,6 @@ export interface FirstRunGuideProps {
 export function FirstRunGuide({
   demoMode,
   messageCount,
-  received,
   accounts,
   connection,
   storage,
@@ -154,7 +152,7 @@ export function FirstRunGuide({
 
   // 诚实性优先：加载中/加载失败时不显示引导（失败时页面上方已有错误 Alert）
   if (loading || error) return null;
-  if (!shouldShowFirstRun({ demoMode, messageCount, received, dismissed })) return null;
+  if (!shouldShowFirstRun({ demoMode, messageCount, dismissed })) return null;
 
   const connectionMeta = CONNECTION_META[connection];
   const smokeCommand = `python scripts/smoke.py ${smokeBaseUrl(apiBase)}`;
@@ -192,9 +190,9 @@ export function FirstRunGuide({
         }
       >
         <div className="first-run-guide__lead">
-          <span className="first-run-guide__lead-strong">后端已连上，但还没有消息</span>
+          <span className="first-run-guide__lead-strong">欢迎使用 LinkHub</span>
           <span className="first-run-guide__lead-desc">
-            先连接你自己的账号，或注入一条示例消息看完整闭环。
+            先连接你自己的账号，或注入一条示例消息，看看收件箱里能做什么。
           </span>
           <Tag color={connectionMeta.color} className="first-run-guide__connection">
             {connectionMeta.label}
@@ -202,7 +200,7 @@ export function FirstRunGuide({
         </div>
 
         <div className="first-run-guide__modes" data-testid="first-run-modes">
-          <span className="first-run-guide__modes-label">当前通道</span>
+          <span className="first-run-guide__modes-label">各平台连接情况</span>
           {PLATFORM_ORDER.map((platform) => {
             const account = accounts.find((item) => item.platform === platform);
             const meta = platformMeta(platform);
@@ -265,7 +263,7 @@ export function FirstRunGuide({
                 )}
               </div>
               <div className="first-run-guide__step-desc">
-                注入一条示例消息，走通「接收 → 回复 → 回写 → 回流」的完整闭环。
+                注入一条示例消息，它就在你的收件箱里，可以试着回复、处理，看看完整效果。
               </div>
             </div>
           </li>
@@ -289,7 +287,7 @@ export function FirstRunGuide({
               </div>
               <div className="first-run-guide__step-desc">
                 在「连接账号」页按 邮箱 → 钉钉 → 飞书 → 微信 逐项连接。
-                钉钉可以只用本人账号（无需机器人应用）；管理员项可复制清单给管理员。
+                钉钉用你本人的账号就能收发；需要管理员开通的项，可以把清单发给管理员。
               </div>
             </div>
           </li>
@@ -298,7 +296,7 @@ export function FirstRunGuide({
             <span className="first-run-guide__num">3</span>
             <div className="first-run-guide__step-body">
               <div className="first-run-guide__step-head">
-                <span className="first-run-guide__step-title">想核对每个平台走了哪条通道</span>
+                <span className="first-run-guide__step-title">想确认每个平台连没连上</span>
                 {onOpenConnect ? (
                   <Button
                     type="link"
@@ -314,7 +312,7 @@ export function FirstRunGuide({
               </div>
               <div className="first-run-guide__step-desc">
                 每张卡会如实标注「已就绪 / 需本人授权 / 需安装 / 需管理员 / 演示模式」，
-                并给出下一步按钮；不会把 Mock 说成已连接。
+                并给出下一步按钮；演示模式表示还没连上真实账号，只在本机演示。
               </div>
             </div>
           </li>
