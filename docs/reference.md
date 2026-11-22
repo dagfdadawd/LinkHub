@@ -518,7 +518,7 @@ LinkHub 的账号只回答一个问题：**这台机器上「我是谁」**。�
 
 **实现侧（刻意的取舍）**
 
-- **持久化**：默认内存仓储 + 可选文件快照（`DATA_DIR`）；PostgreSQL / Redis 只有 DDL 与仓储接口，运行时未接入。
+- **持久化**：默认文件快照（`unimsg-connector/.linkhub-data/`，含消息快照与自动回复规则；`DATA_DIR`/`DATA_FILE` 存量部署优先，`DATA_FILE=none` 退回纯内存）；PostgreSQL / Redis 只有 DDL 与仓储接口，运行时未接入。
 - **OCR**：占位实现（赛题 A 不依赖 OCR，配置项已预留）。
 - **大模型**：OpenAI 兼容协议真实调用（默认 MiMo `mimo-v2.6-flash`）；超时 / 失败 / 低置信度回退规则，并在消息上标注来源，不假装是模型结果。
 - **文件发送**：飞书 `im/v1/files`、钉钉 `robot/media/upload` 按官方接口实现；受租户策略限制时在 `delivery` 里给出失败原因，可重试。

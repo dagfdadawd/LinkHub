@@ -165,6 +165,9 @@ vite.config.ts.timestamp-*
 # 本人身份落盘文件（echoRegistry 学习到的 openDingTalkId，属本机运行时产物）
 unimsg-connector/packages/server/.linkhub-self-identity.json
 
+# 持久化默认数据目录（评审 P1-8：消息快照 + 自动回复规则，运行时产物）
+unimsg-connector/.linkhub-data/
+
 # 微信 RPA 桥的出站落盘目录（发出去的文件副本，本机运行时产物）
 unimsg-connector/scripts/wechat-rpa/outbox/
 

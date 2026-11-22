@@ -194,6 +194,21 @@ if (process.env.API_TOKEN !== undefined && !rawApiToken) {
 
 const explicitDataFile = (process.env.DATA_FILE ?? '').trim();
 
+/**
+ * `DATA_FILE=none`：显式退回纯内存（持久化默认化的逃生门）。
+ * 演示/一次性环境想要「关掉就干净」，设这一个值即可，连自动回复规则也不落盘。
+ */
+const memoryOnly = explicitDataFile.toLowerCase() === 'none';
+
+/**
+ * 默认数据目录（评审 P1-8 持久化默认化）。
+ *
+ * 刻意**不**改 `dataDir`（DATA_DIR）的语义：飞书授权令牌 / 本人接收水位 / 本地账号库的
+ * 默认位置都跟随 DATA_DIR，改了会让存量安装升级后读不到旧令牌（重新授权才能用）。
+ * 这里只给「消息快照 + 自动回复规则」一个默认落盘位置——「重启不丢消息」变成默认承诺。
+ */
+const defaultDataDir = underTest ? '' : resolve(here, '../../../.linkhub-data');
+
 // 大模型按「凭据够就真实、不够就规则」解析；单测环境强制规则，绝不在测试里外呼
 const llmRuntime = resolveLlmRuntime(underTest ? { ...process.env, LLM_PROVIDER: 'mock' } : process.env);
 const llmApiKey = (process.env.LLM_API_KEY ?? '').trim();
@@ -207,12 +222,20 @@ export const config = {
   redisUrl: process.env.REDIS_URL ?? '',
 
   /**
-   * 闭环数据快照文件（独立部署用）。
-   * 设置 DATA_DIR 或 DATA_FILE 后，消息 / trace / 死信队列会落盘，
-   * 容器重启后收件箱与「全链路回放」不丢，满足赛题 3.2「可追踪、可回放」。
-   * 留空 = 纯内存（本地演示零副作用）。
+   * 闭环数据快照文件。
+   * 默认持久化（评审 P1-8）：没配 DATA_DIR/DATA_FILE 时落到 `.linkhub-data/linkhub-state.json`，
+   * 重启后收件箱与「全链路回放」不丢，满足赛题 3.2「可追踪、可回放」。
+   * 设了 DATA_DIR/DATA_FILE 的存量部署不受影响；`DATA_FILE=none` 显式退回纯内存。
    */
-  dataFile: explicitDataFile || (dataDir ? join(dataDir, 'linkhub-state.json') : ''),
+  dataFile: memoryOnly
+    ? ''
+    : (explicitDataFile || (dataDir ? join(dataDir, 'linkhub-state.json') : (defaultDataDir ? join(defaultDataDir, 'linkhub-state.json') : ''))),
+
+  /** 默认数据目录（.linkhub-data；单测为空串）。DATA_DIR 优先，仅供快照 / 自动回复规则兜底使用 */
+  defaultDataDir,
+
+  /** DATA_FILE=none 时的纯内存标记：连自动回复规则也不落盘 */
+  memoryOnly,
 
   /**
    * 本地账号库（注册/登录/会话）落盘位置。

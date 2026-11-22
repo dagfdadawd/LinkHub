@@ -44,11 +44,17 @@ if (tokenBlocker) {
   process.exit(1);
 }
 
-// DATA_DIR/DATA_FILE 存在时启用文件快照：容器重启后收件箱与全链路回放仍可复现
+// 持久化默认化（评审 P1-8）：默认落 .linkhub-data/，DATA_DIR/DATA_FILE 存量部署不变，DATA_FILE=none 退回纯内存
 const repo = new InMemoryRepository(config.dataFile);
-// 自动回复规则：随收件箱一起落到 DATA_DIR，容器重建后规则不丢
+// 自动回复规则：随收件箱一起落盘，重启后规则不丢（DATA_DIR 优先，默认进 .linkhub-data）
 const dataDir = (process.env.DATA_DIR ?? '').trim();
-const autoRules = new AutoRuleStore(dataDir ? join(dataDir, 'auto-rules.json') : '');
+const autoRules = new AutoRuleStore(
+  dataDir
+    ? join(dataDir, 'auto-rules.json')
+    : config.memoryOnly || !config.defaultDataDir
+      ? ''
+      : join(config.defaultDataDir, 'auto-rules.json'),
+);
 const svc = new MessageService(
   repo,
   connectors,

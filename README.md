@@ -166,7 +166,7 @@ Node.js ≥ 20 · TypeScript · Express 4 + ws · React 18 + Vite 5 + Ant Design
 
 **邮箱**走 IMAP 加授权码，附件可直接在 LinkHub 内下载（后端按邮件 UID 重取原信解析附件）；企业邮箱如果关了 IMAP，得先开通。
 
-**持久化**默认是内存加可选文件快照（设 `DATA_DIR`）。PostgreSQL / Redis 只提供了 DDL 和仓储接口，没有接入运行时，重启会丢消息。
+**持久化**默认开启：消息 / 回放 / 自动回复规则落到 `unimsg-connector/.linkhub-data/`，重启不丢（设了 `DATA_DIR`/`DATA_FILE` 的存量部署不受影响，`DATA_FILE=none` 可退回纯内存）。PostgreSQL / Redis 只提供了 DDL 和仓储接口，没有接入运行时。
 
 **OCR** 是占位实现，赛题 A 不依赖它。
 

@@ -123,7 +123,7 @@ docker compose up -d
 ```
 
 这保证赛题 3.2「闭环每一步可追踪、可回放、状态可同步」在**重启之后**依然成立；
-本地开发不设 `DATA_DIR` 时仍是纯内存，不产生任何文件副作用。
+本地开发默认持久化到 `unimsg-connector/.linkhub-data/`（重启不丢消息，评审 P1-8）；要纯内存零副作用，设 `DATA_FILE=none`。
 
 ---
 
