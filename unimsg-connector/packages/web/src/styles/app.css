@@ -3812,6 +3812,21 @@ button {
   gap: 10px;
 }
 
+/* 平台提醒开关：四个「开关 + 平台名」横排，窄屏可换行 */
+.settings__platform-mutes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+}
+
+.settings__platform-mute {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8125rem;
+  color: var(--text-2);
+}
+
 .set-note {
   font-size: 0.75rem;
   color: var(--text-3);

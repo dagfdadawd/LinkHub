@@ -21,7 +21,11 @@ const mocks = vi.hoisted(() => ({
   primeUrgentAudio: vi.fn(() => true),
 }));
 
-vi.mock('../utils/urgentAlert', () => mocks);
+/** 只 mock 副作用（声音 / 通知 / 音频解锁），inQuietHours 等纯逻辑用真实实现 */
+vi.mock('../utils/urgentAlert', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../utils/urgentAlert')>();
+  return { ...actual, ...mocks };
+});
 
 let seq = 0;
 function msg(over: Partial<UnifiedMessage> = {}): UnifiedMessage {
@@ -144,8 +148,54 @@ describe('useUrgentAlerts', () => {
     expect(mocks.showSystemNotification).not.toHaveBeenCalled();
   });
 
-  it('默认偏好：提示音开、桌面通知关（通知需用户显式授权后才开）', () => {
+  it('级别 all：非紧急的新消息也提醒，标题用「新消息」而非「紧急消息」', () => {
+    patchPreferences({ alertLevel: 'all' });
+    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+    const { rerender } = renderAlerts([]);
+    rerender({ messages: [msg({ priority: 'normal' })], ready: true });
+    expect(mocks.playUrgentChime).toHaveBeenCalledTimes(1);
+    const [title] = mocks.showSystemNotification.mock.calls[0] as unknown as [string];
+    expect(title).toContain('新消息');
+    expect(title).not.toContain('紧急消息');
+  });
+
+  it('级别 off：全部静默，连紧急也不响', () => {
+    patchPreferences({ alertLevel: 'off' });
+    const { rerender } = renderAlerts([]);
+    rerender({ messages: [msg()], ready: true });
+    expect(mocks.playUrgentChime).not.toHaveBeenCalled();
+    expect(mocks.showSystemNotification).not.toHaveBeenCalled();
+  });
+
+  it('平台静音：静音平台不响，其他平台照常', () => {
+    patchPreferences({ alertLevel: 'all', alertMutedPlatforms: [Platform.MAIL] });
+    const { rerender } = renderAlerts([]);
+    rerender({ messages: [msg({ platform: Platform.MAIL })], ready: true });
+    expect(mocks.playUrgentChime).not.toHaveBeenCalled();
+    rerender({ messages: [msg({ platform: Platform.MAIL }), msg()], ready: true });
+    expect(mocks.playUrgentChime).toHaveBeenCalledTimes(1); // 只有飞书那条响了
+  });
+
+  it('免打扰时段内静默；时段结束后不补响被挡掉的消息，只影响之后的新消息', () => {
+    patchPreferences({ alertLevel: 'all', dndEnabled: true, dndFrom: '00:00', dndTo: '23:59' });
+    const { rerender } = renderAlerts([]);
+    const suppressed = msg();
+    rerender({ messages: [suppressed], ready: true });
+    expect(mocks.playUrgentChime).not.toHaveBeenCalled();
+
+    // 关闭免打扰：刚那条不会补响（登记为已见），之后真正新到的才响
+    patchPreferences({ dndEnabled: false });
+    rerender({ messages: [suppressed], ready: true });
+    expect(mocks.playUrgentChime).not.toHaveBeenCalled();
+    rerender({ messages: [suppressed, msg()], ready: true });
+    expect(mocks.playUrgentChime).toHaveBeenCalledTimes(1);
+  });
+
+  it('默认偏好：提示音开、桌面通知关、级别仅紧急（与旧行为一致）', () => {
     expect(DEFAULT_PREFERENCES.urgentSound).toBe(true);
     expect(DEFAULT_PREFERENCES.urgentDesktop).toBe(false);
+    expect(DEFAULT_PREFERENCES.alertLevel).toBe('urgent');
+    expect(DEFAULT_PREFERENCES.alertMutedPlatforms).toEqual([]);
+    expect(DEFAULT_PREFERENCES.dndEnabled).toBe(false);
   });
 });

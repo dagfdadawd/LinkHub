@@ -114,3 +114,24 @@ export function showSystemNotification(title: string, body: string, onClick?: ()
 export function showUrgentTestNotification(onClick?: () => void): boolean {
   return showSystemNotification('LinkHub 紧急提醒', '这是一条测试通知：收到紧急消息时会这样提醒你。', onClick);
 }
+
+/** 解析 HH:mm 为当天分钟数；格式非法（含 24:xx、超范围分钟）返回 null */
+function parseHm(value: string): number | null {
+  const match = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec(value.trim());
+  if (!match) return null;
+  return Number(match[1]) * 60 + Number(match[2]);
+}
+
+/**
+ * 免打扰窗口判断（用于新消息提醒的时段静音）。
+ *  - 支持跨夜：from > to 视为跨过午夜（22:00→08:00 静默）；
+ *  - from === to 视为空窗口（永不静默）；
+ *  - 时间串非法一律不静默——免打扰配置坏了宁可多提醒，不吞消息。
+ */
+export function inQuietHours(now: Date, from: string, to: string): boolean {
+  const start = parseHm(from);
+  const end = parseHm(to);
+  if (start === null || end === null || start === end) return false;
+  const minute = now.getHours() * 60 + now.getMinutes();
+  return start < end ? minute >= start && minute < end : minute >= start || minute < end;
+}

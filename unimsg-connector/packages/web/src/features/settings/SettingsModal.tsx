@@ -29,6 +29,7 @@ import {
   patchPreferences,
   resetPreferences,
   usePreferences,
+  type AlertLevel,
   type Density,
   type MotionLevel,
   type SendKey,
@@ -38,6 +39,8 @@ import {
   requestNotificationPermission,
   showUrgentTestNotification,
 } from '../../utils/urgentAlert';
+import { platformMeta } from '../../utils/format';
+import { Platform } from '../../types';
 
 const MAX_AVATAR_BYTES = 300 * 1024;
 const APP_VERSION = '1.1.0';
@@ -186,6 +189,17 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
   function previewChime(): void {
     if (playUrgentChime()) message.success('这就是收到紧急消息时的提示音');
     else message.warning('当前浏览器不支持 / 暂时无法播放提示音');
+  }
+
+  /**
+   * 平台提醒开关：on = 恢复提醒（从静音表里移除），off = 静音（加入静音表）。
+   * 列表整体替换写回，保持 patchPreferences 的不可变更新约定。
+   */
+  function togglePlatformAlert(platform: Platform, on: boolean): void {
+    const muted = new Set(prefs.alertMutedPlatforms);
+    if (on) muted.delete(platform);
+    else muted.add(platform);
+    patchPreferences({ alertMutedPlatforms: [...muted] });
   }
 
   // 每次打开都同步为已保存的值，避免上次未提交的编辑残留
@@ -406,11 +420,22 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
                   />
                 </Row>
 
-                <div className="set-section__title">紧急提醒</div>
+                <div className="set-section__title">新消息提醒</div>
                 <Row
-                  title="紧急提示音"
-                  description="收到判定为「紧急」的入站消息时播放两声提示音；自己手动标的紧急不会再响。"
+                  title="提醒级别"
+                  description="「全部新消息」让聚合收件箱真正不漏消息；「仅紧急」只提醒判定为紧急的入站消息（自己手动标的不再响）；关闭后收件箱照常收消息，只是不响不动。"
                 >
+                  <Segmented
+                    value={prefs.alertLevel}
+                    onChange={(value) => patchPreferences({ alertLevel: value as AlertLevel })}
+                    options={[
+                      { label: '关闭', value: 'off' },
+                      { label: '仅紧急', value: 'urgent' },
+                      { label: '全部新消息', value: 'all' },
+                    ]}
+                  />
+                </Row>
+                <Row title="提示音" description="提醒触发时播放两声提示音。">
                   <div className="settings__inline-actions">
                     <Button size="small" onClick={previewChime}>
                       试听
@@ -418,19 +443,66 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
                     <Switch
                       checked={prefs.urgentSound}
                       onChange={(checked) => patchPreferences({ urgentSound: checked })}
-                      aria-label="紧急提示音"
+                      aria-label="提示音"
                     />
                   </div>
                 </Row>
                 <Row
-                  title="紧急桌面通知"
+                  title="桌面通知"
                   description="页面不在前台时弹系统通知，点击直达该会话；开启时浏览器会请求通知权限。"
                 >
                   <Switch
                     checked={prefs.urgentDesktop}
                     onChange={(checked) => void toggleDesktopAlert(checked)}
-                    aria-label="紧急桌面通知"
+                    aria-label="桌面通知"
                   />
+                </Row>
+                <Row
+                  title="平台静音"
+                  description="被静音的平台来了新消息不响不动，收件箱里照常显示；关闭开关即恢复提醒。"
+                >
+                  <div className="settings__platform-mutes">
+                    {(Object.values(Platform) as Platform[]).map((p) => (
+                      <span key={p} className="settings__platform-mute">
+                        <Switch
+                          size="small"
+                          checked={!prefs.alertMutedPlatforms.includes(p)}
+                          onChange={(checked) => togglePlatformAlert(p, checked)}
+                          aria-label={`${platformMeta(p).name}提醒`}
+                        />
+                        <span>{platformMeta(p).name}</span>
+                      </span>
+                    ))}
+                  </div>
+                </Row>
+                <Row
+                  title="免打扰时段"
+                  description="时段内提示音与桌面通知都静默，消息照常进收件箱；支持跨夜（如 22:00 → 08:00）。"
+                >
+                  <div className="settings__inline-actions">
+                    <Switch
+                      checked={prefs.dndEnabled}
+                      onChange={(checked) => patchPreferences({ dndEnabled: checked })}
+                      aria-label="免打扰时段"
+                    />
+                    <Input
+                      type="time"
+                      value={prefs.dndFrom}
+                      onChange={(e) => patchPreferences({ dndFrom: e.target.value })}
+                      disabled={!prefs.dndEnabled}
+                      style={{ width: 96 }}
+                      aria-label="免打扰开始"
+                    />
+                    <span className="set-note">→</span>
+                    <Input
+                      type="time"
+                      value={prefs.dndTo}
+                      onChange={(e) => patchPreferences({ dndTo: e.target.value })}
+                      disabled={!prefs.dndEnabled}
+                      style={{ width: 96 }}
+                      aria-label="免打扰结束"
+                    />
+                  </div>
                 </Row>
               </div>
             ),

@@ -4,6 +4,7 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  inQuietHours,
   notificationPermission,
   playUrgentChime,
   requestNotificationPermission,
@@ -98,5 +99,34 @@ describe('桌面通知权限', () => {
     stubNotification('granted');
     expect(showUrgentTestNotification()).toBe(true);
     expect(instances[0].title).toContain('紧急提醒');
+  });
+});
+
+describe('免打扰时段 inQuietHours', () => {
+  const at = (h: number, m: number) => new Date(2026, 10, 20, h, m);
+
+  it('同日窗口：只静默区间内的时间（左闭右开）', () => {
+    expect(inQuietHours(at(12, 0), '10:00', '14:00')).toBe(true);
+    expect(inQuietHours(at(13, 59), '10:00', '14:00')).toBe(true);
+    expect(inQuietHours(at(14, 0), '10:00', '14:00')).toBe(false);
+    expect(inQuietHours(at(9, 59), '10:00', '14:00')).toBe(false);
+  });
+
+  it('跨夜窗口（22:00→08:00）：深夜与凌晨静默，白天正常', () => {
+    expect(inQuietHours(at(23, 30), '22:00', '08:00')).toBe(true);
+    expect(inQuietHours(at(3, 0), '22:00', '08:00')).toBe(true);
+    expect(inQuietHours(at(7, 59), '22:00', '08:00')).toBe(true);
+    expect(inQuietHours(at(8, 0), '22:00', '08:00')).toBe(false);
+    expect(inQuietHours(at(12, 0), '22:00', '08:00')).toBe(false);
+  });
+
+  it('from === to 视为空窗口，永不静默', () => {
+    expect(inQuietHours(at(12, 0), '12:00', '12:00')).toBe(false);
+  });
+
+  it('时间串非法一律不静默：配置坏了宁可多提醒，不吞消息', () => {
+    expect(inQuietHours(at(12, 0), 'bad', '08:00')).toBe(false);
+    expect(inQuietHours(at(12, 0), '22:00', '24:00')).toBe(false);
+    expect(inQuietHours(at(12, 0), '', '')).toBe(false);
   });
 });
