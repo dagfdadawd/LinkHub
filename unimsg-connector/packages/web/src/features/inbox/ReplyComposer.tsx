@@ -129,6 +129,14 @@ export function ReplyComposer({
             send();
           }
         }}
+        onPaste={(e) => {
+          // 评审 P2-12：截图/复制的文件直接进附件，不用「添加文件」绕一道；
+          // 没有文件时不拦截，让文本粘贴照常走默认行为
+          const files = Array.from(e.clipboardData?.files ?? []);
+          if (files.length === 0) return;
+          e.preventDefault();
+          void pickFiles(files);
+        }}
       />
 
       <input

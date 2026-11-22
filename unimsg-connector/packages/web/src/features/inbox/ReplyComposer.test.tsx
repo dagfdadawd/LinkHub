@@ -141,4 +141,15 @@ describe('ReplyComposer', () => {
     const inserted = onChange.mock.calls[0][0] as string;
     expect(inserted).toBe('先说结论：\n收到，我看一下，稍后回复你。');
   });
+
+  it('粘贴文件直接进附件（评审 P2-12）；无文件的粘贴不拦截', async () => {
+    const { textarea } = setup();
+    const png = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], '截屏.png', { type: 'image/png' });
+    fireEvent.paste(textarea, { clipboardData: { files: [png] } });
+    expect(await screen.findByText(/截屏\.png/)).toBeInTheDocument();
+
+    // 纯文本粘贴：不进附件、不拦截默认行为
+    fireEvent.paste(textarea, { clipboardData: { files: [] } });
+    expect(screen.getAllByText(/截屏\.png/)).toHaveLength(1);
+  });
 });
