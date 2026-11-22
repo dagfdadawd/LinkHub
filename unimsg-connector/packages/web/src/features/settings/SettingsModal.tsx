@@ -245,7 +245,8 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
           ? '重连中'
           : '未连接';
   const progress = state.onboarding?.overall;
-  const accountsReadyText = `${progress?.ready ?? 0}/${progress?.total ?? 4} 已就绪（不代表已连真实平台）`;
+  // 措辞用「平台」而不是「账号」：这里数的是平台连接的就绪数，与登录账号无关（评审 D3）
+  const accountsReadyText = `平台 ${progress?.ready ?? 0}/${progress?.total ?? 4} 已就绪（不代表已连真实平台）`;
 
   return (
     <Modal

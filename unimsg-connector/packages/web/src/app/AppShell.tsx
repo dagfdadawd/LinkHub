@@ -43,6 +43,7 @@ import { SettingsModal } from '../features/settings/SettingsModal';
 import { ComposeModal } from '../features/compose/ComposeModal';
 import { CommandPalette } from '../components/CommandPalette';
 import { useTheme } from './ThemeProvider';
+import { pageMeta } from './pageMeta';
 import { Platform } from '../types';
 import type { UnifiedMessage } from '../types';
 import { PLATFORM_META } from '../utils/format';
@@ -53,14 +54,6 @@ import { ensureNotificationPermission, showSystemNotification } from '../service
 const ERROR_HINTS =
   '排查：后端是否已启动（pnpm --filter @unimsg/server start）；VITE_API_BASE 是否指向正确端口；token 是否与后端 API_TOKEN 一致';
 
-/** 顶栏标题：小号 eyebrow + 大标题，Apple 式信息层级 */
-function pageMeta(pathname: string): { eyebrow: string; title: string } {
-  if (pathname.startsWith('/todos')) return { eyebrow: 'TASKS', title: '待办' };
-  if (pathname.startsWith('/trace')) return { eyebrow: 'TRACE', title: '全链路回放' };
-  if (pathname.startsWith('/accounts')) return { eyebrow: 'ACCOUNTS', title: '平台账号' };
-  if (pathname.startsWith('/connect')) return { eyebrow: 'CONNECT', title: '连接账号' };
-  return { eyebrow: 'INBOX', title: '收件箱' };
-}
 
 /** ≤640px 时渲染底部导航；测试环境 matchMedia 返回 false，不会产生重复文案 */
 function useIsCompact(): boolean {
