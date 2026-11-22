@@ -35,22 +35,27 @@ describe('isSnoozed', () => {
 });
 
 describe('snoozePresets', () => {
+  // 时区教训（CI 在 UTC 上红过）：snoozePresets 用 getHours/setHours 这类**本地时间**
+  // 判定，测试必须用本地时间构造器（new Date(y, m, d, h)）构造 now 与期望值，
+  // 两端同帧自洽，任何时区的 CI 上都成立；写成 '+08:00' 字面量就只有东八区能过。
+  const isoOf = (y: number, m: number, d: number, h: number, min = 0): string =>
+    new Date(y, m - 1, d, h, min).toISOString();
+
   it('白天：今晚 21:00 / 明早 9:00 / 1 小时后', () => {
-    const now = new Date('2026-11-22T12:00:00+08:00');
+    const now = new Date(2026, 10, 22, 12, 0); // 本地 11-22 12:00
     const presets = snoozePresets(now);
     expect(presets.map((p) => p.label)).toEqual(['1 小时后', '今晚 21:00', '明早 9:00']);
-    // toISOString 恒为 UTC：12:00+08:00 的 1 小时后 = 05:00Z
-    expect(presets[0].untilIso).toBe('2026-11-22T05:00:00.000Z');
-    expect(presets[1].untilIso).toBe('2026-11-22T13:00:00.000Z');
-    expect(presets[2].untilIso).toBe('2026-11-23T01:00:00.000Z');
+    expect(presets[0].untilIso).toBe(isoOf(2026, 11, 22, 13));
+    expect(presets[1].untilIso).toBe(isoOf(2026, 11, 22, 21));
+    expect(presets[2].untilIso).toBe(isoOf(2026, 11, 23, 9));
   });
 
   it('已过 21:00：今晚档顺延到明天 21:00，文案如实跟着变', () => {
-    const now = new Date('2026-11-22T22:30:00+08:00');
+    const now = new Date(2026, 10, 22, 22, 30); // 本地 11-22 22:30
     const presets = snoozePresets(now);
     expect(presets[1].label).toBe('明天 21:00');
-    expect(presets[1].untilIso).toBe('2026-11-23T13:00:00.000Z');
+    expect(presets[1].untilIso).toBe(isoOf(2026, 11, 23, 21));
     expect(presets[2].label).toBe('明早 9:00');
-    expect(presets[2].untilIso).toBe('2026-11-23T01:00:00.000Z');
+    expect(presets[2].untilIso).toBe(isoOf(2026, 11, 23, 9));
   });
 });
