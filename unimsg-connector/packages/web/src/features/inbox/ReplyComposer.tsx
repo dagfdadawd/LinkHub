@@ -204,7 +204,11 @@ export function ReplyComposer({
         >
           <UploadOutlined /> 添加文件
         </button>
-        <span className="composer__count" aria-live="off">
+        <span
+          className="composer__count"
+          aria-live="off"
+          title={`回复上限 ${MAX_LENGTH} 字（平台回写通道限制）；「新建发送」上限 4000 字`}
+        >
           {value.length} / {MAX_LENGTH}
         </span>
         <RippleButton
