@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
-import { AccountCard, accountConclusion, capabilityWarning, doctorCommand, sendBreakdown } from './AccountsPage';
+import { AccountCard, accountConclusion, capabilityWarning, doctorCommand, DoctorPanel, sendBreakdown } from './AccountsPage';
 import { ACCOUNTS } from '../../services/mock/fixtures';
 import { Platform } from '../../types';
 import type { PlatformIdentityView, UserIdentityStatus } from '@unimsg/shared';
@@ -377,5 +377,40 @@ describe('身份策略固定「仅本人」但未登录（二轮复验 P2-4）',
     expect(within(block).getByText('本人身份（未登录）')).toBeInTheDocument();
     expect(within(block).getByText(/不会以本人身份收发/)).toBeInTheDocument();
     expect(within(block).queryByRole('button', { name: /^(接收|发送)$/ })).toBeNull();
+  });
+});
+
+describe('DoctorPanel 一键自检结果（评审 P1-9）', () => {
+  const report = {
+    generatedAt: '2026-11-22T12:00:00.000Z',
+    checks: [
+      { group: 'env', id: 'env:feishu', title: '飞书凭据', status: 'PASS' as const, detail: '凭据齐全' },
+      {
+        group: 'feishu',
+        id: 'feishu:send',
+        title: '飞书真实发送',
+        status: 'FAIL' as const,
+        detail: '发送失败：无效的 app_secret',
+        hint: '检查 App Secret 后重试',
+      },
+      { group: 'mail', id: 'mail:imap', title: '邮箱 IMAP', status: 'SKIP' as const, detail: '未配置邮箱账号' },
+    ],
+  };
+
+  it('三条结论各自配色展示：计数汇总正确，FAIL 的 hint 全量可见', () => {
+    render(<DoctorPanel report={report} />);
+    expect(screen.getByTestId('doctor-panel')).toBeInTheDocument();
+    expect(screen.getByText('1 通过 · 1 失败 · 1 跳过')).toBeInTheDocument();
+    expect(screen.getByText('飞书真实发送')).toBeInTheDocument();
+    expect(screen.getByText('发送失败：无效的 app_secret')).toBeInTheDocument();
+    expect(screen.getByText('检查 App Secret 后重试')).toBeInTheDocument();
+    expect(screen.getByText('未配置邮箱账号')).toBeInTheDocument();
+    const failRow = screen.getByText('飞书真实发送').closest('.doctor-panel__row');
+    expect(failRow).toHaveClass('doctor-panel__row--fail');
+  });
+
+  it('空报告：面板可渲染且计数为 0（不崩）', () => {
+    render(<DoctorPanel report={{ generatedAt: '2026-11-22T12:00:00.000Z', checks: [] }} />);
+    expect(screen.getByText('0 通过 · 0 失败 · 0 跳过')).toBeInTheDocument();
   });
 });

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Alert, Button, Card, Col, message, Popconfirm, Row, Tag, Typography } from 'antd';
+import { Alert, Button, Card, Col, message, Popconfirm, Row, Tag, Tooltip, Typography } from 'antd';
 import {
   ApiOutlined,
   CheckCircleFilled,
@@ -13,6 +13,7 @@ import {
   LoginOutlined,
   LogoutOutlined,
   ReloadOutlined,
+  SafetyCertificateOutlined,
   SendOutlined,
   SettingOutlined,
   WarningOutlined,
@@ -20,8 +21,8 @@ import {
 import type { DeliveryMode, PlatformIdentityView } from '@unimsg/shared';
 import { useAppState } from '../../hooks/useAppState';
 import { Platform } from '../../types';
-import type { AccountInfo, DingtalkPersonalStatus, MailAccountInfo } from '../../services/api';
-import { store } from '../../store';
+import type { AccountInfo, DingtalkPersonalStatus, DoctorReport, MailAccountInfo } from '../../services/api';
+import { services, store } from '../../store';
 import { formatDateTime, platformMeta, toneStyle } from '../../utils/format';
 import { checkEnvRestart } from '../../utils/envRestart';
 import { DrawerSection } from '../../components/DrawerSection';
@@ -575,6 +576,47 @@ export function AccountCard({
   );
 }
 
+/**
+ * 一键自检结果面板（评审 P1-9）：/api/doctor 的报告渲染成可读结论。
+ * 纯展示组件——PASS/FAIL/SKIP 各自配色，FAIL/SKIP 的 hint（下一步怎么做）全量展示。
+ */
+export function DoctorPanel({ report }: { report: DoctorReport }) {
+  const counts = report.checks.reduce(
+    (acc, c) => {
+      acc[c.status.toLowerCase() as 'pass' | 'fail' | 'skip'] += 1;
+      return acc;
+    },
+    { pass: 0, fail: 0, skip: 0 },
+  );
+  return (
+    <section className="doctor-panel" data-testid="doctor-panel" aria-label="自检结果">
+      <header className="doctor-panel__head">
+        <span className="doctor-panel__name">
+          <SafetyCertificateOutlined /> 自检结果 · {formatDateTime(report.generatedAt)}
+        </span>
+        <span className="doctor-panel__sum">
+          {counts.pass} 通过 · {counts.fail} 失败 · {counts.skip} 跳过
+        </span>
+      </header>
+      <ul className="doctor-panel__list">
+        {report.checks.map((c) => (
+          <li
+            key={c.id}
+            className={`doctor-panel__row doctor-panel__row--${c.status.toLowerCase()}`}
+          >
+            <span className="doctor-panel__status">{c.status}</span>
+            <div className="doctor-panel__body">
+              <span className="doctor-panel__title">{c.title}</span>
+              <span className="doctor-panel__detail">{c.detail}</span>
+              {c.hint && <span className="doctor-panel__hint">{c.hint}</span>}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 export function AccountsPage() {
   const state = useAppState();
   const navigate = useNavigate();
@@ -582,6 +624,10 @@ export function AccountsPage() {
   const [metricsOpen, setMetricsOpen] = useState(false);
   const [dingtalkOpen, setDingtalkOpen] = useState(false);
   const [appConfigOpen, setAppConfigOpen] = useState(false);
+  /** 一键自检（评审 P1-9）：报告 + 防重复点击锁；Mock 模式没有可自检的真实通道，按钮如实禁用 */
+  const [doctorReport, setDoctorReport] = useState<DoctorReport | null>(null);
+  const [doctorRunning, setDoctorRunning] = useState(false);
+  const [doctorError, setDoctorError] = useState('');
   /** 飞书 OAuth 共用流程：与「连接账号」授权中心同一套回跳/拦截反馈 */
   const feishu = useFeishuOAuth();
   // 只在小抽屉展开时采样（不做后台轮询）；数据不足 3 点不画
@@ -644,6 +690,22 @@ export function AccountsPage() {
 
   const actionsEnabled = !state.demoMode;
 
+  /** 后端是否支持一键自检：仅真实后端提供（Mock 没有可自检的真实通道） */
+  const canSelfCheck = typeof services.api.runDoctor === 'function' && actionsEnabled;
+
+  async function runSelfCheck(): Promise<void> {
+    if (!services.api.runDoctor || doctorRunning) return;
+    setDoctorRunning(true);
+    setDoctorError('');
+    try {
+      setDoctorReport(await services.api.runDoctor());
+    } catch (e) {
+      setDoctorError(e instanceof Error ? e.message : '自检失败，请稍后重试');
+    } finally {
+      setDoctorRunning(false);
+    }
+  }
+
   return (
     <div className="page">
       <header className="page__head">
@@ -653,6 +715,23 @@ export function AccountsPage() {
           </h1>
         </div>
         <div className="accounts-head-actions">
+          <Tooltip
+            title={
+              canSelfCheck
+                ? '跑一遍服务端自检（doctor）：真实模式要连平台，邮箱账号多时较慢'
+                : '演示模式没有可自检的真实通道；连接真实平台后可用'
+            }
+          >
+            <Button
+              icon={<SafetyCertificateOutlined />}
+              loading={doctorRunning}
+              disabled={!canSelfCheck}
+              onClick={() => void runSelfCheck()}
+              data-testid="run-doctor"
+            >
+              一键自检
+            </Button>
+          </Tooltip>
           <Button icon={<SettingOutlined />} onClick={() => setAppConfigOpen(true)}>
             平台应用配置
           </Button>
@@ -671,6 +750,12 @@ export function AccountsPage() {
         「已配置 / 真实接口」只代表<strong>变量填齐、通道按真实接口工作</strong>，不代表平台一定连得通；
         真实模式的卡片里有可复制的自检命令（doctor），跑一次就能确认平台是否真的可用。
       </p>
+
+      {/* 一键自检（评审 P1-9）：结果与 pnpm doctor 同源；失败也有可读结论，绝不静默 */}
+      {doctorError && (
+        <Alert className="accounts-alert" type="error" showIcon message="自检失败" description={doctorError} />
+      )}
+      {doctorReport && <DoctorPanel report={doctorReport} />}
 
       {/* P1-5：.env 改了但后端没重启——最常见的小白困惑，必须显式提示 */}
       {envRestart.needed && (

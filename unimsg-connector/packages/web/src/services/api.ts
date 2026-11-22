@@ -524,6 +524,22 @@ export interface DownloadedFile {
   filename: string;
 }
 
+/** 自检单条结论（与 `pnpm doctor` 的输出同源，评审 P1-9） */
+export interface DoctorCheck {
+  group: string;
+  id: string;
+  title: string;
+  status: 'PASS' | 'FAIL' | 'SKIP';
+  detail: string;
+  hint?: string;
+}
+
+/** 一键自检报告 */
+export interface DoctorReport {
+  generatedAt: string;
+  checks: DoctorCheck[];
+}
+
 export interface MessageApi {
   list(filter?: MessageFilter): Promise<UnifiedMessage[]>;
   get(id: string): Promise<UnifiedMessage | undefined>;
@@ -564,6 +580,12 @@ export interface MessageApi {
   createAutoRule?(input: AutoRuleInput): Promise<AutoRule>;
   updateAutoRule?(id: string, patch: Partial<AutoRuleInput>): Promise<AutoRule>;
   deleteAutoRule?(id: string): Promise<void>;
+  /**
+   * 一键自检（评审 P1-9）：跑一遍服务端 doctor 探针，结果与 `pnpm doctor` 同源。
+   * 仅真实后端提供（Mock 没有可自检的通道，按钮如实禁用）；真实模式下探针要连平台，
+   * 慢通道（邮箱 25s+/账号）耗时明显，调用方须防重复点击。
+   */
+  runDoctor?(): Promise<DoctorReport>;
   /** 统计看板 */
   stats?(): Promise<StatsOverview>;
   /** 注册：成功后直接拿到会话令牌（后端同时登录）+ 一次性恢复码 */

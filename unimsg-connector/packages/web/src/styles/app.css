@@ -10923,3 +10923,91 @@ html.vt-morph .detail {
   text-align: center;
 }
 
+
+/* 一键自检结果面板（评审 P1-9）：账号页页头按钮 → /api/doctor 报告的可读结论 */
+.doctor-panel {
+  margin: 8px 0 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-12);
+  background: var(--surface);
+}
+
+.doctor-panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.doctor-panel__sum {
+  font-weight: 400;
+  font-size: 0.8125rem;
+  color: var(--text-3);
+}
+
+.doctor-panel__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.doctor-panel__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: var(--r-10);
+}
+
+.doctor-panel__row--fail {
+  background: var(--danger-soft);
+}
+
+.doctor-panel__status {
+  flex: 0 0 3.5em;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.doctor-panel__row--pass .doctor-panel__status {
+  color: var(--success);
+}
+
+.doctor-panel__row--fail .doctor-panel__status {
+  color: var(--danger);
+}
+
+.doctor-panel__row--skip .doctor-panel__status {
+  color: var(--text-3);
+}
+
+.doctor-panel__body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.doctor-panel__title {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.doctor-panel__detail {
+  font-size: 0.8125rem;
+  color: var(--text-2);
+}
+
+.doctor-panel__hint {
+  font-size: 0.75rem;
+  color: var(--text-3);
+}

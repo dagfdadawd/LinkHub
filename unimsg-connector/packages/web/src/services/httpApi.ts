@@ -28,6 +28,7 @@ import type {
   AuthStatus,
   DownloadedFile,
   ContactDirectory,
+  DoctorReport,
   PublicUser,
   DingtalkLoginOptions,
   DingtalkLoginStart,
@@ -226,6 +227,12 @@ export class HttpApi implements MessageApi {
   async stats(): Promise<StatsOverview> {
     const body = await this.request<{ data: StatsOverview }>('/api/stats/overview');
     return body.data;
+  }
+
+  /** 一键自检（评审 P1-9）：真实模式下探针要连平台（邮箱 25s+/账号），调用方防重复点击 */
+  async runDoctor(): Promise<DoctorReport> {
+    const body = await this.request<{ data?: DoctorReport }>('/api/doctor');
+    return body.data ?? { generatedAt: new Date().toISOString(), checks: [] };
   }
 
   async capabilities(): Promise<SendCapabilities[]> {
