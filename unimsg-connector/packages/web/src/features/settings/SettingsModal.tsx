@@ -476,8 +476,31 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
                   </div>
                 </Row>
                 <Row
+                  title="待办到期提醒"
+                  description="到点（或提前）提示音 + 桌面通知，点击直达待办页；关闭后待办只作清单展示。"
+                >
+                  <div className="settings__inline-actions">
+                    <Switch
+                      checked={prefs.todoReminder}
+                      onChange={(checked) => patchPreferences({ todoReminder: checked })}
+                      aria-label="待办到期提醒"
+                    />
+                    <Segmented
+                      value={String(prefs.todoReminderLeadMin)}
+                      onChange={(value) => patchPreferences({ todoReminderLeadMin: Number(value) })}
+                      disabled={!prefs.todoReminder}
+                      options={[
+                        { label: '到点', value: '0' },
+                        { label: '提前10分', value: '10' },
+                        { label: '提前30分', value: '30' },
+                        { label: '提前1小时', value: '60' },
+                      ]}
+                    />
+                  </div>
+                </Row>
+                <Row
                   title="免打扰时段"
-                  description="时段内提示音与桌面通知都静默，消息照常进收件箱；支持跨夜（如 22:00 → 08:00）。"
+                  description="时段内新消息提醒（提示音与桌面通知）都静默，消息照常进收件箱；支持跨夜（如 22:00 → 08:00）。待办到期提醒不受影响——那是你自己定的约会。"
                 >
                   <div className="settings__inline-actions">
                     <Switch

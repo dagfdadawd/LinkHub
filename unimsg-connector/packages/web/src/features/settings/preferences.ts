@@ -12,6 +12,7 @@ import { Platform } from '../../types';
  *  - alertLevel    → 新消息提醒级别（off / urgent / all）
  *  - alertMutedPlatforms → 静音的平台：来了消息也不响，收件箱照常显示
  *  - dndEnabled/dndFrom/dndTo → 免打扰时段（HH:mm，支持跨夜），时段内提示音与通知都静默
+ *  - todoReminder/todoReminderLeadMin → 待办到期提醒（提前量分钟数，0 = 到点才提醒）
  *  - urgentSound   → 提醒触发时是否播放提示音（声音通道开关）
  *  - urgentDesktop → 页面不在前台时弹系统通知（通知通道开关，需要浏览器授权）
  */
@@ -32,6 +33,8 @@ export interface Preferences {
   dndEnabled: boolean;
   dndFrom: string;
   dndTo: string;
+  todoReminder: boolean;
+  todoReminderLeadMin: number;
   urgentSound: boolean;
   urgentDesktop: boolean;
 }
@@ -47,6 +50,9 @@ export const DEFAULT_PREFERENCES: Preferences = {
   dndEnabled: false,
   dndFrom: '22:00',
   dndTo: '08:00',
+  // 待办到期提醒默认开（这是「不漏事」闭环的一半），提前 10 分钟；到点改 0
+  todoReminder: true,
+  todoReminderLeadMin: 10,
   // 提示音默认开（不需要权限）；系统通知涉及浏览器授权，默认关，由设置页显式开启
   urgentSound: true,
   urgentDesktop: false,
@@ -75,6 +81,14 @@ function sanitize(input: unknown): Preferences {
     dndEnabled: typeof raw.dndEnabled === 'boolean' ? raw.dndEnabled : false,
     dndFrom: typeof raw.dndFrom === 'string' && HH_MM.test(raw.dndFrom) ? raw.dndFrom : '22:00',
     dndTo: typeof raw.dndTo === 'string' && HH_MM.test(raw.dndTo) ? raw.dndTo : '08:00',
+    todoReminder: typeof raw.todoReminder === 'boolean' ? raw.todoReminder : true,
+    todoReminderLeadMin:
+      typeof raw.todoReminderLeadMin === 'number' &&
+      Number.isFinite(raw.todoReminderLeadMin) &&
+      raw.todoReminderLeadMin >= 0 &&
+      raw.todoReminderLeadMin <= 10_080
+        ? raw.todoReminderLeadMin
+        : 10,
     urgentSound: typeof raw.urgentSound === 'boolean' ? raw.urgentSound : true,
     urgentDesktop: typeof raw.urgentDesktop === 'boolean' ? raw.urgentDesktop : false,
   };
