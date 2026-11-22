@@ -30,6 +30,9 @@ tools/
 .linkhub-users.json
 # 同上，含手工改动前的备份副本（.bak/.old/时间戳等），避免口令哈希被误提交
 .linkhub-users.json.*
-.linkhub-users.*.json
+.linkhub-users.*.json# 自动回复规则（DATA_DIR 下的运行期产物；DATA_DIR 未设时纯内存不落盘）
+auto-rules.json
+# 消息快照（DATA_FILE 默认名，运行期产物）
+linkhub-state.json
 # 本地应用配置（GUI 填写的平台凭据/模式，含 App Secret，绝不进仓库；有 DATA_DIR 时在 DATA_DIR 下）
 .linkhub-config.json

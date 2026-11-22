@@ -10610,3 +10610,90 @@ html.vt-morph .detail {
   flex: 1;
   min-width: 0;
 }
+
+/* ============================================================
+   人工处理动作 / 自动回复 / 看板（2026-11 新增）
+   ============================================================ */
+
+.chip--priority {
+  gap: 4px;
+  height: 21px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-2);
+  cursor: pointer;
+  font-size: 0.6875rem;
+}
+
+.chip--priority:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.chip--priority-urgent {
+  background: var(--danger-soft);
+  border-color: color-mix(in srgb, var(--danger) 32%, transparent);
+  color: var(--danger);
+}
+
+.chip--priority-normal {
+  background: var(--brand-soft);
+  border-color: var(--brand-line);
+  color: var(--brand-ink);
+}
+
+.chip--priority-low {
+  background: var(--surface-3);
+  border-color: var(--border);
+  color: var(--text-2);
+}
+
+.status-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.status-actions__label {
+  color: var(--text-3);
+  font-size: 0.6875rem;
+}
+
+.forward-modal__hint {
+  margin: 0 0 12px;
+  color: var(--text-2);
+  font-size: 0.75rem;
+}
+
+.forward-form {
+  display: flex;
+  flex-direction: column;
+}
+
+.auto-reply-page__sub {
+  margin: 6px 0 0;
+  color: var(--text-2);
+  font-size: 0.8125rem;
+}
+
+.auto-reply-page__hint {
+  margin: 8px 0 0;
+  color: var(--text-3);
+  font-size: 0.75rem;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.stats-platform-card {
+  margin-bottom: 8px;
+}

@@ -14,8 +14,9 @@ import { ensureDwsConfigDir } from './connectors/dwsConfigDir';
 import { maskAddress } from './services/account';
 import { LlmService } from './services/llm';
 import { OcrService } from './services/ocr';
-import { RateLimiter } from './services/rateLimiter';
+import { RateLimiter, DEFAULT_PLATFORM_QUOTAS } from './services/rateLimiter';
 import { MessageService } from './services/message';
+import { AutoRuleStore } from './services/autoReply';
 import { userStore } from './routes/auth';
 import { startDingtalkStream } from './stream/dingtalkStream';
 import { startFeishuStream } from './stream/feishuStream';
@@ -45,13 +46,19 @@ if (tokenBlocker) {
 
 // DATA_DIR/DATA_FILE 存在时启用文件快照：容器重启后收件箱与全链路回放仍可复现
 const repo = new InMemoryRepository(config.dataFile);
+// 自动回复规则：随收件箱一起落到 DATA_DIR，容器重建后规则不丢
+const dataDir = (process.env.DATA_DIR ?? '').trim();
+const autoRules = new AutoRuleStore(dataDir ? join(dataDir, 'auto-rules.json') : '');
 const svc = new MessageService(
   repo,
   connectors,
   new LlmService(),
   new OcrService(),
-  new RateLimiter(config.sendMaxRetry, config.retryBaseMs),
+  // 第 5 参按平台真实配额节流（飞书 900/min、钉钉 20/min、企微 600/min、邮箱 60/min），
+  // 不再所有平台共用 60/30 的粗粒度桶
+  new RateLimiter(config.sendMaxRetry, config.retryBaseMs, 60, 30, DEFAULT_PLATFORM_QUOTAS),
   wsBroadcast,
+  autoRules,
 );
 
 // 已学习到的本人 ID 落到历史数据上：把以前误当「来信」入库的本人消息改标为「我发出的」
@@ -108,7 +115,20 @@ const corsOrigins = parseCorsOrigins(process.env.CORS_ORIGINS);
 // dws 配置目录：环境变量没设时自动探测本机已登录的目录（否则钉钉永远读不到登录态）
 ensureDwsConfigDir();
 
-const app = createApp(svc, { corsOrigins });
+const app = createApp(svc, {
+  corsOrigins,
+  autoRules,
+  // 统计看板的数据源：消息全量 + 每条消息的闭环日志 + 死信 + 规则命中
+  statsSource: {
+    listMessages: () => svc.list(),
+    getLoopLog: (traceId) => svc.getLoopLog(traceId),
+    dlqCount: () => svc.listDlq().length,
+    rules: () => {
+      const all = autoRules.list();
+      return { total: all.length, hits: all.reduce((sum, r) => sum + (r.hitCount ?? 0), 0) };
+    },
+  },
+});
 const server = http.createServer(app);
 const wss = initWs(server);
 

@@ -16,6 +16,8 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Platform } from '@unimsg/shared';
 import { config, monorepoRoot } from './config';
+import { defaultReportPath, writeReportFile } from './doctor/reportFile';
+import { buildJsonReport } from './doctor/report';
 import { mailAccountSummary } from './config/runtime';
 import { feishuUserAuth } from './connectors/feishuUserAuth';
 import { receiveEnabled } from './services/identity';
@@ -47,6 +49,7 @@ LinkHub 只读自检：检查 .env / 平台模式 / 凭据 / 网络连通，
 选项：
   -h, --help            显示本帮助
   --json                只向 stdout 输出合法 JSON（人类日志不写 stdout）
+  --out=<文件路径>       把同一份 JSON 报告写入文件（初赛「初步验证」证据）
   --platform=<列表>     只检查指定平台，逗号分隔：feishu,dingtalk,wechat,mail
                         例：--platform=feishu,mail
 
@@ -244,6 +247,21 @@ async function main(): Promise<number> {
   // --json 时 stdout 只写合法 JSON；人类提示一律走 stderr/省略
   const output = options.json ? renderJsonReport(report) : renderTextReport(report);
   await writeStdout(output);
+
+  // --out：把同一份机器可读报告落盘，作为「初步验证」的可复现证据。
+  // 必须走 buildJsonReport 的同一脱敏管线（redactEmails 等）：
+  // stdout 的 JSON 是脱敏的，落盘文件若用原始对象会把完整邮箱地址写进证据文件。
+  // 默认路径落在 docs/verification/，文件名带时间戳，重复自检不会互相覆盖。
+  if (options.out) {
+    try {
+      const target = writeReportFile(options.out, buildJsonReport(report));
+      process.stderr.write(`[doctor] 已写入 ${target}\n`);
+    } catch (e) {
+      // 落盘失败不该让整个自检以原始 stack 崩掉：给一句人话，退出码仍由检查结果决定
+      const reason = e instanceof Error ? e.message : String(e);
+      process.stderr.write(`[doctor] 报告写入失败（${options.out}）：${reason}\n`);
+    }
+  }
   return computeExitCode(report);
 }
 

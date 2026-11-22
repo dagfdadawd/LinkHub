@@ -6,8 +6,9 @@
  *  - 后续：HttpApi（对接 packages/server 的 REST/WS），页面代码零改动
  */
 import type {
-  ComposeAck, ComposeRequest, DeliveryMode, IdentityRole, OutboundAttachment, PlatformIdentityView,
-  SendCapabilities, UserIdentityStatus,
+  AutoRule, AutoRuleInput, ComposeAck, ComposeRequest, DeliveryMode, ForwardRequest, IdentityRole,
+  OutboundAttachment, PlatformIdentityView, Priority, PriorityChangeResult, SendCapabilities,
+  StatsOverview, StatusChangeRequest, StatusChangeResult, UserIdentityStatus,
 } from '@unimsg/shared';
 import type { MsgType, TraceEntry, UnifiedMessage } from '../types';
 import type { Platform, MsgStatus } from '../types';
@@ -543,6 +544,24 @@ export interface MessageApi {
    * 前端据此退回「只列已有会话」，不影响发送。
    */
   contacts(platform: Platform): Promise<ContactDirectory>;
+
+  // ---- 人工处理动作 / 自动回复 / 看板 ----
+  // 全部做成可选方法：旧后端没有这些接口时，入口照常渲染、点按会得到
+  // 明确的中文升级提示（不做能力探测隐藏 UI，保持实现简单、行为可预期）。
+
+  /** 人工流转状态；notify=true 时把这次变更回写到原平台会话 */
+  changeStatus?(id: string, req: StatusChangeRequest): Promise<StatusChangeResult>;
+  /** 跨平台转发：把这条消息推到另一个平台的指定会话（复用 compose 闭环） */
+  forward?(id: string, req: ForwardRequest): Promise<ComposeAck>;
+  /** 人工修改优先级（覆盖规则/AI 判定） */
+  setPriority?(id: string, priority: Priority): Promise<PriorityChangeResult>;
+  /** 自动回复规则 CRUD */
+  autoRules?(): Promise<AutoRule[]>;
+  createAutoRule?(input: AutoRuleInput): Promise<AutoRule>;
+  updateAutoRule?(id: string, patch: Partial<AutoRuleInput>): Promise<AutoRule>;
+  deleteAutoRule?(id: string): Promise<void>;
+  /** 统计看板 */
+  stats?(): Promise<StatsOverview>;
   /** 注册：成功后直接拿到会话令牌（后端同时登录）+ 一次性恢复码 */
   register(input: { username: string; password: string; displayName?: string; signupCode?: string }): Promise<{ user: PublicUser; token: string; recoveryCode: string }>;
   /** 登录：返回会话令牌 + 公开用户信息 */

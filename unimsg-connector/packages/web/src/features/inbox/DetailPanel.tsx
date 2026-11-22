@@ -38,7 +38,10 @@ import { IdentityTag } from '../../components/IdentityTag';
 import { PlatformTag } from '../../components/PlatformTag';
 import { StatusBadge } from '../../components/StatusBadge';
 import { AiSuggestion } from './AiSuggestion';
+import { ForwardModal } from './ForwardModal';
+import { PrioritySelect } from './PrioritySelect';
 import { ReplyComposer } from './ReplyComposer';
+import { StatusActions } from './StatusActions';
 import { StatusFlow } from './StatusFlow';
 import { usePreferences } from '../settings/preferences';
 
@@ -174,6 +177,8 @@ export function DetailPanel({
   const [quoteTarget, setQuoteTarget] = useState<UnifiedMessage | null>(null);
   /** 发送中的回复：先以气泡上屏，成功由服务端 reply 接管，失败保留并给出原因 */
   const [pendingReply, setPendingReply] = useState<{ text: string; at: number; failed?: string } | null>(null);
+  /** 跨平台转发弹窗 */
+  const [forwardOpen, setForwardOpen] = useState(false);
 
 
   /** 发送成功后短暂冷却：清空输入框 + 禁用按钮，避免手滑把同一内容再发一次（P2-2） */
@@ -454,6 +459,12 @@ export function DetailPanel({
       icon: <CopyOutlined />,
       label: '复制消息内容',
       onClick: () => void copyBody(),
+    },
+    {
+      key: 'forward',
+      icon: <SendOutlined />,
+      label: '转发到其他平台',
+      onClick: () => setForwardOpen(true),
     },
     {
       key: 'trace',
@@ -795,6 +806,7 @@ export function DetailPanel({
 
             <div className="chat-head__tags">
               <StatusBadge status={message.status} small />
+              <PrioritySelect message={message} />
               {message.needsReview && <span className="chip chip--warn">需人工确认</span>}
               {message.done && <span className="chip chip--done">已完成</span>}
               {message.receivedAs && <IdentityTag role={message.receivedAs} action="receive" />}
@@ -935,6 +947,7 @@ export function DetailPanel({
                 </dl>
                 <div className="detail__more-flow">
                   <StatusFlow status={message.status} />
+                  <StatusActions message={message} />
                 </div>
               </details>
             </div>
@@ -988,6 +1001,11 @@ onRegenerate={() => void handleRegenerate()}
             onTrace={() => navigate(`/trace/${message.traceId}`)}
           />
         )}
+        <ForwardModal
+          message={message}
+          open={forwardOpen}
+          onClose={() => setForwardOpen(false)}
+        />
       </div>
     </div>
   );

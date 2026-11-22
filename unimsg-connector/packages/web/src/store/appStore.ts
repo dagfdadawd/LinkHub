@@ -6,7 +6,9 @@
  */
 import { MsgStatus } from '../types';
 import type {
-  ComposeRequest, IdentityRole, MsgType, OutboundAttachment, Platform, UnifiedMessage,
+  AutoRule, AutoRuleInput, ComposeAck, ComposeRequest, ForwardRequest, IdentityRole, MsgType,
+  OutboundAttachment, Platform, Priority, PriorityChangeResult, StatsOverview, StatusChangeRequest,
+  StatusChangeResult, UnifiedMessage,
 } from '../types';
 import type {
   AccountInfo, AppConfigSaveResult, AppConfigUpdate, AppConfigView,
@@ -225,6 +227,58 @@ export class AppStore {
   async markRead(id: string, read: boolean): Promise<void> {
     const updated = await this.api.markRead(id, read);
     this.upsert(updated);
+  }
+
+  // ---------- 人工处理动作 / 自动回复 / 看板 ----------
+
+  /** 人工流转状态；notify=true 时后端会向原会话发回执 */
+  async changeStatus(id: string, req: StatusChangeRequest): Promise<StatusChangeResult> {
+    if (!this.api.changeStatus) throw new Error('当前后端版本不支持状态流转，请升级服务端');
+    const result = await this.api.changeStatus(id, req);
+    this.upsert(result.message);
+    return result;
+  }
+
+  /** 跨平台转发：后端会新建一条出站消息，这里同步进本地列表 */
+  async forward(id: string, req: ForwardRequest): Promise<ComposeAck> {
+    if (!this.api.forward) throw new Error('当前后端版本不支持跨平台转发，请升级服务端');
+    const ack = await this.api.forward(id, req);
+    this.upsert(ack.message);
+    return ack;
+  }
+
+  /** 人工修改优先级（覆盖规则/AI 判定） */
+  async setPriority(id: string, priority: Priority): Promise<PriorityChangeResult> {
+    if (!this.api.setPriority) throw new Error('当前后端版本不支持优先级，请升级服务端');
+    const result = await this.api.setPriority(id, priority);
+    this.upsert(result.message);
+    return result;
+  }
+
+  async refreshAutoRules(): Promise<AutoRule[]> {
+    // 与 loadStats 同款语义：后端不支持时明确报错，而不是把「功能不可用」伪装成「没有规则」
+    if (!this.api.autoRules) throw new Error('当前后端版本不支持自动回复规则，请升级服务端');
+    return this.api.autoRules();
+  }
+
+  async createAutoRule(input: AutoRuleInput): Promise<AutoRule> {
+    if (!this.api.createAutoRule) throw new Error('当前后端版本不支持自动回复规则，请升级服务端');
+    return this.api.createAutoRule(input);
+  }
+
+  async updateAutoRule(id: string, patch: Partial<AutoRuleInput>): Promise<AutoRule> {
+    if (!this.api.updateAutoRule) throw new Error('当前后端版本不支持自动回复规则，请升级服务端');
+    return this.api.updateAutoRule(id, patch);
+  }
+
+  async deleteAutoRule(id: string): Promise<void> {
+    if (!this.api.deleteAutoRule) throw new Error('当前后端版本不支持自动回复规则，请升级服务端');
+    await this.api.deleteAutoRule(id);
+  }
+
+  async loadStats(): Promise<StatsOverview> {
+    if (!this.api.stats) throw new Error('当前后端版本不支持统计看板，请升级服务端');
+    return this.api.stats();
   }
 
   /** 全部标为已读：可传 ids 只标记当前筛选范围；后端负责广播，这里同步本地避免闪烁 */

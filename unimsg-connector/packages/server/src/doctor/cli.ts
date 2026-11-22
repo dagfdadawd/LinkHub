@@ -7,8 +7,11 @@
 import { Platform } from '@unimsg/shared';
 
 export interface CliOptions {
+  /** --json：stdout 只输出合法 JSON（人类提示走 stderr；文本报告不再输出） */
   json: boolean;
   help: boolean;
+  /** --out=<路径>：同一份报告额外落盘（写入 docs/verification 或指定文件） */
+  out?: string;
   platformFilter?: Platform[];
 }
 
@@ -16,6 +19,7 @@ export interface CliOptions {
 export function parseCliArgs(argv: string[]): { options: CliOptions; error?: string } {
   const options: CliOptions = { json: false, help: false };
   let platformSeen = false;
+  let outSeen = false;
   for (const arg of argv) {
     // pnpm 会把 `pnpm run doctor -- --platform=...` 里的 `--` 原样透传给脚本，
     // 这里直接忽略：有没有分隔符都按同一套参数解析，避免新手照文档敲却报「未知参数」。
@@ -24,6 +28,16 @@ export function parseCliArgs(argv: string[]): { options: CliOptions; error?: str
       options.help = true;
     } else if (arg === '--json') {
       options.json = true;
+    } else if (arg.startsWith('--out=')) {
+      if (outSeen) {
+        return { options, error: '重复指定 --out；一次自检写一个报告文件即可' };
+      }
+      outSeen = true;
+      const raw = arg.slice('--out='.length).trim();
+      if (!raw) {
+        return { options, error: '--out 需要一个文件路径，例如 --out=docs/verification/doctor.json（不传则用默认时间戳文件名）' };
+      }
+      options.out = raw;
     } else if (arg.startsWith('--platform=')) {
       if (platformSeen) {
         return { options, error: '重复指定 --platform；请合并为一个列表，例如 --platform=feishu,mail' };

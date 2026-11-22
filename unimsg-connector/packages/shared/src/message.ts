@@ -233,6 +233,176 @@ export interface ComposeAck {
 }
 
 // ---------------------------------------------------------------------------
+// 人工处理动作：状态流转 / 跨平台转发 / 优先级
+//
+// 这三个动作都复用既有的出站链路（connector.send + 限流 + 退避 + trace），
+// 不新建旁路——否则「自动回复、人工回复、状态回执」会各走一套，状态回流对不上。
+// ---------------------------------------------------------------------------
+
+/**
+ * 人工可设的优先级。
+ *
+ * 与 intent（意图）正交：意图说明「这是什么」，优先级说明「要先做哪个」。
+ * AI / 规则只给默认值；用户随时可改，改动记进闭环日志形成 Feedback 样本。
+ */
+export type Priority = 'urgent' | 'normal' | 'low';
+
+export const PRIORITY_RANK: Record<Priority, number> = { urgent: 0, normal: 1, low: 2 };
+
+export const PRIORITY_LABELS: Record<Priority, string> = {
+  urgent: '紧急',
+  normal: '普通',
+  low: '不急',
+};
+
+/** 状态流转请求：notify=true 时才向原会话发一条回执（默认只在内部生效） */
+export interface StatusChangeRequest {
+  status: MsgStatus;
+  /**
+   * 是否把这次状态变更回写到原平台会话。
+   *
+   * 默认 false：状态首先是处理人自己的进度记录。系统消息发多了会把真实对话
+   * 顶出视野，属于「用功能换体验」的负优化；需要对方知道时由用户显式勾选。
+   */
+  notify?: boolean;
+  /** 自定义回执文案；不传 = 「[LinkHub] 该消息已标记为「处理中」」 */
+  note?: string;
+}
+
+/** 状态流转结果：notified 如实反映回执有没有真的发出（Mock 也算，但要带 mode） */
+export interface StatusChangeResult {
+  message: UnifiedMessage;
+  notified: boolean;
+  /** 回执实际走的通道；未发回执时不传 */
+  notifyMode?: DeliveryMode;
+  /** 未发回执 / 回执失败的原因 */
+  notifyReason?: string;
+}
+
+/** 跨平台转发请求：把 A 平台的消息推到 B 平台的指定会话 */
+export interface ForwardRequest {
+  platform: Platform;
+  /** 目标会话：飞书 chat_id / 钉钉 openConversationId / 企微 userid / 邮箱收件地址 */
+  conversationId?: string;
+  conversationType?: 'group' | 'p2p';
+  conversationTitle?: string;
+  /** 邮箱平台专用：从哪个邮箱账号发出 */
+  mailAccount?: string;
+  /** 本次发送身份；不填 = 平台策略 */
+  identity?: IdentityRole;
+  /** 转发时附加的说明（会拼在转发正文之前） */
+  note?: string;
+}
+
+/** 优先级修改请求 */
+export interface PriorityChangeRequest {
+  priority: Priority;
+}
+
+/** 优先级修改结果：old 用于前端 toast 与闭环日志对照 */
+export interface PriorityChangeResult {
+  message: UnifiedMessage;
+  old: Priority;
+  source: 'manual';
+}
+
+// ---------------------------------------------------------------------------
+// 自动回复规则（赛题 A 官方闭环：「自动或人工回复」里的「自动」那一半）
+// ---------------------------------------------------------------------------
+
+/**
+ * 一条自动回复规则。
+ *
+ * 匹配刻意做得朴素：platform 过滤 + keyword 不区分大小写包含。
+ * keyword 为空 = 该平台任何消息都命中（兜底规则）；platform 为空 = 所有平台。
+ * 不用正则 / 语义匹配：规则要能在答辩现场一句话解释清楚。
+ */
+export interface AutoRule {
+  id: string;
+  platform?: Platform;
+  keyword?: string;
+  replyText: string;
+  /** 数字越小越先匹配（同优先级按创建时间） */
+  priority: number;
+  enabled: boolean;
+  /** 命中次数：看板据此举证「规则真的在用」 */
+  hitCount: number;
+  lastHitAt?: string;
+  createdAt: string;
+}
+
+/** 新建/更新规则入参 */
+export interface AutoRuleInput {
+  /**
+   * 适用平台。PATCH 传 null = 清空为「所有平台」；
+   * JSON 序列化会保留显式 null（undefined 会被丢掉），服务端按 `'platform' in patch` 判断。
+   */
+  platform?: Platform | null;
+  /** 关键词；空串 = 清空为该平台的兜底规则 */
+  keyword?: string;
+  replyText: string;
+  priority?: number;
+  enabled?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// 统计看板（支撑「状态流转与数据反馈」的可视化证据）
+// ---------------------------------------------------------------------------
+
+export interface StatsOverview {
+  totals: {
+    messages: number;
+    inbound: number;
+    outbound: number;
+    replied: number;
+    pending: number;
+    failed: number;
+    todos: number;
+    done: number;
+  };
+  byPlatform: Array<{
+    platform: Platform;
+    total: number;
+    inbound: number;
+    outbound: number;
+    replied: number;
+    pending: number;
+    failed: number;
+  }>;
+  byStatus: Record<string, number>;
+  delivery: { real: number; mock: number };
+  dlq: number;
+  /** 从「收到」到「发出」的平均秒数；没有可计算的样本时为 null（不伪造 0） */
+  avgHandleSeconds: number | null;
+  rules: { total: number; hits: number };
+  generatedAt: string;
+}
+
+// ---------------------------------------------------------------------------
+// 通用接入通道：任何外部采集器按统一格式推消息进来（幂等）
+// ---------------------------------------------------------------------------
+
+export interface IngestRequest {
+  platform: Platform;
+  /** 平台内唯一消息 ID（幂等键）；缺失直接 400，不允许占住 unknown */
+  externalId: string;
+  sender?: { id?: string; name?: string };
+  conversation?: { id: string; type?: 'group' | 'p2p'; title?: string };
+  type?: MsgType;
+  body: string;
+  /** 平台侧消息时间（ISO）；不传 = 服务端当前时间 */
+  createdAt?: string;
+  /**
+   * 调用方自带 traceId（便于与自己系统的日志对齐）；不传 = 服务端生成。
+   * 校验：非空字符串、<=64 字符、且不得与已有消息撞键（traceId 是消息主键，
+   * 撞键会整条覆盖既有消息，路由层直接 400）。
+   */
+  traceId?: string;
+  /** 原始 payload。当前版本 raw 不入库（实现比契约更保守）；如需排障请走平台 webhook 原始日志。 */
+  raw?: unknown;
+}
+
+// ---------------------------------------------------------------------------
 // 身份能力（本人账号接收 / 本人账号发送）—— 见 docs/personal-identity.md
 //
 // 背景：机器人方案要求「每个人把自己的机器人拉进每个群」，不可接受。
@@ -427,6 +597,13 @@ export interface UnifiedMessage {
    * 前端待办清单优先展示 todoTitle，没有时回退 body —— 不覆盖正文，回放仍看得到原话。
    */
   todoTitle?: string;
+  /**
+   * 处理优先级：AI / 规则给默认值，用户可人工改。
+   * 缺省 = 还没判定（旧数据 / Mock），前端按「普通」展示但不写入消息。
+   */
+  priority?: Priority;
+  /** 当前优先级来自哪条通道：llm / rules / manual。与 intentSource 同一原则，如实标注。 */
+  prioritySource?: 'llm' | 'rules' | 'manual';
   needsReview?: boolean; // OCR 低置信/失败时标记“待人工确认”
   status: MsgStatus;
   createdAt: string;

@@ -112,6 +112,10 @@ const banned = tracked.filter((f) => {
     base.endsWith('.log') ||
     base.endsWith('.log.err') ||
     base === '.mail-watermarks.json' ||
+    // 运行期数据产物：消息快照 / 自动回复规则 / 邮箱账号（可能含消息正文与凭据密文）
+    base === 'linkhub-state.json' ||
+    base === 'auto-rules.json' ||
+    base === '.linkhub-mail-accounts.json' ||
     // 运行期授权/水位产物：带上就等于把用户身份令牌或聊天进度发给评审
     base === '.feishu-user-token.json' ||
     base === '.feishu-user-receive.json' ||

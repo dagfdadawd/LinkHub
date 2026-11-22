@@ -247,6 +247,121 @@ export function messagesRouter(svc: MessageService) {
     }
   });
 
+  /**
+   * 人工状态流转（可选回执）：PATCH /api/messages/:id/status
+   * body: { status, notify?, note? }
+   *
+   * notify=true 时才把「已标记为处理中 / 已同步」发回原平台会话；
+   * 默认只在内部生效，避免系统消息把真实对话顶出视野。
+   */
+  r.patch('/messages/:id/status', async (req, res) => {
+    const body = (req.body ?? {}) as { status?: unknown; notify?: unknown; note?: unknown };
+    const status = typeof body.status === 'string' ? (body.status as MsgStatus) : undefined;
+    if (!status) {
+      res.status(400).json({ ok: false, error: 'status 必填，取值：received / processing / replied / sent / synced（failed 是系统写入的失败旁路，不能人工设置）' });
+      return;
+    }
+    if (body.notify !== undefined && typeof body.notify !== 'boolean') {
+      res.status(400).json({ ok: false, error: 'notify 只能是 true / false' });
+      return;
+    }
+    if (body.note !== undefined && typeof body.note !== 'string') {
+      res.status(400).json({ ok: false, error: 'note 只能是字符串' });
+      return;
+    }
+    try {
+      const result = await svc.changeStatus(
+        req.params.id,
+        {
+          status,
+          notify: body.notify === true,
+          ...(typeof body.note === 'string' && body.note.trim() ? { note: body.note.trim() } : {}),
+        },
+        viewerOf(req),
+      );
+      res.json({ ok: true, data: result });
+    } catch (e) {
+      const reason = e instanceof Error ? e.message : String(e);
+      if (/not found/i.test(reason)) {
+        res.status(404).json({ ok: false, error: 'not found' });
+        return;
+      }
+      // 未知状态 / 状态倒退都是可修复的入参问题，回 400 带原因
+      res.status(400).json({ ok: false, error: reason });
+    }
+  });
+
+  /**
+   * 跨平台转发：POST /api/messages/:id/forward
+   * body: { platform, conversationId?, conversationType?, conversationTitle?, mailAccount?, identity?, note? }
+   *
+   * 转发同样走 compose 的完整闭环（限流 / 退避 / trace / 状态回流），
+   * 源消息只多一条 forwarded 追溯事件。
+   */
+  r.post('/messages/:id/forward', async (req, res) => {
+    // 与 compose 同一条边界：主动发送用本机真实账号，只允许机器主人调用
+    const caller = (req as AuthedRequest).user;
+    const ownerId = machineOwnerId(svc);
+    if (caller && ownerId && caller.id !== ownerId) {
+      res.status(403).json({ ok: false, error: '只有机器主人可以主动发起发送；请让主人账号操作' });
+      return;
+    }
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const platform = body.platform as Platform;
+    if (!(Object.values(Platform) as unknown[]).includes(platform)) {
+      res.status(400).json({ ok: false, error: 'platform 必填，取值：feishu / dingtalk / wechat / mail' });
+      return;
+    }
+    const parsed = parseIdentity(body.identity);
+    if (parsed.error) {
+      res.status(400).json({ ok: false, error: parsed.error });
+      return;
+    }
+    const optStr = (v: unknown): string | undefined =>
+      typeof v === 'string' && v.trim() ? v.trim() : undefined;
+    const conversationType = body.conversationType === 'group' || body.conversationType === 'p2p'
+      ? body.conversationType
+      : undefined;
+    try {
+      const ack = await svc.forward(
+        req.params.id,
+        {
+          platform,
+          conversationId: optStr(body.conversationId),
+          conversationType,
+          conversationTitle: optStr(body.conversationTitle),
+          mailAccount: optStr(body.mailAccount),
+          identity: parsed.value,
+          note: optStr(body.note),
+        },
+        viewerOf(req),
+      );
+      res.status(202).json({ ok: true, ...ack });
+    } catch (e) {
+      const reason = e instanceof Error ? e.message : String(e);
+      if (/not found/i.test(reason)) {
+        res.status(404).json({ ok: false, error: 'not found' });
+        return;
+      }
+      res.status(400).json({ ok: false, error: reason });
+    }
+  });
+
+  /** 人工修改优先级：PATCH /api/messages/:id/priority  { priority: 'urgent' | 'normal' | 'low' } */
+  r.patch('/messages/:id/priority', async (req, res) => {
+    const priority = (req.body ?? {}).priority;
+    if (priority !== 'urgent' && priority !== 'normal' && priority !== 'low') {
+      res.status(400).json({ ok: false, error: 'priority 只能是 urgent / normal / low' });
+      return;
+    }
+    try {
+      const result = await svc.setPriority(req.params.id, priority, viewerOf(req));
+      res.json({ ok: true, data: result });
+    } catch {
+      res.status(404).json({ ok: false, error: 'not found' });
+    }
+  });
+
   r.post('/messages/:id/done', async (req, res) => {
     try {
       await svc.markDone(req.params.id, viewerOf(req));

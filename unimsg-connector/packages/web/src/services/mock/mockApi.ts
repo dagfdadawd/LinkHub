@@ -1,7 +1,9 @@
 import { MsgStatus, Platform, FILE_LIMITS } from '../../types';
 import type { UnifiedMessage, TraceEntry } from '../../types';
 import type {
-  ComposeAck, ComposeRequest, IdentityRole, OutboundAttachment, SendCapabilities,
+  AutoRule, AutoRuleInput, ComposeAck, ComposeRequest, ForwardRequest, IdentityRole, OutboundAttachment,
+  Priority, PriorityChangeResult, SendCapabilities, StatsOverview, StatusChangeRequest,
+  StatusChangeResult,
 } from '@unimsg/shared';
 import type {
   AccountInfo,
@@ -37,6 +39,11 @@ import type {
 import { APP_CONFIG_LLM_FIELD_KEYS, APP_CONFIG_PLATFORM_FIELD_KEYS } from '../api';
 import { EmitterRealtime } from '../realtime';
 import { ACCOUNTS, HEALTH, INCOMING_TEMPLATES, buildTrace, createSeedData } from './fixtures';
+
+/** 与后端一致的前进顺序；failed 是旁路不参与排序（特判见 changeStatus） */
+const STATUS_RANK: Record<string, number> = {
+  received: 0, processing: 1, replied: 2, sent: 3, synced: 4,
+};
 
 /**
  * 纯前端演示模式下的应用配置视图：全部「未配置」、来源 none，并如实标注不能保存。
@@ -141,6 +148,8 @@ export class MockApi implements DemoApi {
   private seq = 0;
   private incomingSeq = 0;
   private failNextSend = false;
+  /** 演示模式的自动回复规则（内存态：刷新回到种子规则） */
+  private rules: AutoRule[] = [];
   /** 演示模式的账号表（内存态：刷新即失效，只用于讲清账号闭环） */
   private demoUsers = new Map<string, { user: PublicUser; password: string }>();
 
@@ -154,6 +163,29 @@ export class MockApi implements DemoApi {
     this.messages = new Map(seed.messages.map((m) => [m.traceId, m]));
     this.traces = seed.traces;
     this.metrics = { ...HEALTH };
+    // 演示规则：一条启用（命中「周报」），一条停用的兜底规则，界面上能同时看到两种状态
+    const now = new Date().toISOString();
+    this.rules = [
+      {
+        id: 'demo-rule-report',
+        platform: Platform.FEISHU,
+        keyword: '周报',
+        replyText: '收到，周报今天下班前给您',
+        priority: 10,
+        enabled: true,
+        hitCount: 2,
+        lastHitAt: now,
+        createdAt: now,
+      },
+      {
+        id: 'demo-rule-fallback',
+        replyText: '已收到，稍后回复您',
+        priority: 900,
+        enabled: false,
+        hitCount: 0,
+        createdAt: now,
+      },
+    ];
   }
 
   async list(filter?: MessageFilter): Promise<UnifiedMessage[]> {
@@ -318,6 +350,14 @@ export class MockApi implements DemoApi {
     }
     this.metrics.received += 1;
     this.realtime.emit({ type: 'message.received', data: message });
+    // 与真实后端 compose 一致：先写 'composed' 起始事件（统计平均处理时长的起点），
+    // 再推进 processing——否则演示模式下「新建发送」的样本永远进不了均值。
+    this.patch(
+      traceId,
+      {},
+      'composed',
+      `统一入口主动发送 → ${req.platform} · 会话 ${message.conversation?.id ?? ''}`,
+    );
     this.patch(traceId, { status: MsgStatus.PROCESSING }, 'processing');
     const replied = this.patch(traceId, { status: MsgStatus.REPLIED }, 'replied');
 
@@ -336,6 +376,190 @@ export class MockApi implements DemoApi {
     }, this.options.sendDelay);
 
     return { message: replied, taskId: traceId };
+  }
+
+  // ---------- 人工处理动作 / 自动回复 / 看板（纯前端演示版） ----------
+
+  async changeStatus(id: string, req: StatusChangeRequest): Promise<StatusChangeResult> {
+    await this.wait();
+    const cur = this.messages.get(id);
+    if (!cur) throw new Error('message not found');
+    if (req.status !== cur.status) {
+      // 与服务端 checkStatusTransition 同款语义：failed 是旁路不参与排序——
+      // failed→任意正常态放行（重试起点），正常态→failed 拒绝（failed 由系统写入）。
+      // 旧实现给 failed 一个中间 rank，导致 failed→processing 被误判为倒退。
+      if (req.status === MsgStatus.FAILED) {
+        throw new Error('failed 是系统写入的失败旁路，不能人工设置');
+      }
+      if (cur.status !== MsgStatus.FAILED) {
+        const nextRank = STATUS_RANK[req.status];
+        const curRank = STATUS_RANK[cur.status] ?? 0;
+        if (nextRank === undefined) throw new Error(`未知状态：${req.status}`);
+        if (nextRank <= curRank) {
+          throw new Error(`${cur.status}→${req.status} 属于状态倒退（顺序 received<processing<replied<sent<synced）`);
+        }
+      }
+      this.patch(id, { status: req.status }, 'status', `人工流转 ${cur.status}→${req.status}`);
+    }
+    if (!req.notify) {
+      return { message: this.messages.get(id)!, notified: false };
+    }
+    await this.wait();
+    this.patch(id, {}, 'status_notified', '模拟发送状态回执（本地 Mock，未调用真实平台接口）');
+    return { message: this.messages.get(id)!, notified: true, notifyMode: 'mock' };
+  }
+
+  async forward(id: string, req: ForwardRequest): Promise<ComposeAck> {
+    const src = this.messages.get(id);
+    if (!src) throw new Error('message not found');
+    const origin = `[转发自 ${src.platform}] ${src.sender?.name || src.sender?.id || '对方'}：${src.body}`;
+    const text = req.note?.trim() ? `${req.note.trim()}\n\n${origin}` : origin;
+    const ack = await this.compose({
+      platform: req.platform,
+      conversationId: req.conversationId,
+      conversationType: req.conversationType,
+      conversationTitle: req.conversationTitle,
+      mailAccount: req.mailAccount,
+      identity: req.identity,
+      text,
+    });
+    this.patch(id, {}, 'forwarded', `→ ${req.platform}${req.conversationId ? ` · 会话 ${req.conversationId}` : ''} · 新消息 ${ack.message.traceId}`);
+    return ack;
+  }
+
+  async setPriority(id: string, priority: Priority): Promise<PriorityChangeResult> {
+    await this.wait();
+    const cur = this.messages.get(id);
+    if (!cur) throw new Error('message not found');
+    const old = cur.priority ?? 'normal';
+    const m = this.patch(
+      id,
+      { priority, prioritySource: 'manual' },
+      'priority',
+      `${old}→${priority}（人工纠正${cur.prioritySource ? `，原判定来源 ${cur.prioritySource}` : ''}）`,
+    );
+    return { message: m, old, source: 'manual' };
+  }
+
+  async autoRules(): Promise<AutoRule[]> {
+    await this.wait();
+    return this.rules.map((r) => ({ ...r }));
+  }
+
+  async createAutoRule(input: AutoRuleInput): Promise<AutoRule> {
+    await this.wait();
+    const replyText = input.replyText?.trim() ?? '';
+    if (!replyText) throw new Error('回复内容不能为空');
+    const rule: AutoRule = {
+      id: `demo-rule-${Date.now().toString(16)}`,
+      ...(input.platform ? { platform: input.platform } : {}),
+      ...(input.keyword?.trim() ? { keyword: input.keyword.trim() } : {}),
+      replyText,
+      priority: input.priority ?? 100,
+      enabled: input.enabled ?? true,
+      hitCount: 0,
+      createdAt: new Date().toISOString(),
+    };
+    this.rules.push(rule);
+    return { ...rule };
+  }
+
+  async updateAutoRule(id: string, patch: Partial<AutoRuleInput>): Promise<AutoRule> {
+    await this.wait();
+    const rule = this.rules.find((r) => r.id === id);
+    if (!rule) throw new Error('规则不存在');
+    if (patch.replyText !== undefined) {
+      const text = patch.replyText.trim();
+      if (!text) throw new Error('回复内容不能为空');
+      rule.replyText = text;
+    }
+    if (patch.keyword !== undefined) {
+      const kw = patch.keyword.trim();
+      if (kw) rule.keyword = kw;
+      else delete rule.keyword;
+    }
+    if (patch.platform !== undefined) {
+      // null = 清空为「所有平台」（与真实后端 normalizePlatform 的 null 语义一致）
+      if (patch.platform === null) delete rule.platform;
+      else rule.platform = patch.platform;
+    }
+    if (patch.priority !== undefined) rule.priority = patch.priority;
+    if (patch.enabled !== undefined) rule.enabled = patch.enabled;
+    return { ...rule };
+  }
+
+  async deleteAutoRule(id: string): Promise<void> {
+    await this.wait();
+    this.rules = this.rules.filter((r) => r.id !== id);
+  }
+
+  async stats(): Promise<StatsOverview> {
+    await this.wait();
+    const items = [...this.messages.values()];
+    const num = (pred: (m: UnifiedMessage) => boolean) => items.filter(pred).length;
+    // 与服务端 stats.ts 同口径：replied = 状态推进到 replied 及以后，**或**已有回复历史
+    //（失败但回过一次也算回过）
+    const isReplied = (m: UnifiedMessage) => m.status === MsgStatus.REPLIED
+      || m.status === MsgStatus.SENT || m.status === MsgStatus.SYNCED
+      || (m.replies?.length ?? 0) > 0;
+    const byStatus: Record<string, number> = {};
+    for (const m of items) byStatus[m.status] = (byStatus[m.status] ?? 0) + 1;
+
+    const byPlatform = Object.values(Platform).map((platform) => {
+      const rows = items.filter((m) => m.platform === platform);
+      return {
+        platform,
+        total: rows.length,
+        inbound: rows.filter((m) => m.direction !== 'out').length,
+        outbound: rows.filter((m) => m.direction === 'out').length,
+        replied: rows.filter(isReplied).length,
+        pending: rows.filter((m) => m.status === MsgStatus.RECEIVED
+          || m.status === MsgStatus.PROCESSING).length,
+        failed: rows.filter((m) => m.status === MsgStatus.FAILED).length,
+      };
+    });
+
+    // 平均处理时长：闭环日志里最早的 received/composed → 最早的 sent
+    let sum = 0;
+    let samples = 0;
+    for (const m of items) {
+      const log = this.traces.get(m.traceId) ?? [];
+      const start = log.find((e) => e.event === 'received' || e.event === 'composed');
+      const end = log.find((e) => e.event === 'sent');
+      if (!start || !end) continue;
+      const seconds = (new Date(end.at).getTime() - new Date(start.at).getTime()) / 1000;
+      if (seconds >= 0) {
+        sum += seconds;
+        samples += 1;
+      }
+    }
+
+    return {
+      totals: {
+        messages: items.length,
+        inbound: num((m) => m.direction !== 'out'),
+        outbound: num((m) => m.direction === 'out'),
+        replied: num(isReplied),
+        pending: num((m) => m.status === MsgStatus.RECEIVED || m.status === MsgStatus.PROCESSING),
+        failed: num((m) => m.status === MsgStatus.FAILED),
+        todos: num((m) => m.type === 'todo'),
+        done: num((m) => m.done === true),
+      },
+      byPlatform,
+      byStatus,
+      delivery: {
+        real: num((m) => m.delivery?.mode === 'real'),
+        mock: num((m) => m.delivery?.mode === 'mock'),
+      },
+      dlq: this.metrics.dlq ?? 0,
+      // 与服务端一致返回原始浮点（不四舍五入，前端自行格式化）
+      avgHandleSeconds: samples > 0 ? sum / samples : null,
+      rules: {
+        total: this.rules.length,
+        hits: this.rules.reduce((acc, r) => acc + (r.hitCount ?? 0), 0),
+      },
+      generatedAt: new Date().toISOString(),
+    };
   }
 
   async capabilities(): Promise<SendCapabilities[]> {
@@ -666,6 +890,25 @@ export class MockApi implements DemoApi {
     this.traces.set(traceId, buildTrace(message, 0));
     this.metrics.received += 1;
     this.realtime.emit({ type: 'message.received', data: message });
+
+    // 最小自动回复引擎（演示）：命中启用的规则就自动回一次，语义与真实后端一致——
+    // 走 reply() 同一条链路（replies 历史 / sent / synced / trace），hitCount 可举证。
+    const rule = this.rules
+      .filter((r) => r.enabled)
+      .filter((r) => !r.platform || r.platform === template.platform)
+      .filter((r) => !r.keyword || template.body.toLowerCase().includes(r.keyword.toLowerCase()))
+      .sort((a, b) => a.priority - b.priority)[0];
+    if (rule) {
+      rule.hitCount += 1;
+      rule.lastHitAt = new Date().toISOString();
+      this.patch(
+        traceId,
+        {},
+        'auto_reply',
+        `命中规则 ${rule.id}${rule.keyword ? ` · 关键词「${rule.keyword}」` : ' · 兜底规则'}`,
+      );
+      void this.reply(traceId, rule.replyText);
+    }
 
     // 模拟 OCR / LLM 富化：稍后补上意图与草稿
     window.setTimeout(() => {

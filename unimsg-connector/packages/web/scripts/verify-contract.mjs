@@ -275,6 +275,126 @@ async function main() {
     check(`trace 含 ${ev}`, events.includes(ev), events.join(','));
   }
 
+  // 9.5 人工处理动作 / 自动回复 / 看板 / 通用接入 / 诊断（2026-11 新增契约）
+  // 注意：全部用 mock 安全路径（不带 notify=true、不触发真实外发），
+  // 与既有 reply 断言同风险口径——本脚本应在本地/mock 服务上运行。
+  // 状态/优先级/转发都用「本次 ingest 的新消息」：第 7 节的 id 已经 synced，再测前进会被判倒退。
+  if (id) {
+    // 通用接入：首推 duplicate=false，重推 duplicate=true；traceId 撞键 400
+    const ingestBody = {
+      platform: 'feishu',
+      externalId: `ext_contract_${Date.now()}`,
+      body: '契约自检：外部采集器消息',
+      sender: { id: 'collector', name: '采集器' },
+    };
+    const ig1 = await req('POST', '/api/ingest', { body: ingestBody });
+    check(
+      'POST ingest → 202 {ok, data:{message, duplicate:false}}',
+      ig1.status === 202 && ig1.data?.data?.duplicate === false && typeof ig1.data?.data?.message?.traceId === 'string',
+    );
+    const ig2 = await req('POST', '/api/ingest', { body: ingestBody });
+    check('POST ingest 重推 → duplicate:true', ig2.status === 202 && ig2.data?.data?.duplicate === true);
+    const igClash = await req('POST', '/api/ingest', {
+      body: { ...ingestBody, externalId: `ext_contract_clash_${Date.now()}`, traceId: id },
+    });
+    check('POST ingest traceId 撞既有消息 → 400', igClash.status === 400 && igClash.data?.ok === false);
+    const freshId = ig1.data?.data?.message?.traceId;
+
+    if (freshId) {
+      // 状态流转（不带回执）：前进成功 + 倒退 400
+      const st = await req('PATCH', `/api/messages/${encodeURIComponent(freshId)}/status`, {
+        body: { status: 'processing' },
+      });
+      check(
+        'PATCH status → 200 {ok, data:{message, notified:false}}',
+        st.status === 200 &&
+          st.data?.ok === true &&
+          st.data?.data?.message?.status === 'processing' &&
+          st.data?.data?.notified === false,
+        JSON.stringify(st.data?.data)?.slice(0, 80),
+      );
+      const stBack = await req('PATCH', `/api/messages/${encodeURIComponent(freshId)}/status`, {
+        body: { status: 'received' },
+      });
+      check('PATCH status 倒退 → 400 {ok:false,error}', stBack.status === 400 && stBack.data?.ok === false);
+
+      // 优先级：{ok, data:{message, old, source:'manual'}}
+      const pr = await req('PATCH', `/api/messages/${encodeURIComponent(freshId)}/priority`, {
+        body: { priority: 'urgent' },
+      });
+      check(
+        'PATCH priority → 200 {ok, data:{message.priority, old, source}}',
+        pr.status === 200 &&
+          pr.data?.data?.message?.priority === 'urgent' &&
+          pr.data?.data?.message?.prioritySource === 'manual' &&
+          typeof pr.data?.data?.old === 'string',
+      );
+      const prBad = await req('PATCH', `/api/messages/${encodeURIComponent(freshId)}/priority`, {
+        body: { priority: 'sooner' },
+      });
+      check('PATCH priority 非法值 → 400', prBad.status === 400);
+
+      // 跨平台转发（202 + 来源标记；正文由后端拼接，前端 ForwardModal 依赖）
+      const fwd = await req('POST', `/api/messages/${encodeURIComponent(freshId)}/forward`, {
+        body: { platform: 'dingtalk' },
+      });
+      check(
+        'POST forward → 202 {ok, message.platform, body 含 [转发自 feishu]}',
+        fwd.status === 202 &&
+          fwd.data?.message?.platform === 'dingtalk' &&
+          String(fwd.data?.message?.body ?? '').includes('[转发自 feishu]'),
+      );
+    }
+
+    // 自动回复规则 CRUD：POST 201 → GET 可见 → PATCH 清空 keyword → DELETE
+    // （keyword 用带时间戳的随机串，避免命中任何消息触发真实外发）
+    const ruleKey = `zz-contract-${Date.now()}`;
+    const ruleCreate = await req('POST', '/api/auto-rules', {
+      body: { keyword: ruleKey, replyText: '契约自检规则', priority: 500, enabled: false },
+    });
+    check(
+      'POST auto-rules → 201 {ok, data:{id, hitCount:0}}',
+      ruleCreate.status === 201 && typeof ruleCreate.data?.data?.id === 'string' && ruleCreate.data?.data?.hitCount === 0,
+    );
+    const ruleId = ruleCreate.data?.data?.id;
+    if (ruleId) {
+      const ruleList = await req('GET', '/api/auto-rules');
+      check(
+        'GET auto-rules → {ok, data:[...]} 含新建规则',
+        ruleList.status === 200 && Array.isArray(ruleList.data?.data) && ruleList.data.data.some((r) => r.id === ruleId),
+      );
+      const ruleClear = await req('PATCH', `/api/auto-rules/${encodeURIComponent(ruleId)}`, {
+        body: { keyword: '' },
+      });
+      check(
+        'PATCH auto-rules keyword="" → 清空为兜底',
+        ruleClear.status === 200 && !ruleClear.data?.data?.keyword,
+        String(ruleClear.data?.data?.keyword),
+      );
+      const ruleDel = await req('DELETE', `/api/auto-rules/${encodeURIComponent(ruleId)}`);
+      check('DELETE auto-rules → {ok:true}', ruleDel.status === 200 && ruleDel.data?.ok === true);
+    }
+
+    // 统计看板（全局聚合口径；avgHandleSeconds 允许 null）
+    const stats = await req('GET', '/api/stats/overview');
+    check(
+      'GET stats/overview → {ok, data:{totals, byPlatform×4, rules}}',
+      stats.status === 200 &&
+        typeof stats.data?.data?.totals?.messages === 'number' &&
+        Array.isArray(stats.data?.data?.byPlatform) &&
+        stats.data.data.byPlatform.length === 4 &&
+        typeof stats.data?.data?.rules?.total === 'number' &&
+        (stats.data?.data?.avgHandleSeconds === null || typeof stats.data?.data?.avgHandleSeconds === 'number'),
+    );
+
+    // 只读诊断摘要：四平台通道齐全
+    const diag = await req('GET', '/api/doctor/summary');
+    check(
+      'GET doctor/summary → {ok, data.platforms×4}',
+      diag.status === 200 && Array.isArray(diag.data?.data?.platforms) && diag.data.data.platforms.length === 4,
+    );
+  }
+
   // 10. WS 握手
   await checkWebSocket();
 }

@@ -21,6 +21,12 @@ import { wechatBridgeRouter } from './routes/wechatBridge';
 import { mailAccountsRouter } from './routes/mailAccounts';
 import { appConfigRouter } from './routes/appConfig';
 import { contactsRouter } from './routes/contacts';
+import { autoRulesRouter } from './routes/autoRules';
+import { ingestRouter } from './routes/ingest';
+import { statsRouter } from './routes/stats';
+import { diagnosticsRouter } from './routes/diagnostics';
+import type { AutoRuleStore } from './services/autoReply';
+import type { StatsSource } from './services/stats';
 import { apiAuth, ownerOnly } from './middlewares/auth';
 import { config } from './config';
 
@@ -79,6 +85,10 @@ export interface CreateAppOptions {
   jsonLimitMb?: number;
   /** 前端构建产物目录：传入后同源托管静态资源与 SPA 路由，实现单端口独立部署 */
   webDist?: string;
+  /** 自动回复规则存储：传入才挂 /auto-rules 管理接口 */
+  autoRules?: AutoRuleStore;
+  /** 统计看板数据源：传入才挂 /stats/overview */
+  statsSource?: StatsSource;
 }
 
 export function createApp(svc: MessageService, options: CreateAppOptions = {}) {
@@ -113,7 +123,21 @@ export function createApp(svc: MessageService, options: CreateAppOptions = {}) {
   // 微信 RPA 操作的是「本机微信窗口」，和平台凭据一样属于机器级能力：
   // 读状态可以给所有登录用户看，但拉取/启停桥只允许机器主人。
   app.use('/api', apiAuth, ownerOnly(svc), wechatPullRouter());
-  app.use('/api', apiAuth, ownerOnly(svc), wechatBridgeRouter());
+  app.use('/api', apiAuth, ownerOnly(svc), wechatBridgeRouter());  // 通用接入：任何外部采集器按统一格式推消息进来，与平台 webhook 共用幂等/trace/富化链路
+  app.use('/api', apiAuth, ingestRouter(svc));
+  // 只读诊断摘要：进程内状态，不发任何出站请求
+  app.use('/api', apiAuth, diagnosticsRouter());
+  // 自动回复规则管理：传了存储才挂（单测 / 纯人工模式可不挂）。
+  // 规则命中后会用机器主人的真实账号外发——与 compose/forward 同一条边界，
+  // 因此写操作挂 ownerOnly（GET 放行、部署令牌放行，成员写 403）。
+  if (options.autoRules) {
+    app.use('/api', apiAuth, ownerOnly(svc), autoRulesRouter(options.autoRules));
+  }
+  // 统计看板：传了数据源才挂。
+  // 口径说明：这是**机器全局**聚合（含所有登录用户消息的计数与平均处理时长），
+  // 不含任何正文/traceId 内容。与 messages 列表按 viewer 过滤不同，这里刻意全局——
+  // 看板回答「这台机器的闭环跑得怎么样」。若未来要多租户隔离，改 statsSource 按 viewer 过滤即可。
+  if (options.statsSource) app.use('/api', apiAuth, statsRouter(options.statsSource));
 
   // 同源部署（Docker 单容器）：server 直接托管前端构建产物 + SPA 回退。
   // 只在 WEB_DIST 指向真实 index.html 时启用，本地 dev 走 Vite 5173 不受影响。

@@ -121,6 +121,111 @@ for ev in ["received", "processing", "replied", "sent", "synced"]:
 sent_detail = next((e.get("detail", "") for e in log if e["event"] == "sent"), "")
 check("sent 日志点名是模拟发送", "模拟发送" in sent_detail, sent_detail)
 
+# ---------------- 人工处理动作：状态流转（含回执）/ 优先级 / 跨平台转发 ----------------
+s, h = req("GET", "/api/messages", token=TOKEN)
+wid = [m for m in h["data"] if m["platform"] == "wechat"][0]["traceId"]
+s, h = req(
+    "PATCH", f"/api/messages/{wid}/status",
+    {"status": "processing", "notify": True, "note": "已安排同事跟进"}, token=TOKEN,
+)
+check(
+    "状态流转 200 且回执已发（Mock 如实标注）",
+    s == 200 and h["data"]["notified"] is True and h["data"]["notifyMode"] == "mock",
+    h.get("data"),
+)
+s, h = req("GET", f"/api/messages/trace/{wid}", token=TOKEN)
+check(
+    "trace 含 status_notified（回执可回放）",
+    "status_notified" in [e["event"] for e in h["log"]],
+    [e["event"] for e in h["log"]],
+)
+
+s, h = req("PATCH", f"/api/messages/{fid}/priority", {"priority": "urgent"}, token=TOKEN)
+check(
+    "优先级人工修改（old→new + source=manual）",
+    s == 200 and h["data"]["message"]["priority"] == "urgent"
+    and h["data"]["message"]["prioritySource"] == "manual",
+    h.get("data"),
+)
+
+s, h = req(
+    "POST", f"/api/messages/{fid}/forward",
+    {"platform": "dingtalk", "note": "请钉钉同事跟进"}, token=TOKEN,
+)
+check(
+    "跨平台转发 202 且正文带来源标记",
+    s == 202 and h["message"]["platform"] == "dingtalk"
+    and "[转发自 feishu]" in h["message"]["body"],
+    h.get("message", {}).get("body"),
+)
+
+# ---------------- 自动回复：规则命中 → 走同一条回写链路 ----------------
+s, h = req(
+    "POST", "/api/auto-rules",
+    {"keyword": "周报", "replyText": "收到，稍后回复", "priority": 10}, token=TOKEN,
+)
+check("新建自动回复规则 201", s == 201 and h["data"]["keyword"] == "周报", h.get("data"))
+
+auto_msg = {
+    "schema": "2.0",
+    "event": {"message": {
+        "message_id": "om_smoke_auto", "message_type": "text",
+        "content": json.dumps({"text": "周报今天要交"}),
+        "sender": {"sender_id": {"user_id": "u_smoke"}},
+    }},
+}
+s, h = req("POST", "/api/webhook/feishu", auto_msg)
+check("自动回复：新消息入库", s == 200 and h.get("ok"), h)
+time.sleep(1.0)
+s, h = req("GET", "/api/messages", token=TOKEN)
+am = next((m for m in h.get("data", []) if m.get("externalId") == "om_smoke_auto"), {})
+replies = am.get("replies") or []
+check(
+    "自动回复命中规则且只回一次",
+    len(replies) == 1 and replies[0].get("text") == "收到，稍后回复",
+    replies,
+)
+s, h = req("GET", f"/api/messages/trace/{am.get('traceId', '')}", token=TOKEN)
+check(
+    "trace 含 auto_reply（自动回复可回放）",
+    "auto_reply" in [e["event"] for e in h.get("log", [])],
+    [e["event"] for e in h.get("log", [])],
+)
+
+# ---------------- 通用接入通道（任何采集器按统一格式推消息，幂等） ----------------
+ingest_body = {
+    "platform": "feishu",
+    "externalId": "ext_smoke_1",
+    "body": "来自外部采集器的消息",
+    "sender": {"id": "collector", "name": "采集器"},
+}
+s, h = req("POST", "/api/ingest", ingest_body, token=TOKEN)
+check("通用接入 202 且首推非重复", s == 202 and h["data"]["duplicate"] is False, h.get("data"))
+s, h = req("POST", "/api/ingest", ingest_body, token=TOKEN)
+check("通用接入同 externalId 幂等", h["data"]["duplicate"] is True, h.get("data"))
+
+# ---------------- 统计看板 / 只读诊断 ----------------
+s, h = req("GET", "/api/stats/overview", token=TOKEN)
+data = h.get("data") or {}
+check(
+    "看板：总数与四平台分布",
+    s == 200 and data.get("totals", {}).get("messages", 0) >= 4
+    and len(data.get("byPlatform", [])) == 4,
+    data.get("totals"),
+)
+check(
+    "看板：规则命中数可见",
+    data.get("rules", {}).get("total", 0) >= 1 and data.get("rules", {}).get("hits", 0) >= 1,
+    data.get("rules"),
+)
+
+s, h = req("GET", "/api/doctor/summary", token=TOKEN)
+check(
+    "只读诊断摘要：四平台通道齐全",
+    s == 200 and len(h.get("data", {}).get("platforms", [])) == 4,
+    h.get("data", {}).get("platforms"),
+)
+
 s, h = req("GET", "/api/health")
 check("健康计数 received>=3 & sent>=1", h.get("received", 0) >= 3 and h.get("sent", 0) >= 1, h)
 check("健康计数 sentMock>=1（模拟发送单独可见）", h.get("sentMock", 0) >= 1, h.get("sentMock"))

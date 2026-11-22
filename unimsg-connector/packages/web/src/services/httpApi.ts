@@ -11,7 +11,9 @@
  * type / keyword / onlyReview 在本地补齐（与 AppStore 的本地过滤一致）。
  */
 import type {
-  ComposeAck, ComposeRequest, IdentityRole, OutboundAttachment, SendCapabilities,
+  AutoRule, AutoRuleInput, ComposeAck, ComposeRequest, ForwardRequest, IdentityRole, OutboundAttachment,
+  Priority, PriorityChangeResult, SendCapabilities, StatsOverview, StatusChangeRequest,
+  StatusChangeResult,
 } from '@unimsg/shared';
 import type { Platform, TraceEntry, UnifiedMessage } from '../types';
 import type {
@@ -164,6 +166,61 @@ export class HttpApi implements MessageApi {
       { method: 'POST', body: JSON.stringify(req) },
     );
     return { message: body.message, taskId: body.taskId };
+  }
+
+  async changeStatus(id: string, req: StatusChangeRequest): Promise<StatusChangeResult> {
+    const body = await this.request<{ data: StatusChangeResult }>(
+      `/api/messages/${encodeURIComponent(id)}/status`,
+      { method: 'PATCH', body: JSON.stringify(req) },
+    );
+    return body.data;
+  }
+
+  async forward(id: string, req: ForwardRequest): Promise<ComposeAck> {
+    // 转发返回 202，形状与 compose 相同：{ ok, message, taskId }
+    const body = await this.request<{ message: UnifiedMessage; taskId: string }>(
+      `/api/messages/${encodeURIComponent(id)}/forward`,
+      { method: 'POST', body: JSON.stringify(req) },
+    );
+    return { message: body.message, taskId: body.taskId };
+  }
+
+  async setPriority(id: string, priority: Priority): Promise<PriorityChangeResult> {
+    const body = await this.request<{ data: PriorityChangeResult }>(
+      `/api/messages/${encodeURIComponent(id)}/priority`,
+      { method: 'PATCH', body: JSON.stringify({ priority }) },
+    );
+    return body.data;
+  }
+
+  async autoRules(): Promise<AutoRule[]> {
+    const body = await this.request<{ data?: AutoRule[] }>('/api/auto-rules');
+    return body.data ?? [];
+  }
+
+  async createAutoRule(input: AutoRuleInput): Promise<AutoRule> {
+    const body = await this.request<{ data: AutoRule }>('/api/auto-rules', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+    return body.data;
+  }
+
+  async updateAutoRule(id: string, patch: Partial<AutoRuleInput>): Promise<AutoRule> {
+    const body = await this.request<{ data: AutoRule }>(
+      `/api/auto-rules/${encodeURIComponent(id)}`,
+      { method: 'PATCH', body: JSON.stringify(patch) },
+    );
+    return body.data;
+  }
+
+  async deleteAutoRule(id: string): Promise<void> {
+    await this.request<{ ok: boolean }>(`/api/auto-rules/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  }
+
+  async stats(): Promise<StatsOverview> {
+    const body = await this.request<{ data: StatsOverview }>('/api/stats/overview');
+    return body.data;
   }
 
   async capabilities(): Promise<SendCapabilities[]> {

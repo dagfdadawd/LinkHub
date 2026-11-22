@@ -12,7 +12,9 @@ import { randomUUID } from 'node:crypto';
 import { normalizeEchoText, rememberSent, learnedSelfIds, matchEcho } from './echoRegistry';
 import {
   Platform, MsgStatus, UnifiedMessage, PlatformConnector,
-  type AttachmentInfo, type ComposeAck, type ComposeRequest, type IdentityRole, type OutboundAttachment,
+  type AttachmentInfo, type AutoRule, type ComposeAck, type ComposeRequest, type DeliveryMode,
+  type ForwardRequest, type IdentityRole, type OutboundAttachment, type Priority,
+  type PriorityChangeResult, type SendResult, type StatusChangeRequest, type StatusChangeResult,
 } from '@unimsg/shared';
 import { MessageRepository } from '../db/repository';
 import { LlmService } from './llm';
@@ -29,10 +31,21 @@ import {
   downloadAttachment,
   type AttachmentField,
   type DownloadedAttachment,
-} from './attachmentDownload';
+} from './attachmentDownload';import { inferPriority } from './priority';
 
 export interface Broadcast {
   (event: { type: string; data?: unknown }): void;
+}
+
+/**
+ * 自动回复规则的匹配端口（实现见 services/autoReply.ts）。
+ *
+ * 只依赖这个窄接口：MessageService 不直接持有规则存储，
+ * 单测可以注入一个假实现，也不引入「消息服务依赖规则管理」的反向耦合。
+ */
+export interface AutoReplyPort {
+  match(platform: Platform, text: string): AutoRule | undefined;
+  recordHit(id: string): AutoRule | undefined;
 }
 
 export interface IngestResult {
@@ -147,6 +160,16 @@ export function visibleTo(message: UnifiedMessage, viewer?: Viewer): boolean {
 /** 归属不匹配时统一用这一句：不暴露「消息存在但不属于你」，避免探测 */
 const NOT_FOUND = 'message not found';
 
+/** 状态回执里的中文标签：人话比枚举值更适合直接发到平台会话里 */
+const STATUS_LABELS: Record<string, string> = {
+  received: '已接收',
+  processing: '处理中',
+  replied: '已回复',
+  sent: '已发送',
+  synced: '已同步',
+  failed: '发送失败',
+};
+
 export class MessageService {
   /** 正在重新分析的消息：同一条并发点击只跑一次，避免重复计费与重复日志 */
   private readonly reanalyzing = new Set<string>();
@@ -168,6 +191,21 @@ export class MessageService {
     fromCompose?: boolean;
   }>();
 
+  /**
+   * 已经自动回过的消息：同一条只回一次。
+   *
+   * 平台重推由 (platform, externalId) 幂等挡在前面，但「同一条消息被不同通道
+   * 各推一次」仍可能走到这里（例如 webhook 与长连接同时在线），
+   * 再加一道内存去重，避免连回三条。
+   *
+   * 用 Map 而不是 Set：插入序即写入序，超容量时淘汰最早的记录，
+   * 长驻进程不会随命中数无限增长（淘汰只影响极老的消推重复场景，幂等键仍兜底）。
+   */
+  private readonly autoReplied = new Map<string, true>();
+
+  /** autoReplied 的容量上限：超过即淘汰最早记录，防长驻进程缓慢泄漏 */
+  private static readonly AUTO_REPLIED_MAX = 10_000;
+
   constructor(
     private repo: MessageRepository,
     private connectors: Record<Platform, PlatformConnector>,
@@ -175,6 +213,8 @@ export class MessageService {
     private ocr: OcrService,
     private limiter: RateLimiter,
     private broadcast: Broadcast,
+    /** 自动回复规则端口；不传 = 关闭自动回复（单测 / 纯人工模式） */
+    private autoReply?: AutoReplyPort,
   ) {}
 
   // ---------- 接收 ----------
@@ -363,6 +403,9 @@ export class MessageService {
     // 同步等待会拖住 Webhook 响应（平台超时会重推）并让收件箱迟迟不出现新消息。
     const received = this.repo.get(incoming.traceId)!;
     this.broadcast({ type: 'message.received', data: received });
+    // 自动回复在富化之前触发：规则只看正文，不必等 3–9s 的 LLM 调用；
+    // 走 reply() 的同一条链路，状态机与 trace 不会因为「自动」而缺一段。
+    this.maybeAutoReply(received);
     void this.enrich(incoming).catch((e) => {
       writeTrace(this.repo, incoming, 'enrich_failed', e instanceof Error ? e.message : String(e));
     });
@@ -454,10 +497,31 @@ export class MessageService {
       writeTrace(this.repo, m, 'intent_fallback', lr.reason);
     }
 
+    // 优先级：人工改过的不再被规则覆盖；没判定过才给默认值。
+    // 只写 prioritySource='rules'，不冒充 AI 判断（与大模型结果分开标注）。
+    //
+    // 竞态：富化是异步的，用户可能在 LLM 返回前就手动改了优先级。
+    // 所以写入前必须**重新读一次最新消息**，不能用进入函数时的快照判断。
+    const latest = this.repo.get(m.traceId);
+    const inferred = latest?.prioritySource === 'manual'
+      ? undefined
+      : inferPriority(body, { dueAt: latest?.dueAt ?? m.dueAt, intent });
+    if (inferred && latest?.priority !== inferred.priority) {
+      writeTrace(
+        this.repo,
+        m,
+        'priority',
+        `${latest?.priority ?? '未判定'}→${inferred.priority}（规则：${inferred.reason}）`,
+      );
+    }
+
     // AI 字段显式写 undefined：规则兜底时必须抹掉上一次的真实模型痕迹
     const updated = this.repo.update(m.traceId, {
       body, needsReview, intent, replyDraft, intentSource,
       aiProvider, aiModel, aiConfidence, aiPrecision,
+      ...(inferred
+        ? { priority: inferred.priority, prioritySource: 'rules' as const }
+        : {}),
     });
     if (!updated) return undefined;
     return { message: updated, source: intentSource, fallbackReason };
@@ -826,8 +890,12 @@ export class MessageService {
       const pendingReply = this.pendingReplies.get(id);
       this.pendingReplies.delete(id);
       const actualIdentity = result.mode === 'real' ? result.identity : undefined;
+      // 状态写入同样过防倒退守卫：用户可能在回写在途时人工前跳（replied→synced），
+      // 异步完成回写若无条件写 SENT 会把进度打回。delivery/replies 照写（事实不变），只跳过状态倒退。
+      const latest = this.repo.get(id) ?? cur;
+      const canMarkSent = checkStatusTransition(latest.status, MsgStatus.SENT).allowed;
       let m = this.repo.update(id, {
-        status: MsgStatus.SENT,
+        ...(canMarkSent ? { status: MsgStatus.SENT } : {}),
         ...(pendingReply !== undefined
           ? {
             replies: [
@@ -876,13 +944,20 @@ export class MessageService {
         return;
       }
 
-      m = this.repo.update(id, { status: MsgStatus.SYNCED })!;
-      writeTrace(
-        this.repo,
-        m,
-        'synced',
-        result.mode === 'mock' ? '模拟状态回流（本地 Mock）' : '平台状态回流',
-      );
+      // synced 同样过守卫：人工前跳后不再打回（detail 如实注明）
+      const afterSent = this.repo.get(id) ?? m;
+      const canMarkSynced = checkStatusTransition(afterSent.status, MsgStatus.SYNCED).allowed;
+      if (canMarkSynced) {
+        m = this.repo.update(id, { status: MsgStatus.SYNCED })!;
+        writeTrace(
+          this.repo,
+          m,
+          'synced',
+          result.mode === 'mock' ? '模拟状态回流（本地 Mock）' : '平台状态回流',
+        );
+      } else {
+        writeTrace(this.repo, m, 'synced', '发送已完成；状态已被人工前跳，不再回写 synced');
+      }
       this.broadcast({ type: 'message.updated', data: m });
       counters.sent += 1;
       if (result.mode === 'mock') counters.sentMock += 1;
@@ -932,6 +1007,198 @@ export class MessageService {
     if (!m) throw new Error(NOT_FOUND);
     writeTrace(this.repo, m, 'done');
     this.broadcast({ type: 'message.updated', data: m });
+  }
+
+  // ---------- 人工处理动作：状态流转 / 跨平台转发 / 优先级 ----------
+
+  /**
+   * 人工流转消息状态，可选把这次变更回写到原平台会话。
+   *
+   * 复用 checkStatusTransition 的防倒退规则：人工操作同样不允许把进度打回去
+   * （否则「已同步」被误点回「处理中」，闭环日志看起来像回滚）。
+   *
+   * `notify` 默认 false：状态首先是处理人自己的进度记录。系统消息发多了会把
+   * 真实对话顶出视野，属于用功能换体验的负优化；需要对方知道时由用户显式勾选。
+   */
+  async changeStatus(
+    id: string,
+    req: StatusChangeRequest,
+    viewer?: Viewer,
+  ): Promise<StatusChangeResult> {
+    const cur = this.requireVisible(id, viewer);
+    const allowed = Object.values(MsgStatus) as string[];
+    if (!allowed.includes(req.status)) {
+      throw new Error(`未知状态：${String(req.status)}（可用：${allowed.join(' / ')}）`);
+    }
+
+    let m = cur;
+    if (cur.status !== req.status) {
+      const decision = checkStatusTransition(cur.status, req.status);
+      if (!decision.allowed) {
+        throw new Error(decision.reason ?? `不允许从 ${cur.status} 流转到 ${req.status}`);
+      }
+      m = this.repo.update(id, { status: req.status })!;
+      writeTrace(
+        this.repo,
+        m,
+        'status',
+        `人工流转 ${cur.status}→${req.status}${req.notify ? '（含回执）' : ''}`,
+      );
+      this.broadcast({ type: 'message.updated', data: m });
+    }
+
+    if (!req.notify) return { message: m, notified: false };
+
+    const note = (req.note ?? '').trim()
+      || `[LinkHub] 该消息已标记为「${STATUS_LABELS[req.status] ?? req.status}」`;
+    try {
+      const result = await this.sendStatusNote(m, note);
+      writeTrace(
+        this.repo,
+        m,
+        'status_notified',
+        result.mode === 'mock'
+          ? '模拟发送状态回执（本地 Mock，未调用真实平台接口）'
+          : `真实发送状态回执${result.platformReply ? ` · ${result.platformReply}` : ''}`,
+      );
+      const latest = this.repo.get(id) ?? m;
+      this.broadcast({ type: 'message.updated', data: latest });
+      return { message: latest, notified: true, notifyMode: result.mode };
+    } catch (e) {
+      const reason = e instanceof Error ? e.message : String(e);
+      writeTrace(this.repo, m, 'status_notify_failed', reason);
+      // 状态本身已经改了：回执失败不回滚状态，只如实告诉调用方没发出去。
+      return { message: this.repo.get(id) ?? m, notified: false, notifyReason: reason };
+    }
+  }
+
+  /**
+   * 发送一条「状态回执」：与 reply 共用 connector + 限流链路，
+   * 但不改消息状态、不追加 replies —— 它是一条旁路通知，不是对用户的回复。
+   */
+  private async sendStatusNote(m: UnifiedMessage, text: string): Promise<SendResult> {
+    const connector = this.connectors[m.platform];
+    // 显式清掉引用与本次发送身份：回执是系统通知，不该带上次回复的引用条
+    const outgoing: UnifiedMessage = {
+      ...m,
+      body: text,
+      reply: text,
+      quoteRef: undefined,
+      sendIdentity: undefined,
+    };
+    // 回执是尽力而为的旁路通知：单次尝试（限流仍生效），不走业务回写的退避重试——
+    // 否则 PATCH /status 在最坏情况（限流等待 + 1/2/4s 退避 + 平台超时）下可挂 20s+
+    const result = await this.limiter.sendOnce(m.platform, () => connector.send(outgoing, []));
+    // 真实回执也会被平台回推：登记到回声表，避免收件箱里多出一条「收到的」系统消息
+    if (result.mode === 'real') {
+      rememberSent({
+        platform: m.platform,
+        conversationId: m.conversation?.id,
+        text: normalizeEchoText(text),
+        at: Date.now(),
+        traceId: m.traceId,
+      });
+    }
+    return result;
+  }
+
+  /**
+   * 跨平台转发：把 A 平台的消息推到 B 平台的指定会话。
+   *
+   * 实现上直接复用 compose()，所以转发同样经历 received→processing→replied→sent→synced，
+   * 同样进闭环日志、同样受限流与退避保护；源消息只多一条 `forwarded` 追溯事件。
+   */
+  async forward(id: string, req: ForwardRequest, viewer?: Viewer): Promise<ComposeAck> {
+    const src = this.requireVisible(id, viewer);
+    if (!(Object.values(Platform) as string[]).includes(req.platform)) {
+      throw new Error(`未知平台：${String(req.platform)}（可用：${Object.values(Platform).join(' / ')}）`);
+    }
+    const origin = `[转发自 ${src.platform}] ${src.sender?.name || src.sender?.id || '对方'}：${src.body}`;
+    const text = req.note?.trim() ? `${req.note.trim()}\n\n${origin}` : origin;
+
+    const ack = await this.compose({
+      platform: req.platform,
+      conversationId: req.conversationId,
+      conversationType: req.conversationType,
+      conversationTitle: req.conversationTitle,
+      mailAccount: req.mailAccount,
+      identity: req.identity,
+      text,
+    });
+
+    // 登录用户转发出去的这条出站消息归他所有，否则会跑到别人的收件箱 / 变成无主
+    if (viewer?.userId) this.repo.update(ack.message.traceId, { ownerId: viewer.userId });
+    writeTrace(
+      this.repo,
+      src,
+      'forwarded',
+      `→ ${req.platform}${req.conversationId ? ` · 会话 ${req.conversationId}` : ''}`
+        + ` · 新消息 ${ack.message.traceId}`,
+    );
+    this.broadcast({ type: 'message.updated', data: this.repo.get(id) ?? src });
+    return ack;
+  }
+
+  /**
+   * 人工修改优先级（覆盖规则 / AI 的判定）。
+   *
+   * 改动写一条 `priority` 闭环事件，旧值 → 新值留在日志里：
+   * 这就是「反馈闭环」的可举证形态——能数出规则判了多少、人改了多少。
+   */
+  async setPriority(
+    id: string,
+    priority: Priority,
+    viewer?: Viewer,
+  ): Promise<PriorityChangeResult> {
+    const cur = this.requireVisible(id, viewer);
+    if (!['urgent', 'normal', 'low'].includes(priority)) {
+      throw new Error(`未知优先级：${String(priority)}（可用：urgent / normal / low）`);
+    }
+    const old = cur.priority ?? 'normal';
+    const m = this.repo.update(id, { priority, prioritySource: 'manual' })!;
+    writeTrace(
+      this.repo,
+      m,
+      'priority',
+      `${old}→${priority}（人工纠正${cur.prioritySource ? `，原判定来源 ${cur.prioritySource}` : ''}）`,
+    );
+    this.broadcast({ type: 'message.updated', data: m });
+    return { message: m, old, source: 'manual' };
+  }
+
+  /**
+   * 入站消息命中自动回复规则时，复用 reply() 的完整回写链路发一条。
+   *
+   * 只回一次；只对真正的来信（direction !== 'out'）生效，避免自己回自己；
+   * 纯附件消息不自动回（容易驴唇不对马嘴）。
+   */
+  private maybeAutoReply(m: UnifiedMessage): void {
+    if (!this.autoReply) return;
+    if (m.direction === 'out') return;
+    if (!m.body?.trim()) return;
+    if (this.autoReplied.has(m.traceId)) return;
+
+    const rule = this.autoReply.match(m.platform, m.body);
+    if (!rule) return;
+
+    this.autoReplied.set(m.traceId, true);
+    if (this.autoReplied.size > MessageService.AUTO_REPLIED_MAX) {
+      // Map 迭代序 = 插入序：淘汰最早的一条
+      const oldest = this.autoReplied.keys().next().value;
+      if (oldest !== undefined) this.autoReplied.delete(oldest);
+    }
+    this.autoReply.recordHit(rule.id);
+    writeTrace(
+      this.repo,
+      m,
+      'auto_reply',
+      `命中规则 ${rule.id}${rule.keyword ? ` · 关键词「${rule.keyword}」` : ' · 兜底规则'}`,
+    );
+    // 归属守卫用消息自己的 owner：规则回复不能越权回复别人的消息
+    const viewer = m.ownerId ? { userId: m.ownerId } : undefined;
+    void this.reply(m.traceId, rule.replyText, [], undefined, viewer).catch((e) => {
+      writeTrace(this.repo, m, 'auto_reply_failed', e instanceof Error ? e.message : String(e));
+    });
   }
 
   /**

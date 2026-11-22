@@ -5,7 +5,7 @@ import { Alert, App as AntApp, Avatar, Button, Dropdown, Popover, Tooltip } from
 import type { MenuProps } from 'antd';
 import {
   ApiOutlined,
-  CheckOutlined,
+  CheckOutlined,  BarChartOutlined,
   CheckSquareOutlined,
   DownOutlined,
   HistoryOutlined,
@@ -592,6 +592,20 @@ export function AppShell() {
               itemRef={registerNavItem('to:/trace')}
               focused={activeNavKey === 'to:/trace'}
             />
+            <SideLink
+              to="/auto-reply"
+              icon={<ThunderboltOutlined />}
+              label="自动回复"
+              itemRef={registerNavItem('to:/auto-reply')}
+              focused={activeNavKey === 'to:/auto-reply'}
+            />
+            <SideLink
+              to="/stats"
+              icon={<BarChartOutlined />}
+              label="看板"
+              itemRef={registerNavItem('to:/stats')}
+              focused={activeNavKey === 'to:/stats'}
+            />
           </div>
 
           <div className="side__group">
@@ -833,6 +847,20 @@ export function AppShell() {
           >
             <CheckSquareOutlined />
             <span>待办</span>
+          </NavLink>
+          <NavLink
+            to="/auto-reply"
+            className={({ isActive }) => `mobile-nav__item${isActive ? ' is-active' : ''}`}
+          >
+            <ThunderboltOutlined />
+            <span>自动回复</span>
+          </NavLink>
+          <NavLink
+            to="/stats"
+            className={({ isActive }) => `mobile-nav__item${isActive ? ' is-active' : ''}`}
+          >
+            <BarChartOutlined />
+            <span>看板</span>
           </NavLink>
           <NavLink
             to="/trace"

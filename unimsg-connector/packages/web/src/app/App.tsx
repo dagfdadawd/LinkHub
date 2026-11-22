@@ -8,6 +8,8 @@ import { ConnectPage } from '../features/connect/ConnectPage';
 import { LoginPage } from '../features/auth/LoginPage';
 import { GroupViewPreview } from '../features/preview/GroupViewPreview';
 import { AuthGate } from '../features/auth/AuthGate';
+import { AutoReplyPage } from '../features/automation/AutoReplyPage';
+import { StatsPage } from '../features/stats/StatsPage';
 
 export function App() {
   return (
@@ -23,6 +25,8 @@ export function App() {
           <Route path="/inbox" element={<InboxPage />} />
           <Route path="/inbox/:traceId" element={<InboxPage />} />
           <Route path="/todos" element={<TodosPage />} />
+          <Route path="/auto-reply" element={<AutoReplyPage />} />
+          <Route path="/stats" element={<StatsPage />} />
           <Route path="/trace" element={<TracePage />} />
           <Route path="/trace/:traceId" element={<TracePage />} />
           <Route path="/accounts" element={<AccountsPage />} />

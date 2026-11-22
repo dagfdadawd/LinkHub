@@ -116,6 +116,7 @@ pnpm run doctor               # 3) 只读自检：凭据 / 连通性 / 出口 IP
 | `pnpm start` / `pnpm dev` | 启动后端（`dev` 为 watch 模式） |
 | `pnpm --filter @unimsg/web dev` | 启动前端（:5173） |
 | `pnpm run doctor` | 只读自检；有 FAIL 时退出码 1 |
+| `pnpm run doctor --json --out=<路径>` | 自检报告落盘（脱敏 JSON，初赛「初步验证」证据；默认写 `docs/verification/doctor-<时间戳>.json`） |
 | `pnpm test` / `pnpm test:web` | 服务端 / 前端单元测试 |
 | `pnpm typecheck` | shared + server + web 三个包的 TypeScript 检查 |
 | `pnpm e2e` / `pnpm e2e:sh` | 一键端到端冒烟（Windows / macOS · Linux） |
