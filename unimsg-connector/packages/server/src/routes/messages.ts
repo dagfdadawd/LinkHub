@@ -377,6 +377,21 @@ export function messagesRouter(svc: MessageService) {
     }
   });
 
+  /** 稍后处理（评审 P1-6）：body { until: ISO }；until 缺失 / 非法 / null = 取消稍后 */
+  r.post('/messages/:id/snooze', async (req, res) => {
+    try {
+      const body = (req.body ?? {}) as { until?: string | null };
+      const until =
+        typeof body.until === 'string' && body.until.trim() && !Number.isNaN(Date.parse(body.until))
+          ? body.until
+          : null;
+      await svc.snooze(req.params.id, until, viewerOf(req));
+      res.json({ ok: true });
+    } catch {
+      res.status(404).json({ ok: false, error: 'not found' });
+    }
+  });
+
   // 手动加入待办：普通消息也可转成待办（幂等），不改业务状态、不触发平台回写
   r.post('/messages/:id/todo', async (req, res) => {
     try {

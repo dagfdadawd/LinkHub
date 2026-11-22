@@ -6,6 +6,7 @@ import {
   ArrowLeftOutlined,
   CheckOutlined,
   CheckSquareOutlined,
+  ClockCircleOutlined,
   CopyOutlined,
   DownloadOutlined,
   FlagOutlined,
@@ -30,6 +31,7 @@ import type {
 } from '../../types';
 import { formatBytes } from '../../utils/attachments';
 import { canDownloadAttachment, saveBlobAsFile } from '../../utils/download';
+import { isSnoozed, snoozePresets } from '../../utils/snooze';
 import { formatSendError } from '../../utils/sendError';
 import { store } from '../../store';
 import { useAppState } from '../../hooks/useAppState';
@@ -528,6 +530,16 @@ export function DetailPanel({
     }
   }
 
+  /** 稍后处理（评审 P1-6）：untilIso=null 取消稍后；到期前消息藏在「稍后处理」胶囊里 */
+  async function snoozeOf(target: UnifiedMessage, untilIso: string | null, label: string): Promise<void> {
+    try {
+      await store.snooze(target.traceId, untilIso);
+      toast.success(untilIso ? `已稍后处理：${label}` : '已取消稍后处理');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '操作失败，请重试');
+    }
+  }
+
   /** 右键菜单项：引用回复 / 加入待办 / 优先级 / 标记完成 / 复制正文 / 转发 */
   const contextItems = (m: UnifiedMessage): MenuProps['items'] => [
     {
@@ -557,6 +569,25 @@ export function DetailPanel({
         disabled: m.priority === p,
         onClick: () => void setPriorityOf(m, p),
       })),
+    },
+    {
+      // 稍后处理（评审 P1-6）：到期前藏在「稍后处理」胶囊，到期自动回来并提醒
+      key: 'snooze',
+      icon: <ClockCircleOutlined />,
+      label: isSnoozed(m, new Date()) ? '稍后处理中' : '稍后处理',
+      children: isSnoozed(m, new Date())
+        ? [
+            {
+              key: 'snooze-clear',
+              label: '取消稍后（立刻回到收件箱）',
+              onClick: () => void snoozeOf(m, null, ''),
+            },
+          ]
+        : snoozePresets(new Date()).map((p) => ({
+            key: `snooze-${p.key}`,
+            label: p.label,
+            onClick: () => void snoozeOf(m, p.untilIso, p.label),
+          })),
     },
     {
       key: 'done',

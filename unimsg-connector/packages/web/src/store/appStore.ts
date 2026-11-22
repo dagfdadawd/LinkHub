@@ -38,6 +38,8 @@ export interface Filters {
    * `conversation.priority` 过滤，见 InboxPage。
    */
   onlyUrgent: boolean;
+  /** 只看「稍后处理中」的消息（Snooze 未到期）：管理 / 取消稍后的入口（评审 P1-6） */
+  onlySnoozed: boolean;
 }
 
 export interface AppState {
@@ -70,6 +72,7 @@ export const DEFAULT_FILTERS: Filters = {
   onlyReview: false,
   onlyUnread: false,
   onlyUrgent: false,
+  onlySnoozed: false,
 };
 
 export function filterMessages(messages: UnifiedMessage[], filters: Filters): UnifiedMessage[] {
@@ -218,6 +221,12 @@ export class AppStore {
 
   async markDone(id: string): Promise<void> {
     const updated = await this.api.markDone(id);
+    this.upsert(updated);
+  }
+
+  /** 稍后处理（评审 P1-6）：到期前不进收件箱，到期由壳上的 useSnoozeAlerts 提醒一次 */
+  async snooze(id: string, until: string | null): Promise<void> {
+    const updated = await this.api.snooze(id, until);
     this.upsert(updated);
   }
 

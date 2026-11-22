@@ -116,6 +116,7 @@ describe('AppStore', () => {
       }),
       dingtalkPersonalLogout: async () => Promise.resolve(),
       markDone: async () => Promise.reject(new Error('unused')),
+      snooze: async () => Promise.reject(new Error('unused')),
 markTodo: async () => Promise.reject(new Error('unused')),
       markRead: async () => Promise.reject(new Error('unused')),
       markAllRead: async () => 0,

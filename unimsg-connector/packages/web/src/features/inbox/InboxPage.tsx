@@ -10,6 +10,8 @@ import { useSession } from '../../services/session';
 import type { MessageApi } from '../../services/api';
 import { MsgStatus, Platform } from '../../types';
 import { PLATFORM_META, STATUS_META, TYPE_LABEL } from '../../utils/format';
+import { isSnoozed } from '../../utils/snooze';
+import { useNowTick } from '../../hooks/useNowTick';
 import { navigateWithMorph } from '../../utils/morph';
 import {
   buildConversations,
@@ -171,10 +173,18 @@ export function InboxPage() {
   };
 
   const previewMessages = previewMode ? DEMO_GROUP_MESSAGES : state.messages;
-  const visible = useMemo(
-    () => (previewMode ? previewMessages : filterMessages(state.messages, state.filters)),
-    [previewMode, previewMessages, state.messages, state.filters],
-  );
+  /**
+   * 稍后处理（评审 P1-6）：到期前的消息不进收件箱（「稍后处理」胶囊里可查看 / 取消）。
+   * 用 30s 心跳驱动——到期那一刻不需要新消息进来，列表自己会把消息还回来。
+   */
+  const nowTick = useNowTick(30_000);
+  const visible = useMemo(() => {
+    if (previewMode) return previewMessages;
+    const pool = state.filters.onlySnoozed
+      ? state.messages.filter((m) => isSnoozed(m, nowTick))
+      : state.messages.filter((m) => !isSnoozed(m, nowTick));
+    return filterMessages(pool, state.filters);
+  }, [previewMode, previewMessages, state.messages, state.filters, nowTick]);
   const selected = traceId ? state.messages.find((m) => m.traceId === traceId) : undefined;
 
   /**
@@ -280,6 +290,11 @@ export function InboxPage() {
   const urgentCount = useMemo(
     () => namedAllConversations.filter((c) => c.priority === 'urgent').length,
     [namedAllConversations],
+  );
+  /** 「稍后处理」胶囊上的数字：当前 Snooze 未到期的消息数（30s 心跳驱动，评审 P1-6） */
+  const snoozedCount = useMemo(
+    () => state.messages.filter((m) => isSnoozed(m, nowTick)).length,
+    [state.messages, nowTick],
   );
   /** 当前列表对应的消息条数：紧急筛选会改变会话集合，不能再用全局 visible.length */
   const filteredMessageCount = useMemo(
@@ -414,6 +429,7 @@ export function InboxPage() {
     state.filters.onlyReview ||
     state.filters.onlyUnread ||
     state.filters.onlyUrgent ||
+    state.filters.onlySnoozed ||
     Boolean(state.filters.keyword);
 
   /**
@@ -541,6 +557,22 @@ export function InboxPage() {
       ) : (
         <QuickStart demoMode={state.demoMode} onInject={handleInject} />
       )
+    ) : state.filters.onlySnoozed ? (
+      <EmptyState
+        title="没有稍后处理中的消息"
+        description="在消息右键菜单里选「稍后处理」，消息会先藏起来，到点自动回到收件箱并提醒你。"
+        action={
+          <Button
+            size="small"
+            onClick={() => {
+              store.setFilters({ onlySnoozed: false });
+              navigate('/inbox');
+            }}
+          >
+            查看全部会话
+          </Button>
+        }
+      />
     ) : state.filters.onlyUrgent ? (
       <EmptyState
         title="没有紧急会话"
@@ -720,9 +752,9 @@ export function InboxPage() {
               <div className="list-quick" role="group" aria-label="会话筛选">
                 <button
                   type="button"
-                  className={`quick-pill${!state.filters.onlyUnread && !state.filters.onlyReview && !state.filters.onlyUrgent ? ' is-active' : ''}`}
-                  aria-pressed={!state.filters.onlyUnread && !state.filters.onlyReview && !state.filters.onlyUrgent}
-                  onClick={() => store.setFilters({ onlyUnread: false, onlyReview: false, onlyUrgent: false })}
+                  className={`quick-pill${!state.filters.onlyUnread && !state.filters.onlyReview && !state.filters.onlyUrgent && !state.filters.onlySnoozed ? ' is-active' : ''}`}
+                  aria-pressed={!state.filters.onlyUnread && !state.filters.onlyReview && !state.filters.onlyUrgent && !state.filters.onlySnoozed}
+                  onClick={() => store.setFilters({ onlyUnread: false, onlyReview: false, onlyUrgent: false, onlySnoozed: false })}
                 >
                   全部
                 </button>
@@ -733,10 +765,11 @@ export function InboxPage() {
                   onClick={() =>
                     store.setFilters({
                       onlyUnread: !state.filters.onlyUnread,
-                      // 「未读 / 待处理 / 紧急」是同一组单选：点一个必须清掉其它两个，
+                      // 「未读 / 待处理 / 紧急 / 稍后处理」是同一组单选：点一个必须清掉其它几个，
                       // 否则多个胶囊会同时高亮，筛选条件也会互相叠加成空结果。
                       onlyReview: false,
                       onlyUrgent: false,
+                      onlySnoozed: false,
                     })
                   }
                 >
@@ -751,6 +784,7 @@ export function InboxPage() {
                       onlyReview: !state.filters.onlyReview,
                       onlyUnread: false,
                       onlyUrgent: false,
+                      onlySnoozed: false,
                     })
                   }
                 >
@@ -766,6 +800,7 @@ export function InboxPage() {
                       onlyUrgent: !state.filters.onlyUrgent,
                       onlyUnread: false,
                       onlyReview: false,
+                      onlySnoozed: false,
                     })
                   }
                 >
@@ -773,6 +808,27 @@ export function InboxPage() {
                   {urgentCount > 0 && (
                     <span className="quick-pill__count" aria-hidden="true">
                       {urgentCount}
+                    </span>
+                  )}
+                </button>
+                {/* 稍后处理（评审 P1-6）：Snooze 未到期的消息藏在这里，可查看 / 取消；30s 心跳驱动计数 */}
+                <button
+                  type="button"
+                  className={`quick-pill${state.filters.onlySnoozed ? ' is-active' : ''}`}
+                  aria-pressed={Boolean(state.filters.onlySnoozed)}
+                  onClick={() =>
+                    store.setFilters({
+                      onlySnoozed: !state.filters.onlySnoozed,
+                      onlyUnread: false,
+                      onlyReview: false,
+                      onlyUrgent: false,
+                    })
+                  }
+                >
+                  稍后处理
+                  {snoozedCount > 0 && (
+                    <span className="quick-pill__count" aria-hidden="true">
+                      {snoozedCount}
                     </span>
                   )}
                 </button>

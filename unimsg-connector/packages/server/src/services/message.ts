@@ -1039,6 +1039,20 @@ export class MessageService {
     this.broadcast({ type: 'message.updated', data: m });
   }
 
+  /**
+   * 稍后处理（评审 P1-6）：到期前消息不进收件箱，到期由前端提醒一次。
+   * 服务端只存 `snoozedUntil` 不做到期判定（纯时间流逝的判定留在客户端 30s 心跳）；
+   * `until=null` 取消稍后。到期判定语义见 shared 的 snoozedUntil 注释。
+   */
+  async snooze(id: string, until: string | null, viewer?: Viewer): Promise<void> {
+    this.requireVisible(id, viewer);
+    const patch: Partial<UnifiedMessage> = until ? { snoozedUntil: until } : { snoozedUntil: undefined };
+    const m = this.repo.update(id, patch);
+    if (!m) throw new Error(NOT_FOUND);
+    writeTrace(this.repo, m, until ? 'snooze' : 'snooze_clear', until ?? undefined);
+    this.broadcast({ type: 'message.updated', data: m });
+  }
+
   // ---------- 人工处理动作：状态流转 / 跨平台转发 / 优先级 ----------
 
   /**

@@ -25,6 +25,7 @@ import {
 import { useAppState } from '../hooks/useAppState';
 import { useUrgentAlerts } from '../hooks/useUrgentAlerts';
 import { useTodoReminders } from '../hooks/useTodoReminders';
+import { useSnoozeAlerts } from '../hooks/useSnoozeAlerts';
 import { store, services } from '../store';
 import {
   clearSession,
@@ -151,6 +152,8 @@ export function AppShell() {
     useMemo(() => state.messages.filter((m) => m.type === 'todo'), [state.messages]),
     state.initialized && !state.loading,
   );
+  /** Snooze 到期提醒：页面关着错过到期，打开时补响一次（评审 P1-6） */
+  useSnoozeAlerts(state.messages, state.initialized && !state.loading);
   /** 当前登录账号（未登录 = null，此时回退部署令牌，演示模式仍可用） */
   const session = useSession();
   /** 本机记着的全部账号：一个窗口里多开，点一下就换人 */

@@ -561,6 +561,17 @@ export class HttpApi implements MessageApi {
     return updated;
   }
 
+  /** 稍后处理（评审 P1-6）：与 markDone 同样的「POST + 重取」兜底策略 */
+  async snooze(id: string, until: string | null): Promise<UnifiedMessage> {
+    await this.request(`/api/messages/${encodeURIComponent(id)}/snooze`, {
+      method: 'POST',
+      body: JSON.stringify({ until }),
+    });
+    const updated = await this.get(id);
+    if (!updated) throw new ApiError('资源不存在', 404);
+    return updated;
+  }
+
   async markTodo(id: string): Promise<UnifiedMessage> {
     const body = await this.request<{ data?: UnifiedMessage }>(
       `/api/messages/${encodeURIComponent(id)}/todo`,

@@ -779,6 +779,12 @@ export class MockApi implements DemoApi {
     return this.patch(id, { done: true }, 'done');
   }
 
+  /** 稍后处理（评审 P1-6）：until=null 清空字段，Mock 与真实后端语义一致 */
+  async snooze(id: string, until: string | null): Promise<UnifiedMessage> {
+    await this.wait();
+    return this.patch(id, { snoozedUntil: until ?? undefined }, until ? 'snooze' : 'snooze_clear');
+  }
+
   async markTodo(id: string): Promise<UnifiedMessage> {
     await this.wait();
     return this.patch(id, { type: 'todo', done: false }, 'todo_added', '用户手动加入待办');

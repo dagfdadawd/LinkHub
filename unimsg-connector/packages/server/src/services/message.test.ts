@@ -572,3 +572,19 @@ test('list：服务端搜索 q / 时间游标 before / 最新N条 limit（评审
   // 不传参数 = 全量（旧行为完全不变）
   assert.equal(svc.list().length, 5);
 });
+
+test('snooze：设置 / 取消稍后处理，写 trace 并广播 message.updated（评审 P1-6）', async () => {
+  const repo = new InMemoryRepository();
+  const events: string[] = [];
+  const svc = new MessageService(repo, connectors, new LlmService(), new OcrService(), new RateLimiter(1, 5), (e) => events.push(e.type));
+  const { message } = await svc.ingest(Platform.FEISHU, feishuSample);
+
+  await svc.snooze(message.traceId, '2026-11-23T09:00:00.000Z');
+  assert.equal(repo.get(message.traceId)!.snoozedUntil, '2026-11-23T09:00:00.000Z');
+  assert.equal(events[events.length - 1], 'message.updated');
+
+  await svc.snooze(message.traceId, null);
+  assert.equal(repo.get(message.traceId)!.snoozedUntil, undefined, '取消 = 清空字段');
+
+  await assert.rejects(() => svc.snooze('not-exist', '2026-11-23T09:00:00.000Z'), /not found/);
+});
