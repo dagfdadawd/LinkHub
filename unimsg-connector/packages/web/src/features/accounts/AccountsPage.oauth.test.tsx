@@ -39,7 +39,9 @@ vi.mock('../../hooks/useAppState', () => ({
   useAppState: () => hoisted.state,
 }));
 
-vi.mock('../../store', () => ({ store: hoisted.store }));
+// 一键自检（评审 P1-9）读取 services.api.runDoctor 探测能力：Mock 环境 api 无该方法，
+// 按钮如实禁用——mock 里补一个空 api 即可（测试不点它）。
+vi.mock('../../store', () => ({ store: hoisted.store, services: { api: {} } }));
 
 import { AccountsPage } from './AccountsPage';
 import {
