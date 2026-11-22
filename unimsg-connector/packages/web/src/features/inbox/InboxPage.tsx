@@ -286,6 +286,17 @@ export function InboxPage() {
     () => filteredConversations.reduce((n, c) => n + c.messages.length, 0),
     [filteredConversations],
   );
+
+  /**
+   * 会话列表增量渲染（评审 P0-3）：几千条消息积累后，一次渲染几百行会话是首屏卡顿的大头。
+   * 一页只渲染 50 个会话，底部「显示更多」往下翻；筛选条件变化后回到第一页，
+   * 新消息到达**不**重置页数（用户已展开的列表不能因为实时推送塌回去）。
+   */
+  const CONV_PAGE_SIZE = 50;
+  const [convLimit, setConvLimit] = useState(CONV_PAGE_SIZE);
+  useEffect(() => {
+    setConvLimit(CONV_PAGE_SIZE);
+  }, [state.filters]);
   const selectedConv = useMemo(
     () => findConversation(namedAllConversations, traceId),
     [namedAllConversations, traceId],
@@ -459,18 +470,31 @@ export function InboxPage() {
     dismissed: firstRunDismissed,
   });
 
-  const renderConversations = (list: Conversation[]) => (
-    <div className="conv-list">
-      {list.map((conv) => (
-        <ConversationRow
-          key={conv.key}
-          conversation={conv}
-          active={conv.key === selectedConv?.key}
-          onSelect={openConversation}
-        />
-      ))}
-    </div>
-  );
+  const renderConversations = (list: Conversation[]) => {
+    const shown = list.slice(0, convLimit);
+    const hidden = list.length - shown.length;
+    return (
+      <div className="conv-list">
+        {shown.map((conv) => (
+          <ConversationRow
+            key={conv.key}
+            conversation={conv}
+            active={conv.key === selectedConv?.key}
+            onSelect={openConversation}
+          />
+        ))}
+        {hidden > 0 && (
+          <button
+            type="button"
+            className="conv-list__more"
+            onClick={() => setConvLimit((n) => n + CONV_PAGE_SIZE)}
+          >
+            显示更多会话（还有 {hidden} 个）
+          </button>
+        )}
+      </div>
+    );
+  };
 
   /**
    * 名录不可用提示：钉钉/飞书的名字来自平台接口，登录态过期时只能显示「群聊」。

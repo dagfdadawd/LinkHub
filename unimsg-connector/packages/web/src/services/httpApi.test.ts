@@ -42,17 +42,35 @@ function callArgs(fn: ReturnType<typeof vi.fn>, index = 0): [string, RequestInit
 afterEach(() => vi.unstubAllGlobals());
 
 describe('HttpApi', () => {
-  it('list：解包信封、携带 Bearer 鉴权头、只下发 platform/status', async () => {
+  it('list：解包信封、携带 Bearer 鉴权头；keyword 以 q 下放，type/onlyReview 仅本地', async () => {
     const fn = mockFetch(jsonResponse({ ok: true, data: [message()] }));
     const api = new HttpApi(BASE, TOKEN);
 
-    const list = await api.list({ platform: Platform.FEISHU, status: MsgStatus.RECEIVED, keyword: 'hello' });
+    const list = await api.list({
+      platform: Platform.FEISHU,
+      status: MsgStatus.RECEIVED,
+      keyword: '  hello  ',
+      before: '2026-11-20T00:00:00.000Z',
+      limit: 100,
+    });
 
     expect(list).toHaveLength(1);
     const [url, init] = callArgs(fn);
-    // type/keyword/onlyReview 不下发给后端
-    expect(url).toBe(`${BASE}/api/messages?platform=feishu&status=received`);
+    // 服务端搜索 / 时间游标分页（评审 P0-3）：q（去首尾空白）/before/limit 下发
+    expect(url).toBe(
+      `${BASE}/api/messages?platform=feishu&status=received&q=hello&before=2026-11-20T00%3A00%3A00.000Z&limit=100`,
+    );
     expect((init.headers as Record<string, string>).Authorization).toBe(`Bearer ${TOKEN}`);
+  });
+
+  it('list：keyword 为空白时不下发 q；type/onlyReview 不下发（本地兜底）', async () => {
+    const fn = mockFetch(jsonResponse({ ok: true, data: [message()] }));
+    const api = new HttpApi(BASE, TOKEN);
+
+    await api.list({ keyword: '   ', type: 'text' as never, onlyReview: true });
+
+    const [url] = callArgs(fn);
+    expect(url).toBe(`${BASE}/api/messages`);
   });
 
   it('bridge start：令牌回调必须实时求值（登录会话令牌，不是函数源码）', async () => {

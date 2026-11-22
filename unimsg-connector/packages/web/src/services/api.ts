@@ -74,6 +74,10 @@ export interface MessageFilter {
   type?: MsgType;
   keyword?: string;
   onlyReview?: boolean;
+  /** 时间游标：只取 createdAt 早于该 ISO 时刻的消息（「加载更早」翻页，评审 P0-3） */
+  before?: string;
+  /** 只取最新 N 条（服务端分页页大小）；不传 = 全量 */
+  limit?: number;
 }
 
 /** 回复回执：与后端 202 响应同构 */

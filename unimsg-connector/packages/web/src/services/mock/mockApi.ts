@@ -205,7 +205,14 @@ export class MockApi implements DemoApi {
           (m.intent ?? '').toLowerCase().includes(k),
       );
     }
-    return items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    // 时间游标 + 最新 N 条：与真实后端的 q/before/limit 语义逐字对齐（评审 P0-3）
+    if (filter?.before) {
+      const t = Date.parse(filter.before);
+      if (!Number.isNaN(t)) items = items.filter((m) => Date.parse(m.createdAt) < t);
+    }
+    const sorted = items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    if (filter?.limit && filter.limit > 0) return sorted.slice(0, Math.floor(filter.limit));
+    return sorted;
   }
 
   async get(id: string): Promise<UnifiedMessage | undefined> {

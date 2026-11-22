@@ -105,6 +105,11 @@ export class HttpApi implements MessageApi {
     const params = new URLSearchParams();
     if (filter?.platform) params.set('platform', filter.platform);
     if (filter?.status) params.set('status', filter.status);
+    // 服务端搜索 / 时间游标分页（评审 P0-3）：keyword 映射为 q 下放；
+    // 老后端会忽略未知参数，下方本地兜底筛选照旧生效，双向兼容
+    if (filter?.keyword?.trim()) params.set('q', filter.keyword.trim());
+    if (filter?.before) params.set('before', filter.before);
+    if (filter?.limit) params.set('limit', String(filter.limit));
     const qs = params.toString();
     const body = await this.request<{ data?: UnifiedMessage[] }>(`/api/messages${qs ? `?${qs}` : ''}`);
 

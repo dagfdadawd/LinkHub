@@ -71,8 +71,14 @@ export function messagesRouter(svc: MessageService) {
   r.get('/messages', (req, res) => {
     const platform = typeof req.query.platform === 'string' ? (req.query.platform as Platform) : undefined;
     const status = typeof req.query.status === 'string' ? (req.query.status as MsgStatus) : undefined;
+    // 服务端搜索 / 时间游标分页（评审 P0-3）：q=子串搜索，before=游标，limit=页大小（上限 2000）
+    const q = typeof req.query.q === 'string' ? req.query.q : undefined;
+    const before = typeof req.query.before === 'string' ? req.query.before : undefined;
+    const limitRaw = Number(req.query.limit);
+    const limit =
+      Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(Math.floor(limitRaw), 2000) : undefined;
     // 登录用户只看到自己的消息（数据隔离）；部署令牌（无人登录）看到全部
-    res.json({ ok: true, data: svc.list({ platform, status }, viewerOf(req)) });
+    res.json({ ok: true, data: svc.list({ platform, status, q, before, limit }, viewerOf(req)) });
   });
 
   /** 认领「未归属」的历史消息到当前账号：隔离演示的入口 */

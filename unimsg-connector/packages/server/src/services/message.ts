@@ -578,11 +578,41 @@ export class MessageService {
    * `viewer` = 当前登录账号：给了就只返回归属它的消息（数据隔离）；
    * 不传（部署令牌 / 无人登录）= 返回全部，保持单机演示零改动。
    * 未归属的历史数据（ownerId 缺省）在隔离视图里**不出现**，需要用户主动「认领」。
+   *
+   * 服务端搜索 / 分页（评审 P0-3 的能力底座）：
+   *  - `q`：联系人名 / 正文 / 待办标题的子串匹配（大小写不敏感）；
+   *  - `before`：时间游标，只返回 createdAt 早于该 ISO 时刻的消息（「加载更早」）；
+   *  - `limit`：只返回最新 N 条（createdAt 降序，最新在前，与 Mock 全量列表同序）。
+   * 三者都不传 = 全量，与旧行为完全一致（契约与既有调用方零改动）。
    */
-  list(filter?: { platform?: Platform; status?: MsgStatus }, viewer?: Viewer): UnifiedMessage[] {
-    const rows = this.repo.list(filter);
-    if (!viewer?.userId) return rows;
-    return rows.filter((m) => m.ownerId === viewer.userId);
+  list(
+    filter?: { platform?: Platform; status?: MsgStatus; q?: string; before?: string; limit?: number },
+    viewer?: Viewer,
+  ): UnifiedMessage[] {
+    let rows = this.repo.list(filter);
+    if (viewer?.userId) rows = rows.filter((m) => m.ownerId === viewer.userId);
+
+    const q = filter?.q?.trim().toLowerCase();
+    if (q) {
+      rows = rows.filter(
+        (m) =>
+          m.body.toLowerCase().includes(q) ||
+          (m.todoTitle ?? '').toLowerCase().includes(q) ||
+          (m.sender?.name ?? '').toLowerCase().includes(q),
+      );
+    }
+
+    const before = filter?.before ? Date.parse(filter.before) : NaN;
+    if (!Number.isNaN(before)) {
+      rows = rows.filter((m) => Date.parse(m.createdAt) < before);
+    }
+
+    if (filter?.limit !== undefined && filter.limit > 0) {
+      rows = [...rows]
+        .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
+        .slice(0, Math.floor(filter.limit));
+    }
+    return rows;
   }
 
   /**

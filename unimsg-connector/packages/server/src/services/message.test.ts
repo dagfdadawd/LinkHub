@@ -531,3 +531,44 @@ test('reply 重试时清掉上一次失败原因', async () => {
   await wait();
   assert.equal(repo.get(message.traceId)!.failureReason, undefined);
 });
+
+test('list：服务端搜索 q / 时间游标 before / 最新N条 limit（评审 P0-3）', () => {
+  const repo = new InMemoryRepository();
+  const svc = new MessageService(repo, connectors, new LlmService(), new OcrService(), new RateLimiter(1, 5), () => {});
+  const base = Date.parse('2026-11-20T10:00:00+08:00');
+  const mk = (i: number, body: string, senderName: string): UnifiedMessage => ({
+    traceId: `t-${i}`,
+    platform: Platform.FEISHU,
+    externalId: `e-${i}`,
+    sender: { id: 'u', name: senderName },
+    type: 'text',
+    body,
+    direction: 'in',
+    status: MsgStatus.RECEIVED,
+    createdAt: new Date(base + i * 60_000).toISOString(),
+    updatedAt: new Date(base + i * 60_000).toISOString(),
+  });
+  repo.save(mk(0, '合同今天必须确认', '郑友佳'));
+  repo.save(mk(1, '周报已发', '李四'));
+  repo.save(mk(2, '合同盖章扫描件', '王五'));
+  repo.save(mk(3, '会议纪要', '郑友佳'));
+  repo.save(mk(4, '无关消息', '赵六'));
+
+  // q：正文 / 联系人子串（大小写不敏感）；repo.list 按 createdAt 降序返回
+  assert.deepEqual(svc.list({ q: '合同' }).map((m) => m.traceId), ['t-2', 't-0']);
+  assert.deepEqual(svc.list({ q: '郑友' }).map((m) => m.traceId), ['t-3', 't-0']);
+  assert.deepEqual(svc.list({ q: '  合同  ' }).map((m) => m.traceId), ['t-2', 't-0'], '首尾空白忽略');
+
+  // limit：只取最新 N 条，createdAt 降序（与 Mock 全量列表同序）
+  assert.deepEqual(svc.list({ limit: 2 }).map((m) => m.traceId), ['t-4', 't-3']);
+
+  // before：时间游标，配合 limit 实现「加载更早」
+  const cursor = mk(3).createdAt;
+  assert.deepEqual(svc.list({ before: cursor, limit: 2 }).map((m) => m.traceId), ['t-2', 't-1']);
+
+  // q + limit 叠加
+  assert.deepEqual(svc.list({ q: '合同', limit: 1 }).map((m) => m.traceId), ['t-2']);
+
+  // 不传参数 = 全量（旧行为完全不变）
+  assert.equal(svc.list().length, 5);
+});

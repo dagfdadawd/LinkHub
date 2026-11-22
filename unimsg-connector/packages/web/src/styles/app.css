@@ -8099,6 +8099,24 @@ html.vt-morph .detail {
   gap: 2px;
 }
 
+/* 「显示更多会话」：会话列表增量渲染的展开按钮（评审 P0-3）——通栏幽灵按钮，不抢列表焦点 */
+.conv-list__more {
+  margin: 4px 0;
+  padding: 8px;
+  border: 1px dashed var(--border);
+  border-radius: var(--r-10);
+  background: transparent;
+  color: var(--text-3);
+  font-size: 0.8125rem;
+  cursor: pointer;
+  transition: color var(--t-fast), border-color var(--t-fast);
+}
+
+.conv-list__more:hover {
+  color: var(--text-2);
+  border-color: var(--text-4, var(--border));
+}
+
 .conv-row {
   display: flex;
   align-items: center;
