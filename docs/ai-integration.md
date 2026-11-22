@@ -6,10 +6,10 @@
 
 | 项 | 值 |
 |---|---|
-| 服务商 | 小米 MiMo 开放平台 |
+| 服务商 | 火山方舟（当前演示）/ 小米 MiMo（默认兼容） |
 | 协议 | OpenAI 兼容 Chat Completions（`POST {LLM_ENDPOINT}/chat/completions`） |
-| 默认端点 | `https://api.xiaomimimo.com/v1` |
-| 默认模型 | `mimo-v2.6-flash` |
+| 默认端点 | `https://ark.cn-beijing.volces.com/api/v3`（当前演示）/ `https://api.xiaomimimo.com/v1`（默认兼容） |
+| 默认模型 | `doubao-seed-2-1-lite`（当前演示）/ `mimo-v2.6-flash`（默认兼容） |
 | 鉴权 | `Authorization: Bearer $LLM_API_KEY` |
 | 调用参数 | `temperature=0.2`、`max_completion_tokens=800`（推理模型被截断时自动放大重试）、`stream=false` |
 | 超时 | `LLM_TIMEOUT_MS`，默认 15000ms |

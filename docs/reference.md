@@ -193,7 +193,7 @@ LinkHub-test/
 │   ├── desktop-app.md         # 桌面版（轻量版 / Electron）：使用、构建、内置 dws、FAQ
 │   ├── reference.md            # 本文件：README 详情版（环境变量 / API / 目录结构 / 已知限制）
 ├── .github/workflows/ci.yml    # typecheck + 测试 + web build + e2e:sh
-├── documents/                  # 设计文档（初赛精简版 / 决赛完整版）
+├── documents/                  # 设计文档（初赛精简版）
 └── unimsg-connector/           # pnpm monorepo 源码
     ├── Dockerfile / docker-compose.yml / .dockerignore   # 独立部署包
     ├── packages/shared/src/message.ts      # 前后端共享契约（含 delivery / 出站附件 / compose）

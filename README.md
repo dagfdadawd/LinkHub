@@ -182,7 +182,7 @@ Node.js ≥ 20 · TypeScript · Express 4 + ws · React 18 + Vite 5 + Ant Design
 | 桌面版（Electron / 轻量版） | [docs/desktop-app.md](docs/desktop-app.md) |
 | AI 服务集成说明 | [docs/ai-integration.md](docs/ai-integration.md) |
 | 完整技术参考：环境变量全表 / API 一览 / 目录结构 | [docs/reference.md](docs/reference.md) |
-| 赛题设计文档（初赛精简版 / 决赛完整版） | [documents/](documents/) |
+| 赛题设计文档（初赛精简版；决赛完整版后续补充） | [documents/](documents/) |
 
 ## License
 
