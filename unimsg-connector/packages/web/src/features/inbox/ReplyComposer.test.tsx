@@ -3,6 +3,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { ReplyComposer } from './ReplyComposer';
 import { MsgStatus, Platform } from '../../types';
 import type { UnifiedMessage } from '../../types';
+import { resetTemplates } from '../settings/templates';
 
 const message: UnifiedMessage = {
   traceId: 't-composer-1',
@@ -118,5 +119,26 @@ describe('ReplyComposer', () => {
       message: { status: MsgStatus.FAILED, reply: '上次失败的内容' },
     });
     expect(screen.getByTestId('send-reply')).toHaveClass('ripple-btn--ready');
+  });
+
+  it('模板菜单：点击模板把 {对方称呼} 替换成发送人并追加到输入框（评审 P1-5）', () => {
+    resetTemplates();
+    const { onChange } = setup({ value: '' });
+    fireEvent.click(screen.getByLabelText('插入快捷回复模板'));
+    // 默认第一条「收到」没有变量；直接点第二项验证替换
+    fireEvent.click(screen.getByText('应承'));
+    expect(onChange).toHaveBeenCalledTimes(1);
+    const inserted = onChange.mock.calls[0][0] as string;
+    expect(inserted).toContain('好的，没问题，张三。');
+    expect(inserted).not.toContain('{对方称呼}');
+  });
+
+  it('模板追加到已有内容时先换行，不把两句话黏在一起', () => {
+    resetTemplates();
+    const { onChange } = setup({ value: '先说结论：' });
+    fireEvent.click(screen.getByLabelText('插入快捷回复模板'));
+    fireEvent.click(screen.getByText('收到'));
+    const inserted = onChange.mock.calls[0][0] as string;
+    expect(inserted).toBe('先说结论：\n收到，我看一下，稍后回复你。');
   });
 });

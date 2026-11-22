@@ -1,11 +1,12 @@
 import { useRef, useState } from 'react';
-import { Input, Tag } from 'antd';
-import { PaperClipOutlined, SendOutlined, UploadOutlined } from '@ant-design/icons';
+import { Dropdown, Input, Tag } from 'antd';
+import { CommentOutlined, PaperClipOutlined, SendOutlined, UploadOutlined } from '@ant-design/icons';
 import { MsgStatus } from '../../types';
 import type { UnifiedMessage, OutboundAttachment } from '../../types';
 import { FILE_LIMITS } from '../../types';
 import { RippleButton } from '../../components/RippleButton';
 import { usePreferences } from '../settings/preferences';
+import { applyTemplateVariables, useTemplates, type ReplyTemplate } from '../settings/templates';
 import { filesToAttachments, formatBytes, validateFiles } from '../../utils/attachments';
 
 const { TextArea } = Input;
@@ -42,6 +43,15 @@ export function ReplyComposer({
   const [fileError, setFileError] = useState('');
   const canSend = (value.trim().length > 0 || attachments.length > 0) && !sending && !sendDisabled;
   const enterToSend = prefs.sendKey === 'enter';
+
+  /** 快捷回复模板（评审 P1-5）：{对方称呼} 按当前会话发送人替换后追加到输入框尾部 */
+  const templates = useTemplates();
+  const contactName = message.sender?.name ?? '';
+  const insertTemplate = (tpl: ReplyTemplate): void => {
+    const text = applyTemplateVariables(tpl.content, { contactName });
+    const next = value.trim() ? `${value.replace(/\s+$/, '')}\n${text}` : text;
+    onChange(next.slice(0, MAX_LENGTH));
+  };
 
   // 发送按钮状态色：以「是否已有回写内容」为准，而不是追 WebSocket 推来的状态——
   // reply 是落库事实，WS 可能丢包导致状态滞后；进死信队列时保留明亮态，
@@ -149,6 +159,34 @@ export function ReplyComposer({
       {fileError && <div className="composer__file-error" role="alert">{fileError}</div>}
 
       <div className="composer__bar">
+        {templates.length > 0 && (
+          <Dropdown
+            trigger={['click']}
+            menu={{
+              items: templates.map((t) => ({
+                key: t.id,
+                label: (
+                  <span title={applyTemplateVariables(t.content, { contactName })}>
+                    {t.name}
+                  </span>
+                ),
+              })),
+              onClick: ({ key }) => {
+                const tpl = templates.find((x) => x.id === key);
+                if (tpl) insertTemplate(tpl);
+              },
+            }}
+          >
+            <button
+              type="button"
+              className="composer__attach"
+              aria-label="插入快捷回复模板"
+              title="插入快捷回复模板（设置 → 模板 可管理）"
+            >
+              <CommentOutlined /> 模板
+            </button>
+          </Dropdown>
+        )}
         <button
           type="button"
           className="composer__attach"

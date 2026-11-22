@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { App as AntApp, Button, Input, Modal, Popconfirm, Segmented, Switch, Tabs } from 'antd';
 import {
   BgColorsOutlined,
+  CommentOutlined,
   DeleteOutlined,
   InfoCircleOutlined,
   LockOutlined,
@@ -39,6 +40,7 @@ import {
   requestNotificationPermission,
   showUrgentTestNotification,
 } from '../../utils/urgentAlert';
+import { addTemplate, removeTemplate, resetTemplates, useTemplates } from './templates';
 import { platformMeta } from '../../utils/format';
 import { Platform } from '../../types';
 
@@ -83,6 +85,11 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
   const [name, setName] = useState(profile.name);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(profile.avatarUrl);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  /** 快捷回复模板（评审 P1-5）：列表来自本机存储；新增表单是本地草稿态 */
+  const templates = useTemplates();
+  const [tplName, setTplName] = useState('');
+  const [tplContent, setTplContent] = useState('');
 
   /** 账号分区：当前登录用户 + 改密码 / 退出所有设备 */
   const session = useSession();
@@ -527,6 +534,67 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
                     />
                   </div>
                 </Row>
+              </div>
+            ),
+          },
+          {
+            key: 'templates',
+            label: (
+              <span>
+                <CommentOutlined /> 模板
+              </span>
+            ),
+            children: (
+              <div className="set-pane">
+                <p className="set-note">
+                  快捷回复模板：在回复框点「模板」一键插入（评审 P1-5）。正文支持 {'{对方称呼}'} 变量，
+                  插入时按当前会话的发送人替换；存在本机浏览器，不随账号同步。
+                </p>
+                <div className="tpl-list">
+                  {templates.map((t) => (
+                    <div key={t.id} className="tpl-list__row">
+                      <span className="tpl-list__name">{t.name}</span>
+                      <span className="tpl-list__content">{t.content}</span>
+                      <Popconfirm title="删除这条模板？" onConfirm={() => removeTemplate(t.id)}>
+                        <Button size="small" danger aria-label={`删除模板 ${t.name}`}>
+                          删除
+                        </Button>
+                      </Popconfirm>
+                    </div>
+                  ))}
+                </div>
+                <div className="tpl-add">
+                  <Input
+                    value={tplName}
+                    onChange={(e) => setTplName(e.target.value)}
+                    placeholder="模板名（如：收到）"
+                    maxLength={30}
+                    style={{ width: 150 }}
+                    aria-label="模板名"
+                  />
+                  <Input
+                    value={tplContent}
+                    onChange={(e) => setTplContent(e.target.value)}
+                    placeholder="模板内容，可用 {对方称呼} 变量"
+                    maxLength={500}
+                    aria-label="模板内容"
+                  />
+                  <Button
+                    type="primary"
+                    disabled={!tplName.trim() || !tplContent.trim()}
+                    onClick={() => {
+                      addTemplate(tplName.trim(), tplContent);
+                      setTplName('');
+                      setTplContent('');
+                      message.success('已添加模板');
+                    }}
+                  >
+                    添加
+                  </Button>
+                  <Popconfirm title="恢复为默认四条？自定义的会清掉" onConfirm={() => resetTemplates()}>
+                    <Button size="small">恢复默认</Button>
+                  </Popconfirm>
+                </div>
               </div>
             ),
           },
