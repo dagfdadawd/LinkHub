@@ -203,6 +203,15 @@ describe('ComposeModal（统一入口主动发送）', () => {
     expect(screen.getByTestId('compose-send')).toBeDisabled();
   });
 
+  it('B6：正文实时计数 x / 4000，计数旁说明与回复框 2000 的差异来源', () => {
+    setup();
+    fireEvent.change(screen.getByLabelText('发送文本'), { target: { value: '请查收周报' } });
+    // 与回复框 composer__count 同款交互：实时显示「已输入 / 上限」
+    expect(screen.getByTestId('compose-count')).toHaveTextContent('5 / 4000');
+    // 上限差异可解释：主动发送是出站正文（4000），回复是单条消息回写（2000）
+    expect(screen.getByText(/主动发送为出站正文，上限 4000 字（回复框为 2000）/)).toBeInTheDocument();
+  });
+
   it('选邮箱平台时可切换发件邮箱，并随请求提交所选账号', async () => {
     // 测试环境可能指向真实后端；账号列表打桩，避免依赖本机服务
     vi.spyOn(services.api, 'accounts').mockResolvedValue([{

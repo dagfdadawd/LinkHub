@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
-import { AccountCard, capabilityWarning, doctorCommand, sendBreakdown } from './AccountsPage';
+import { AccountCard, accountConclusion, capabilityWarning, doctorCommand, sendBreakdown } from './AccountsPage';
 import { ACCOUNTS } from '../../services/mock/fixtures';
 import { Platform } from '../../types';
 import type { PlatformIdentityView, UserIdentityStatus } from '@unimsg/shared';
@@ -44,6 +44,14 @@ function dingtalkAccount(identity: PlatformIdentityView, mode: 'real' | 'mock' =
   return { ...accountOf(Platform.DINGTALK), identity, mode };
 }
 
+/**
+ * D2 评审后：长警告 / doctor 自检命令 / 缺失变量收进「详情」折叠区（默认收起），
+ * 断言这些内容前必须先展开对应平台的详情。
+ */
+function openDetails(platform: Platform) {
+  fireEvent.click(screen.getByTestId(`details-toggle-${platform}`));
+}
+
 describe('AccountCard 基础信息', () => {
   it('邮箱平台展示多账号、地址、IMAP/SMTP 与监听目录，mode Tag 为真实接口', () => {
     render(<AccountCard account={accountOf(Platform.MAIL)} />);
@@ -55,7 +63,10 @@ describe('AccountCard 基础信息', () => {
     expect(screen.getByText('smtp.qq.com')).toBeInTheDocument();
     expect(screen.getByText(/监听目录：INBOX、Junk/)).toBeInTheDocument();
     expect(screen.getAllByText('真实接口').length).toBeGreaterThan(0);
-    // 配置问题（issues）逐条展示：warn / error 都可见
+    // D2 评审：配置问题（issues）收进「详情」折叠区，默认收起不占卡片密度
+    expect(screen.queryByText(/MAIL_WORK_PROVIDER=custom/)).not.toBeInTheDocument();
+    openDetails(Platform.MAIL);
+    // 展开后 warn / error 逐条可见，长文案完整不截断
     expect(screen.getByText(/MAIL_WORK_PROVIDER=custom/)).toBeInTheDocument();
     expect(screen.getByText(/MAIL_HR_AUTH_CODE/)).toBeInTheDocument();
     expect(screen.getByText(/该账号已跳过/)).toBeInTheDocument();
@@ -66,10 +77,13 @@ describe('AccountCard 基础信息', () => {
 
     expect(screen.getByText('已配置')).toBeInTheDocument();
     expect(screen.getByText('未配置（演示模式）')).toBeInTheDocument();
+    // D2 评审：RPA 依赖告警（长警告）收进「详情」折叠区，默认收起
+    openDetails(Platform.WECHAT);
     // 如实说明这条通道靠什么跑，不把 RPA 说成官方 API
     expect(screen.getByText(/微信个人版无官方 API，走 RPA 通道/)).toBeInTheDocument();
     // P0：mock 不采集真实微信消息 → 必须如实显示「不可接收」，不能两侧都打勾
     expect(screen.getByText(/不采集真实微信消息/)).toBeInTheDocument();
+    // 能力缺口 chip 仍在卡片默认层（不随折叠隐藏）
     expect(screen.getByText('不可接收')).toBeInTheDocument();
     // 发送在 mock 下是可用的（模拟发送），不应误报「不可发送」
     expect(screen.queryByText('不可发送')).not.toBeInTheDocument();
@@ -82,6 +96,9 @@ describe('AccountCard 基础信息', () => {
     expect(screen.getByText('已配置（未验证）')).toBeInTheDocument();
     expect(screen.getByText('真实接口')).toBeInTheDocument();
     expect(screen.getByText('凭据齐全，auto → 真实接口')).toBeInTheDocument();
+    // D2 评审：doctor 自检命令收进「详情」折叠区，默认收起、展开后可复制
+    expect(screen.queryByTestId('verify-feishu')).toBeNull();
+    openDetails(Platform.FEISHU);
     expect(screen.getByTestId('verify-feishu')).toBeInTheDocument();
     expect(screen.getByText('pnpm run doctor --platform=feishu')).toBeInTheDocument();
     expect(screen.getByText(/变量齐了 ≠ 平台能连通/)).toBeInTheDocument();
@@ -92,6 +109,8 @@ describe('AccountCard 基础信息', () => {
   it('Mock 平台不出现「未验证 / doctor」块（没有真实连通性可验证）', () => {
     render(<AccountCard account={accountOf(Platform.DINGTALK)} />);
     expect(screen.queryByTestId('verify-dingtalk')).toBeNull();
+    // D2 评审：没有任何技术细节时不显示「详情」入口，默认层保持干净
+    expect(screen.queryByTestId('details-toggle-dingtalk')).toBeNull();
     expect(screen.getByText('已配置')).toBeInTheDocument();
   });
 });
@@ -259,6 +278,18 @@ describe('账号页工具函数（指标口径 / 自检命令）', () => {
     expect(doctorCommand(Platform.DINGTALK)).toBe('pnpm run doctor --platform=dingtalk');
     expect(doctorCommand(Platform.WECHAT)).toBe('pnpm run doctor --platform=wechat');
     expect(doctorCommand(Platform.MAIL)).toBe('pnpm run doctor --platform=mail');
+  });
+
+  it('accountConclusion：一句话结论优先后端 reason，缺失时按通道 / 配置兜底（D2）', () => {
+    expect(accountConclusion(accountOf(Platform.FEISHU))).toBe('凭据齐全，auto → 真实接口');
+    // 无 reason 的 mock 通道：如实说「演示模式」，不冒充真实
+    expect(accountConclusion({ ...accountOf(Platform.WECHAT), reason: undefined })).toBe(
+      '当前为演示模式：不会真实收发',
+    );
+    // 未配置：结论直接指向下一步（去哪配、配完要重启）
+    expect(
+      accountConclusion({ ...accountOf(Platform.WECHAT), configured: false, reason: undefined }),
+    ).toBe('尚未配置：到「平台应用配置」填写凭据并重启后端');
   });
 });
 

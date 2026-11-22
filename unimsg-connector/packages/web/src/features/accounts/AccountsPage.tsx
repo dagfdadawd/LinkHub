@@ -7,6 +7,7 @@ import {
   CheckCircleFilled,
   CloseCircleFilled,
   DatabaseOutlined,
+  DownOutlined,
   InboxOutlined,
   LinkOutlined,
   LoginOutlined,
@@ -94,6 +95,20 @@ const IDENTITY_POLICY_LABEL: Record<string, string> = {
   user: '仅本人',
   bot: '仅机器人',
 };
+
+/**
+ * 卡片默认层的一句话结论（D2 评审）：优先用后端下发的 reason（如
+ * 「凭据齐全，auto → 真实接口」）；后端没给时按通道 / 配置兜底一句人话，
+ * 保证默认层始终有「现在到底能不能用、差什么」的结论，不用展开详情去猜。
+ */
+export function accountConclusion(account: AccountInfo): string {
+  if (account.reason) return account.reason;
+  const mailCount = account.platform === Platform.MAIL ? account.accounts?.length ?? 0 : 0;
+  if (mailCount > 0) return `已添加 ${mailCount} 个邮箱账号，等待首封邮件验证连通`;
+  if (!account.configured) return '尚未配置：到「平台应用配置」填写凭据并重启后端';
+  if (account.mode === 'mock') return '当前为演示模式：不会真实收发';
+  return '凭据已填齐，建议在「详情」里跑一次自检确认平台连通';
+}
 
 /** 每个平台的策略说明：让用户知道界面状态由哪条策略决定（可替换性） */
 const IDENTITY_POLICY_TITLE = '身份策略决定以谁的身份收发；可在「连接账号 → 平台应用配置」修改；凭据类变更需重启后端才生效';
@@ -398,6 +413,22 @@ export function AccountCard({
   const receiveWarning = capabilityWarning('receive', account.canReceive, identity);
   const sendWarning = capabilityWarning('send', account.canSend, identity);
 
+  /**
+   * D2 评审：卡片信息层级重构。
+   * 默认层只保留「状态 Tag + 一句话结论（accountConclusion）+ 主行动按钮
+   * （身份块里的连接 / 注销按钮）」；长警告、doctor 自检命令、缺失变量这类
+   * 技术细节收进「详情」折叠区——既降低默认密度，也让长文案展开后占满卡片
+   * 宽度自由换行，不再被窄卡（四列布局）挤压截断。
+   */
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  // 真实模式「未验证」的自检块：从默认层移入详情折叠区（显示条件不变）
+  const needVerify = realMode && account.configured;
+  // 只要有任意一项技术细节就给「详情」入口；计数让用户不展开也知道有几条待处理
+  const hasDetails = needVerify || missing.length > 0 || hasAlerts;
+  const detailCount = warnings.length + issues.length + missing.length;
+  // 有 error 级问题时触发器标红：重要问题不该被折叠完全藏住
+  const errorCount = issues.filter((issue) => issue.level === 'error').length;
+
   return (
     <Card className="account-card" data-testid={`account-card-${account.platform}`}>
       <div className="account-card__head">
@@ -440,26 +471,12 @@ export function AccountCard({
         {/* 能力缺口 chip 跟随「生效身份」口径，避免与身份块「接收=本人」打架（NEW-P2-1） */}
         {receiveWarning && <span className="chip chip--warn">{receiveWarning}</span>}
         {sendWarning && <span className="chip chip--warn">{sendWarning}</span>}
-        {account.reason && <span className="account-card__hint">{account.reason}</span>}
+        {/* 一句话结论：优先后端 reason，缺失时按通道 / 配置兜底（accountConclusion） */}
+        <span className="account-card__hint">{accountConclusion(account)}</span>
       </div>
 
-      {/* P1-1：「变量填齐」不等于「平台连得通」。真实模式给可复制的 doctor 自检命令，
-          避免小白把「已配置 / 真实接口」误读成「已经连上、发送一定成功」。 */}
-      {realMode && account.configured && (
-        <div className="account-card__verify" data-testid={`verify-${account.platform}`}>
-          <div className="account-card__verify-line">
-            <WarningOutlined />
-            <span>变量齐了 ≠ 平台能连通，请运行自检确认：</span>
-          </div>
-          <Typography.Text
-            className="account-card__doctor mono"
-            code
-            copyable={{ text: doctor, tooltips: ['复制自检命令', '已复制'] }}
-          >
-            {doctor}
-          </Typography.Text>
-        </div>
-      )}
+      {/* P1-1 的自检命令已按 D2 评审移入下方「详情」折叠区：真实模式的下一步就是
+          展开详情跑一次 doctor，避免小白把「已配置 / 真实接口」误读成「一定连得通」。 */}
 
       {identity && (
         <IdentityBlock
@@ -478,31 +495,73 @@ export function AccountCard({
         />
       )}
 
-      {missing.length > 0 && (
-        <div className="account-card__missing">
-          缺少环境变量：<code>{missing.join('、')}</code>
-        </div>
-      )}
+      {/*
+        D2 评审：「详情」折叠区——长警告、doctor 自检命令、缺失环境变量统一收在这里。
+        触发器带待处理计数、error 级问题标红：不展开也能知道有没有事、严不严重；
+        展开后内容占满卡片宽度自由换行，长文案不再被四列窄卡截断。
+      */}
+      {hasDetails && (
+        <>
+          <Button
+            type="text"
+            size="small"
+            danger={errorCount > 0}
+            aria-expanded={detailsOpen}
+            data-testid={`details-toggle-${account.platform}`}
+            icon={<DownOutlined rotate={detailsOpen ? 180 : 0} />}
+            onClick={() => setDetailsOpen((open) => !open)}
+          >
+            详情{detailCount > 0 ? `（${detailCount} 条待处理）` : ''}
+          </Button>
+          {detailsOpen && (
+            <div data-testid={`details-${account.platform}`}>
+              {/* P1-1：「变量填齐」不等于「平台连得通」。真实模式给可复制的 doctor 自检命令，
+                  避免小白把「已配置 / 真实接口」误读成「已经连上、发送一定成功」。 */}
+              {needVerify && (
+                <div className="account-card__verify" data-testid={`verify-${account.platform}`}>
+                  <div className="account-card__verify-line">
+                    <WarningOutlined />
+                    <span>变量齐了 ≠ 平台能连通，请运行自检确认：</span>
+                  </div>
+                  <Typography.Text
+                    className="account-card__doctor mono"
+                    code
+                    copyable={{ text: doctor, tooltips: ['复制自检命令', '已复制'] }}
+                  >
+                    {doctor}
+                  </Typography.Text>
+                </div>
+              )}
 
-      {/* 能力缺口 / 配置问题：逐条一行，橙=warn、红=error；与 missing / reason 不重复堆叠 */}
-      {hasAlerts && (
-        <ul className="account-card__alerts" aria-label="能力与配置告警">
-          {warnings.map((warning) => (
-            <li className="account-card__alert" key={warning}>
-              <WarningOutlined />
-              <span>{warning}</span>
-            </li>
-          ))}
-          {issues.map((issue) => (
-            <li
-              className={`account-card__alert${issue.level === 'error' ? ' account-card__alert--error' : ''}`}
-              key={`${issue.level}-${issue.message}`}
-            >
-              {issue.level === 'error' ? <CloseCircleFilled /> : <WarningOutlined />}
-              <span>{issue.message}</span>
-            </li>
-          ))}
-        </ul>
+              {missing.length > 0 && (
+                <div className="account-card__missing">
+                  缺少环境变量：<code>{missing.join('、')}</code>
+                </div>
+              )}
+
+              {/* 能力缺口 / 配置问题：逐条一行，橙=warn、红=error；与 missing / reason 不重复堆叠 */}
+              {hasAlerts && (
+                <ul className="account-card__alerts" aria-label="能力与配置告警">
+                  {warnings.map((warning) => (
+                    <li className="account-card__alert" key={warning}>
+                      <WarningOutlined />
+                      <span>{warning}</span>
+                    </li>
+                  ))}
+                  {issues.map((issue) => (
+                    <li
+                      className={`account-card__alert${issue.level === 'error' ? ' account-card__alert--error' : ''}`}
+                      key={`${issue.level}-${issue.message}`}
+                    >
+                      {issue.level === 'error' ? <CloseCircleFilled /> : <WarningOutlined />}
+                      <span>{issue.message}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </>
       )}
 
       {mailAccounts.length > 0 && (

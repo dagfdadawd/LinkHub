@@ -35,6 +35,16 @@ const PLATFORM_OPTIONS = Object.values(Platform).map((p) => ({
 const LINKHUB_SENDER = 'LinkHub 统一入口';
 
 /**
+ * 新建发送的正文上限（B6 评审）：出站正文上限 4000 字符，与后端出站校验一致
+ * （packages/server/src/services/outbound.ts 的 normalizeCompose：「文本消息最长 4000 字符」）。
+ * 为什么与回复框的 2000 不同：回复是针对一条已收到消息的回写（ReplyComposer 的契约是
+ * MAX_LENGTH=2000），语境明确、通常一两句话；新建发送是统一入口的主动外呼，不依赖
+ * 已有消息语境，后端给出发送通道更宽的 4000 上限。前端在输入时同步计数拦截，
+ * 避免用户点「发送」后才被后端以 400 打回。
+ */
+const COMPOSE_TEXT_MAX = 4000;
+
+/**
  * 平台原始 ID 长这样：`ou_c8bb…` / `oc_abc…` / `cidvtwl…==` / `cli_…`。
  * 判断依据是「够长 + 纯 ASCII + 没有中文和空格」，人起的名字（Jarvis / 测试群）不会命中。
  */
@@ -522,10 +532,22 @@ export function ComposeModal({
             onChange={(e) => setText(e.target.value)}
             placeholder="输入要发送的文本…"
             autoSize={{ minRows: 3, maxRows: 6 }}
-            maxLength={4000}
-            showCount
+            maxLength={COMPOSE_TEXT_MAX}
             aria-label="发送文本"
           />
+          {/*
+            实时字数（B6 评审）：不用 antd 的 showCount，改用与回复框同款的
+            composer__count（右对齐小字 + 等宽数字），两个入口的计数观感一致；
+            左侧小字说明 4000 与回复框 2000 的差异来源，来源依据见 COMPOSE_TEXT_MAX 注释。
+          */}
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+            <span className="compose-field__hint" style={{ marginTop: 0 }}>
+              主动发送为出站正文，上限 {COMPOSE_TEXT_MAX} 字（回复框为 2000）
+            </span>
+            <span className="composer__count" aria-live="off" data-testid="compose-count">
+              {text.length} / {COMPOSE_TEXT_MAX}
+            </span>
+          </div>
         </div>
 
         <div>
