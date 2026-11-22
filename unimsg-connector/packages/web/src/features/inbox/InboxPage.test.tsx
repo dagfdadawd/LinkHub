@@ -294,17 +294,18 @@ describe('收件箱筛选与搜索接线（三栏工作台）', () => {
     expect(store.setFilters).toHaveBeenCalledWith({ keyword: '周报' });
   });
 
-  it('「未读 / 待处理 / 紧急」互斥：点一个会清掉另外两个，不叠加条件', async () => {
+  it('「未读 / 待处理 / 紧急 / 稍后处理」互斥：点一个会清掉其它几个，不叠加条件', async () => {
     const { store } = await import('../../store');
     mockState({ messages: [MESSAGE], accounts: ACCOUNTS });
     renderInboxPage();
 
     fireEvent.click(screen.getByRole('button', { name: '未读' }));
-    // 互斥：开「未读」必须同时关掉「待处理 / 紧急」，否则多个胶囊会一起高亮、条件也会叠成空结果
+    // 互斥：开「未读」必须同时关掉其它几个，否则多个胶囊会一起高亮、条件也会叠成空结果
     expect(store.setFilters).toHaveBeenCalledWith({
       onlyUnread: true,
       onlyReview: false,
       onlyUrgent: false,
+      onlySnoozed: false,
     });
 
     fireEvent.click(screen.getByRole('button', { name: '待处理' }));
@@ -312,6 +313,7 @@ describe('收件箱筛选与搜索接线（三栏工作台）', () => {
       onlyReview: true,
       onlyUnread: false,
       onlyUrgent: false,
+      onlySnoozed: false,
     });
 
     fireEvent.click(screen.getByRole('button', { name: /^紧急/ }));
@@ -319,6 +321,15 @@ describe('收件箱筛选与搜索接线（三栏工作台）', () => {
       onlyUrgent: true,
       onlyUnread: false,
       onlyReview: false,
+      onlySnoozed: false,
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /^稍后处理/ }));
+    expect(store.setFilters).toHaveBeenCalledWith({
+      onlySnoozed: true,
+      onlyUnread: false,
+      onlyReview: false,
+      onlyUrgent: false,
     });
   });
 
