@@ -264,17 +264,39 @@ export function InboxPage() {
     () => withContactNames(allConversations, contactNames),
     [allConversations, contactNames],
   );
+
+  /**
+   * 会话级筛选：「紧急」不是单条消息条件，而是会话当前待处理消息的优先级（见 priorityTargetOf），
+   * 所以在会话聚合之后过滤，保留整个会话的上下文，而不是只留下一条紧急消息。
+   */
+  const filteredConversations = useMemo(() => {
+    if (previewMode) return conversations;
+    return state.filters.onlyUrgent
+      ? namedConversations.filter((c) => c.priority === 'urgent')
+      : namedConversations;
+  }, [previewMode, conversations, namedConversations, state.filters.onlyUrgent]);
+
+  /** 「紧急」胶囊上的数字：不受其它筛选影响，始终显示全部紧急会话数 */
+  const urgentCount = useMemo(
+    () => namedAllConversations.filter((c) => c.priority === 'urgent').length,
+    [namedAllConversations],
+  );
+  /** 当前列表对应的消息条数：紧急筛选会改变会话集合，不能再用全局 visible.length */
+  const filteredMessageCount = useMemo(
+    () => filteredConversations.reduce((n, c) => n + c.messages.length, 0),
+    [filteredConversations],
+  );
   const selectedConv = useMemo(
     () => findConversation(namedAllConversations, traceId),
     [namedAllConversations, traceId],
   );
   const imConversations = useMemo(
-    () => (previewMode ? previewList.filter((c) => c.kind === 'im') : namedConversations.filter((c) => c.kind === 'im')),
-    [previewMode, previewList, namedConversations],
+    () => (previewMode ? previewList.filter((c) => c.kind === 'im') : filteredConversations.filter((c) => c.kind === 'im')),
+    [previewMode, previewList, filteredConversations],
   );
   const mailConversations = useMemo(
-    () => namedConversations.filter((c) => c.kind === 'mail'),
-    [namedConversations],
+    () => filteredConversations.filter((c) => c.kind === 'mail'),
+    [filteredConversations],
   );
 
   /**
@@ -380,6 +402,7 @@ export function InboxPage() {
     Boolean(state.filters.type) ||
     state.filters.onlyReview ||
     state.filters.onlyUnread ||
+    state.filters.onlyUrgent ||
     Boolean(state.filters.keyword);
 
   /**
@@ -402,9 +425,9 @@ export function InboxPage() {
   }, [selectedConvKey]);
 
   // 键盘流：j/k 在会话间移动、Enter 打开、r 回复、e 完成、Esc 收起详情
-  const selectedIndex = selectedConv ? conversations.findIndex((c) => c.key === selectedConv.key) : -1;
+  const selectedIndex = selectedConv ? filteredConversations.findIndex((c) => c.key === selectedConv.key) : -1;
   const openAt = (index: number) => {
-    const target = conversations[Math.max(0, Math.min(conversations.length - 1, index))];
+    const target = filteredConversations[Math.max(0, Math.min(filteredConversations.length - 1, index))];
     if (target) openConversation(target.lastMessage.traceId);
   };
 
@@ -412,7 +435,7 @@ export function InboxPage() {
     j: () => openAt(selectedIndex + 1),
     k: () => openAt(selectedIndex < 0 ? 0 : selectedIndex - 1),
     enter: () => {
-      if (!traceId && conversations[0]) openConversation(conversations[0].lastMessage.traceId);
+      if (!traceId && filteredConversations[0]) openConversation(filteredConversations[0].lastMessage.traceId);
     },
     e: () => {
       if (selected && !selected.done) void store.markDone(selected.traceId);
@@ -474,7 +497,7 @@ export function InboxPage() {
         </div>
       ))}
     </div>
-  ) : conversations.length === 0 ? (
+  ) : filteredConversations.length === 0 ? (
     state.error ? (
       <EmptyState
         title="消息加载失败"
@@ -494,6 +517,23 @@ export function InboxPage() {
       ) : (
         <QuickStart demoMode={state.demoMode} onInject={handleInject} />
       )
+    ) : state.filters.onlyUrgent ? (
+      <EmptyState
+        title="没有紧急会话"
+        description="标记「紧急」后，会话会出现在这里并显示红色徽标。打开任意会话，在右上角优先级里标记。"
+        action={
+          <Button
+            size="small"
+            onClick={() => {
+              // 只退出紧急筛选，保留渠道 / 搜索等其它条件
+              store.setFilters({ onlyUrgent: false });
+              navigate('/inbox');
+            }}
+          >
+            查看全部会话
+          </Button>
+        }
+      />
     ) : (
       <EmptyState
         title="没有匹配的会话"
@@ -544,7 +584,7 @@ export function InboxPage() {
 
       <div className="list-summary">
         <span>
-          共 {conversations.length} 个会话 · {visible.length} 条消息
+          共 {filteredConversations.length} 个会话 · {filteredMessageCount} 条消息
         </span>
         {hasFilter && (
           <button type="button" className="link-btn" onClick={() => store.resetFilters()}>
@@ -593,7 +633,7 @@ export function InboxPage() {
             <div className="list-header__title-row">
               <h2 className="list-header__title">会话</h2>
               <span className="list-header__count">
-                共 {conversations.length} 个会话 · {visible.length} 条消息
+                共 {filteredConversations.length} 个会话 · {filteredMessageCount} 条消息
               </span>
             </div>
 
@@ -653,12 +693,12 @@ export function InboxPage() {
             )}
 
             <div className="list-filters">
-              <div className="list-quick" role="group" aria-label="阅读状态筛选">
+              <div className="list-quick" role="group" aria-label="会话筛选">
                 <button
                   type="button"
-                  className={`quick-pill${!state.filters.onlyUnread && !state.filters.onlyReview ? ' is-active' : ''}`}
-                  aria-pressed={!state.filters.onlyUnread && !state.filters.onlyReview}
-                  onClick={() => store.setFilters({ onlyUnread: false, onlyReview: false })}
+                  className={`quick-pill${!state.filters.onlyUnread && !state.filters.onlyReview && !state.filters.onlyUrgent ? ' is-active' : ''}`}
+                  aria-pressed={!state.filters.onlyUnread && !state.filters.onlyReview && !state.filters.onlyUrgent}
+                  onClick={() => store.setFilters({ onlyUnread: false, onlyReview: false, onlyUrgent: false })}
                 >
                   全部
                 </button>
@@ -669,9 +709,10 @@ export function InboxPage() {
                   onClick={() =>
                     store.setFilters({
                       onlyUnread: !state.filters.onlyUnread,
-                      // 「未读」与「待处理」是同一组单选：点一个必须清掉另一个，
-                      // 否则两个胶囊会同时高亮，筛选条件也会互相叠加成空结果。
+                      // 「未读 / 待处理 / 紧急」是同一组单选：点一个必须清掉其它两个，
+                      // 否则多个胶囊会同时高亮，筛选条件也会互相叠加成空结果。
                       onlyReview: false,
+                      onlyUrgent: false,
                     })
                   }
                 >
@@ -685,10 +726,31 @@ export function InboxPage() {
                     store.setFilters({
                       onlyReview: !state.filters.onlyReview,
                       onlyUnread: false,
+                      onlyUrgent: false,
                     })
                   }
                 >
                   待处理
+                </button>
+                {/* 紧急是会话级筛选：标了「紧急」的会话会进来，改优先级后计数实时变化 */}
+                <button
+                  type="button"
+                  className={`quick-pill quick-pill--urgent${state.filters.onlyUrgent ? ' is-active' : ''}`}
+                  aria-pressed={Boolean(state.filters.onlyUrgent)}
+                  onClick={() =>
+                    store.setFilters({
+                      onlyUrgent: !state.filters.onlyUrgent,
+                      onlyUnread: false,
+                      onlyReview: false,
+                    })
+                  }
+                >
+                  紧急
+                  {urgentCount > 0 && (
+                    <span className="quick-pill__count" aria-hidden="true">
+                      {urgentCount}
+                    </span>
+                  )}
                 </button>
               </div>
 

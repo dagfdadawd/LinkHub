@@ -1,5 +1,5 @@
 import type { Platform } from '../types';
-import { PLATFORM_META, toneStyle } from '../utils/format';
+import { platformMeta, toneStyle } from '../utils/format';
 
 /**
  * 底色与墨色都走 CSS 变量（`--tag-*`），不再内联 `color/background`。
@@ -7,7 +7,7 @@ import { PLATFORM_META, toneStyle } from '../utils/format';
  * 现在明暗两套都由 `tone()` 一起算好，切换主题零特判。
  */
 export function PlatformTag({ platform, small = false }: { platform: Platform; small?: boolean }) {
-  const meta = PLATFORM_META[platform];
+  const meta = platformMeta(platform);
   return (
     <span className={`platform-tag${small ? ' platform-tag--small' : ''}`} style={toneStyle(meta)}>
       <span className="platform-tag__dot" style={{ background: meta.color }} />

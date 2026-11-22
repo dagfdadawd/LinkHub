@@ -17,7 +17,7 @@ import { useAppState } from '../hooks/useAppState';
 import { useTheme } from '../app/ThemeProvider';
 import { store } from '../store';
 import { Platform } from '../types';
-import { PLATFORM_META, clamp, formatRelative, shortTrace } from '../utils/format';
+import { PLATFORM_META, clamp, formatRelative, platformMeta, shortTrace } from '../utils/format';
 
 interface PaletteItem {
   id: string;
@@ -169,7 +169,7 @@ export function CommandPalette({
             id: `msg-${m.traceId}`,
             group: '消息',
             label: `${m.sender.name}：${clamp(m.body, 42)}`,
-            hint: `${PLATFORM_META[m.platform].name} · ${formatRelative(m.createdAt)} · ${shortTrace(m.traceId)}`,
+            hint: `${platformMeta(m.platform).name} · ${formatRelative(m.createdAt)} · ${shortTrace(m.traceId)}`,
             icon: <MessageOutlined />,
             run: () => go(`/inbox/${m.traceId}`),
           }))

@@ -15,7 +15,7 @@ import { CheckSquareOutlined, PaperClipOutlined, SendOutlined, UploadOutlined } 
 import { FILE_LIMITS, Platform, TODO_TITLE_MAX } from '../../types';
 import type { ComposeRequest, IdentityRole, SendCapabilities } from '../../types';
 import type { AccountInfo, ContactDirectory, MailAccountInfo } from '../../services/api';
-import { PLATFORM_META, formatRelative } from '../../utils/format';
+import { PLATFORM_META, formatRelative, platformMeta } from '../../utils/format';
 import { buildConversations } from '../../utils/conversations';
 import { UserOutlined } from '@ant-design/icons';
 import { useAppState } from '../../hooks/useAppState';
@@ -609,7 +609,7 @@ export function ComposeModal({
           <Alert
             type={cap.mode === 'mock' ? 'info' : 'success'}
             showIcon
-            message={`当前 ${PLATFORM_META[platform].name} 通道：${cap.mode === 'mock' ? '演示模式（模拟发送，不会真的调用平台）' : '真实平台接口'}`}
+            message={`当前 ${platformMeta(platform).name} 通道：${cap.mode === 'mock' ? '演示模式（模拟发送，不会真的调用平台）' : '真实平台接口'}`}
             description={cap.note ?? '文本与文件都按统一消息格式转换后发送，状态会回流到全链路回放'}
           />
         )}

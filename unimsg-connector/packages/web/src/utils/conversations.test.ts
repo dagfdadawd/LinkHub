@@ -8,6 +8,7 @@ import {
   conversationSnippet,
   findConversation,
   normalizeSubject,
+  priorityTargetOf,
 } from './conversations';
 
 function msg(overrides: Partial<UnifiedMessage> = {}): UnifiedMessage {
@@ -136,5 +137,79 @@ describe('会话聚合', () => {
       msg({ conversation, direction: 'out', body: '收到，马上处理' }),
     ]);
     expect(conversationSnippet(list[0])).toBe('我：收到，马上处理');
+  });
+
+  it('会话排序只认最后一条消息的创建时间：改优先级刷新 updatedAt 不会把会话顶到最前', () => {
+    const list = buildConversations([
+      msg({
+        traceId: 'old',
+        conversation: { id: 'c-old', type: 'p2p' },
+        createdAt: '2026-01-01T00:00:00Z',
+        // 模拟「改优先级 / 标已读」把 updatedAt 刷成了未来时间
+        updatedAt: '2026-03-01T00:00:00Z',
+      }),
+      msg({
+        traceId: 'new',
+        conversation: { id: 'c-new', type: 'p2p' },
+        createdAt: '2026-02-01T00:00:00Z',
+        updatedAt: '2026-02-01T00:00:00Z',
+      }),
+    ]);
+
+    expect(list.map((c) => c.conversationId)).toEqual(['c-new', 'c-old']);
+    expect(list[1].lastAt).toBe('2026-01-01T00:00:00Z');
+  });
+
+  it('会话优先级取未完成入站消息里最紧急的一条：标在中间消息上也生效', () => {
+    const conversation = { id: 'cid-priority', type: 'p2p' as const };
+    const list = buildConversations([
+      msg({ traceId: 'p1', conversation, body: '加急', priority: 'urgent', createdAt: '2026-01-01T00:00:00Z' }),
+      msg({ traceId: 'p2', conversation, body: '普通', priority: 'normal', createdAt: '2026-01-01T00:01:00Z' }),
+      msg({ traceId: 'p3', conversation, direction: 'out', body: '好的', createdAt: '2026-01-01T00:02:00Z' }),
+    ]);
+
+    expect(list[0].priority).toBe('urgent');
+  });
+
+  it('已完成的消息不再把会话标红；没有未完成入站时没有会话优先级', () => {
+    const conversation = { id: 'cid-done', type: 'p2p' as const };
+    const list = buildConversations([
+      msg({ traceId: 'p1', conversation, priority: 'urgent', done: true }),
+      msg({ traceId: 'p2', conversation, priority: 'normal', done: true }),
+    ]);
+
+    expect(list[0].priority).toBeUndefined();
+  });
+
+  it('紧急会话在同组内置顶，其余仍按最近消息排序', () => {
+    const list = buildConversations([
+      msg({
+        traceId: 'urgent-old',
+        conversation: { id: 'c-u', type: 'p2p' },
+        priority: 'urgent',
+        createdAt: '2026-01-01T00:00:00Z',
+      }),
+      msg({
+        traceId: 'normal-new',
+        conversation: { id: 'c-n', type: 'p2p' },
+        createdAt: '2026-02-01T00:00:00Z',
+      }),
+    ]);
+
+    expect(list.map((c) => c.conversationId)).toEqual(['c-u', 'c-n']);
+  });
+
+  it('priorityTargetOf：优先未完成入站里最紧急的一条；没有入站时退回最后一条', () => {
+    const conversation = { id: 'cid-target', type: 'p2p' as const };
+    const list = buildConversations([
+      msg({ traceId: 'urgent', conversation, priority: 'urgent', createdAt: '2026-01-01T00:00:00Z' }),
+      msg({ traceId: 'later', conversation, createdAt: '2026-01-01T00:01:00Z' }),
+    ]);
+    expect(priorityTargetOf(list[0].messages).traceId).toBe('urgent');
+
+    const outOnly = buildConversations([
+      msg({ traceId: 'only-out', conversation, direction: 'out', createdAt: '2026-01-01T00:00:00Z' }),
+    ]);
+    expect(priorityTargetOf(outOnly[0].messages).traceId).toBe('only-out');
   });
 });

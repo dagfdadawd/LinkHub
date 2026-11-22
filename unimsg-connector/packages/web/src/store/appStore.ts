@@ -30,6 +30,14 @@ export interface Filters {
   onlyReview: boolean;
   /** 只看未读（阅读状态，与业务状态正交） */
   onlyUnread: boolean;
+  /**
+   * 只看紧急会话（会话级筛选）。
+   *
+   * 不放在 `filterMessages` 里按「单条消息优先级」过滤：那样会把会话里的其它消息
+   * 一起滤掉，只剩一条紧急消息，读不到上下文。它由收件箱在会话聚合后按
+   * `conversation.priority` 过滤，见 InboxPage。
+   */
+  onlyUrgent: boolean;
 }
 
 export interface AppState {
@@ -61,6 +69,7 @@ export const DEFAULT_FILTERS: Filters = {
   keyword: '',
   onlyReview: false,
   onlyUnread: false,
+  onlyUrgent: false,
 };
 
 export function filterMessages(messages: UnifiedMessage[], filters: Filters): UnifiedMessage[] {

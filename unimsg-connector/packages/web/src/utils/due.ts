@@ -1,3 +1,4 @@
+import { PRIORITY_RANK } from '../types';
 import type { UnifiedMessage } from '../types';
 
 /**
@@ -6,11 +7,14 @@ import type { UnifiedMessage } from '../types';
  * 只做展示层面的判断，不编造时间：
  *  - 没有 dueAt 的归入「未设置截止」，不假装有期限；
  *  - 已过期的单独成组，用危险色标出来；
- *  - 分组顺序固定：已逾期 → 今天 → 本周内 → 更晚 → 未设置。
+ *  - 分组顺序固定：**紧急 → 已逾期 → 今天 → 本周内 → 更晚 → 未设置**。
+ *
+ * 「紧急」单独成组而不是只做组内排序：优先级是「先处理哪条」，标了紧急的待办
+ * 就该浮到最上面，而不是被埋在一个更靠后的截止分组里。
  */
 
 export interface TodoGroup {
-  key: 'overdue' | 'today' | 'week' | 'later' | 'none';
+  key: 'urgent' | 'overdue' | 'today' | 'week' | 'later' | 'none';
   label: string;
   items: UnifiedMessage[];
 }
@@ -60,13 +64,20 @@ export function formatDue(
   return { text: `${due.getMonth() + 1}月${due.getDate()}日 ${time}`, tone: 'normal' };
 }
 
-/** 待办按截止时间分组；组内按截止时间升序，无截止的按创建时间倒序 */
+/** 优先级排序号：紧急（0）→ 普通/未判定（1）→ 不急（2） */
+function priorityRankOf(item: UnifiedMessage): number {
+  return item.priority ? PRIORITY_RANK[item.priority] : PRIORITY_RANK.normal;
+}
+
+/** 待办按截止时间分组；组内先按优先级，再按截止/创建时间 */
 export function groupTodos(items: UnifiedMessage[], now: Date = new Date()): TodoGroup[] {
   const today = startOfDay(now).getTime();
   const endOfToday = today + DAY_MS;
   const endOfWeek = today + 7 * DAY_MS;
 
-  const buckets: Record<TodoGroup['key'], UnifiedMessage[]> = {
+  /** 紧急的先单独拎出来：它们是「先处理哪条」的答案，不该被截止分组埋掉 */
+  const urgent: UnifiedMessage[] = [];
+  const buckets: Record<Exclude<TodoGroup['key'], 'urgent'>, UnifiedMessage[]> = {
     overdue: [],
     today: [],
     week: [],
@@ -75,6 +86,10 @@ export function groupTodos(items: UnifiedMessage[], now: Date = new Date()): Tod
   };
 
   for (const item of items) {
+    if (item.priority === 'urgent') {
+      urgent.push(item);
+      continue;
+    }
     if (!item.dueAt) {
       buckets.none.push(item);
       continue;
@@ -93,10 +108,28 @@ export function groupTodos(items: UnifiedMessage[], now: Date = new Date()): Tod
     }
   }
 
-  const byDue = (a: UnifiedMessage, b: UnifiedMessage) =>
+  const byDueTime = (a: UnifiedMessage, b: UnifiedMessage) =>
     new Date(a.dueAt ?? 0).getTime() - new Date(b.dueAt ?? 0).getTime();
-  const byCreated = (a: UnifiedMessage, b: UnifiedMessage) =>
+  const byCreatedDesc = (a: UnifiedMessage, b: UnifiedMessage) =>
     new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+
+  /** 组内：先按优先级（紧急优先、不急最后），再按各自的时间轴 */
+  const withPriority =
+    (fallback: (a: UnifiedMessage, b: UnifiedMessage) => number) =>
+    (a: UnifiedMessage, b: UnifiedMessage) =>
+      priorityRankOf(a) - priorityRankOf(b) || fallback(a, b);
+
+  const byDue = withPriority(byDueTime);
+  const byCreated = withPriority(byCreatedDesc);
+
+  /** 紧急组：全部同档，按截止时间升序（没截止的排最后），再按创建时间倒序 */
+  urgent.sort((a, b) => {
+    const da = a.dueAt ? new Date(a.dueAt).getTime() : Number.POSITIVE_INFINITY;
+    const db = b.dueAt ? new Date(b.dueAt).getTime() : Number.POSITIVE_INFINITY;
+    if (Number.isFinite(da) && Number.isFinite(db) && da !== db) return da - db;
+    if (Number.isFinite(da) !== Number.isFinite(db)) return Number.isFinite(da) ? -1 : 1;
+    return byCreatedDesc(a, b);
+  });
 
   buckets.overdue.sort(byDue);
   buckets.today.sort(byDue);
@@ -105,6 +138,7 @@ export function groupTodos(items: UnifiedMessage[], now: Date = new Date()): Tod
   buckets.none.sort(byCreated);
 
   const groups: TodoGroup[] = [
+    { key: 'urgent', label: '紧急', items: urgent },
     { key: 'overdue', label: '已逾期', items: buckets.overdue },
     { key: 'today', label: '今天', items: buckets.today },
     { key: 'week', label: '本周内', items: buckets.week },

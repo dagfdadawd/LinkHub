@@ -5,8 +5,10 @@ import type { MenuProps } from 'antd';
 import {
   ArrowLeftOutlined,
   CheckOutlined,
+  CheckSquareOutlined,
   CopyOutlined,
   DownloadOutlined,
+  FlagOutlined,
   HistoryOutlined,
   LoadingOutlined,
   MailOutlined,
@@ -18,19 +20,26 @@ import {
   ReloadOutlined,
   SendOutlined,
 } from '@ant-design/icons';
-import { MsgStatus } from '../../types';
-import type { AttachmentInfo, IdentityRole, OutboundAttachment, UnifiedMessage } from '../../types';
+import { PRIORITY_LABELS, MsgStatus } from '../../types';
+import type {
+  AttachmentInfo,
+  IdentityRole,
+  OutboundAttachment,
+  Priority,
+  UnifiedMessage,
+} from '../../types';
 import { formatBytes } from '../../utils/attachments';
 import { canDownloadAttachment, saveBlobAsFile } from '../../utils/download';
 import { formatSendError } from '../../utils/sendError';
 import { store } from '../../store';
 import { useAppState } from '../../hooks/useAppState';
+import { priorityTargetOf } from '../../utils/conversations';
 import {
-  PLATFORM_META,
   TYPE_LABEL,
   conversationLabel,
   deliveryLabel,
   formatDateTime,
+  platformMeta,
   shortTrace,
 } from '../../utils/format';
 import { AvatarBadge } from '../../components/AvatarBadge';
@@ -59,6 +68,26 @@ function focusComposer() {
 
 function isOut(m: UnifiedMessage): boolean {
   return m.direction === 'out';
+}
+
+/** 右键菜单里的优先级顺序：与顶部胶囊保持一致 */
+const PRIORITY_ORDER: Priority[] = ['urgent', 'normal', 'low'];
+
+/**
+ * 单条消息的优先级标记：只画「紧急 / 不急」。
+ * 普通是默认档，每条都标一遍会让气泡全是噪声；未判定更不编造。
+ */
+function MessagePriorityChip({ message }: { message: UnifiedMessage }) {
+  if (message.priority !== 'urgent' && message.priority !== 'low') return null;
+  const urgent = message.priority === 'urgent';
+  return (
+    <span
+      className={`chip chip--priority-flag${urgent ? ' chip--priority-flag--urgent' : ''}`}
+      title={message.prioritySource === 'manual' ? '人工标记的优先级' : '规则判定的优先级'}
+    >
+      {urgent ? '紧急' : '不急'}
+    </span>
+  );
 }
 
 /**
@@ -179,6 +208,8 @@ export function DetailPanel({
   const [pendingReply, setPendingReply] = useState<{ text: string; at: number; failed?: string } | null>(null);
   /** 跨平台转发弹窗 */
   const [forwardOpen, setForwardOpen] = useState(false);
+  /** 转发目标：右键某条消息转发时用它；为空 = 当前选中的消息 */
+  const [forwardTarget, setForwardTarget] = useState<UnifiedMessage | null>(null);
 
 
   /** 发送成功后短暂冷却：清空输入框 + 禁用按钮，避免手滑把同一内容再发一次（P2-2） */
@@ -206,6 +237,11 @@ export function DetailPanel({
     : false;
   /** 回复要挂在「最后一条入站消息」上：出站消息没有平台回写目标 */
   const replyTarget = [...messages].reverse().find((m) => !isOut(m)) ?? message;
+  /**
+   * 优先级作用对象与列表行徽标同一口径：未完成入站消息里最紧急的一条。
+   * 顶部胶囊不能编辑「用户随手点开的历史消息」，否则改完列表毫无变化。
+   */
+  const priorityTarget = priorityTargetOf(messages);
   const threadInboundCount = messages.filter((m) => !isOut(m)).length;
 
   /**
@@ -453,6 +489,100 @@ export function DetailPanel({
     }
   }
 
+  // ---------- 右键菜单：作用于「被右键的那条消息」，不是当前选中的消息 ----------
+
+  async function copyBodyOf(target: UnifiedMessage): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(target.body);
+      toast.success('消息内容已复制');
+    } catch {
+      toast.info(target.body);
+    }
+  }
+
+  async function addTodoOf(target: UnifiedMessage): Promise<void> {
+    try {
+      await store.markTodo(target.traceId);
+      toast.success('已加入待办');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '加入待办失败，请重试');
+    }
+  }
+
+  async function markDoneOf(target: UnifiedMessage): Promise<void> {
+    try {
+      await store.markDone(target.traceId);
+      toast.success('已标记完成');
+    } catch {
+      toast.error('操作失败，请重试');
+    }
+  }
+
+  async function setPriorityOf(target: UnifiedMessage, priority: Priority): Promise<void> {
+    if (target.priority === priority) return;
+    try {
+      const result = await store.setPriority(target.traceId, priority);
+      toast.success(`已标记为「${PRIORITY_LABELS[result.message.priority ?? priority]}」`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '优先级修改失败，请重试');
+    }
+  }
+
+  /** 右键菜单项：引用回复 / 加入待办 / 优先级 / 标记完成 / 复制正文 / 转发 */
+  const contextItems = (m: UnifiedMessage): MenuProps['items'] => [
+    {
+      key: 'quote',
+      icon: <MessageOutlined />,
+      label: '引用回复',
+      onClick: () => {
+        setQuoteTarget(m);
+        focusComposer();
+      },
+    },
+    { type: 'divider' },
+    {
+      key: 'todo',
+      icon: <CheckSquareOutlined />,
+      label: m.type === 'todo' ? '已在待办' : '加入待办',
+      disabled: m.type === 'todo',
+      onClick: () => void addTodoOf(m),
+    },
+    {
+      key: 'priority',
+      icon: <FlagOutlined />,
+      label: '优先级',
+      children: PRIORITY_ORDER.map((p) => ({
+        key: `priority-${p}`,
+        label: `${PRIORITY_LABELS[p]}${m.priority === p ? '（当前）' : ''}`,
+        disabled: m.priority === p,
+        onClick: () => void setPriorityOf(m, p),
+      })),
+    },
+    {
+      key: 'done',
+      icon: <CheckOutlined />,
+      label: m.done ? '已完成' : '标记完成',
+      disabled: Boolean(m.done),
+      onClick: () => void markDoneOf(m),
+    },
+    { type: 'divider' },
+    {
+      key: 'copy',
+      icon: <CopyOutlined />,
+      label: '复制正文',
+      onClick: () => void copyBodyOf(m),
+    },
+    {
+      key: 'forward',
+      icon: <SendOutlined />,
+      label: '转发到其他平台',
+      onClick: () => {
+        setForwardTarget(m);
+        setForwardOpen(true);
+      },
+    },
+  ];
+
   const moreItems: MenuProps['items'] = [
     {
       key: 'copy-body',
@@ -464,7 +594,10 @@ export function DetailPanel({
       key: 'forward',
       icon: <SendOutlined />,
       label: '转发到其他平台',
-      onClick: () => setForwardOpen(true),
+      onClick: () => {
+        setForwardTarget(null);
+        setForwardOpen(true);
+      },
     },
     {
       key: 'trace',
@@ -621,27 +754,35 @@ export function DetailPanel({
 
     if (out) {
       return (
-        <div className="bubble-row bubble-row--out" key={m.traceId}>
-          <div className="bubble-wrap bubble-wrap--out">
-            <div className="bubble bubble--out">
-              <div className="message-body">{m.body}</div>
-              {m.attachments && m.attachments.length > 0 && (
-                <AttachmentList items={m.attachments} label="附件" traceId={m.traceId} field="attachments" />
-              )}
-            </div>
-            <div className="bubble__meta bubble__meta--out">
-              {m.delivery?.mode === 'mock' ? (
-                <span className="chip chip--warn">模拟发送</span>
-              ) : (
-                /* 没有投递记录的出站消息 = 你在手机/桌面客户端上直接发的（钉钉回声识别）。
-                   早先这里只认 delivery.identity，导致「手机发的前几条有本人、后几条没有」，
-                   统一按本人标注：出站且非机器人投递的，只可能是本人账号。 */
-                <IdentityTag role={m.delivery?.identity ?? 'user'} action="send" short />
-              )}
-              <span>{formatDateTime(m.createdAt)}</span>
+        <Dropdown
+          key={m.traceId}
+          menu={{ items: contextItems(m) }}
+          trigger={['contextMenu']}
+          placement="bottomRight"
+        >
+          <div className="bubble-row bubble-row--out">
+            <div className="bubble-wrap bubble-wrap--out">
+              <div className="bubble bubble--out">
+                <div className="message-body">{m.body}</div>
+                {m.attachments && m.attachments.length > 0 && (
+                  <AttachmentList items={m.attachments} label="附件" traceId={m.traceId} field="attachments" />
+                )}
+              </div>
+              <div className="bubble__meta bubble__meta--out">
+                {m.delivery?.mode === 'mock' ? (
+                  <span className="chip chip--warn">模拟发送</span>
+                ) : (
+                  /* 没有投递记录的出站消息 = 你在手机/桌面客户端上直接发的（钉钉回声识别）。
+                     早先这里只认 delivery.identity，导致「手机发的前几条有本人、后几条没有」，
+                     统一按本人标注：出站且非机器人投递的，只可能是本人账号。 */
+                  <IdentityTag role={m.delivery?.identity ?? 'user'} action="send" short />
+                )}
+                <span>{formatDateTime(m.createdAt)}</span>
+                <MessagePriorityChip message={m} />
+              </div>
             </div>
           </div>
-        </div>
+        </Dropdown>
       );
     }
 
@@ -698,56 +839,53 @@ export function DetailPanel({
           />
         )}
 
-        <div
-          className="bubble-row bubble-row--in"
-          onContextMenu={(e) => {
-            // 桌面：右键这条消息 → 回复（引用它）
-            e.preventDefault();
-            setQuoteTarget(m);
-            focusComposer();
-          }}
-          onTouchStart={() => {
-            // 移动端：长按 500ms 触发（短按仍可正常点链接）
-            window.clearTimeout(longPressTimer.current);
-            longPressTimer.current = window.setTimeout(() => {
-              setQuoteTarget(m);
-              focusComposer();
-            }, 500);
-          }}
-          onTouchEnd={() => window.clearTimeout(longPressTimer.current)}
-          onTouchMove={() => window.clearTimeout(longPressTimer.current)}
-          data-quote-trace={m.traceId}
-        >
-          <AvatarBadge name={m.sender.name} platform={m.platform} size={30} />
-          <div className="bubble-wrap">
-            <div className="bubble" aria-label="原始消息内容">
-              <div className="message-body">{m.body}</div>
+        <Dropdown menu={{ items: contextItems(m) }} trigger={['contextMenu']} placement="bottomLeft">
+          <div
+            className="bubble-row bubble-row--in"
+            onTouchStart={() => {
+              // 移动端：长按 500ms 引用回复（短按仍可正常点链接）；桌面右键走上面的菜单
+              window.clearTimeout(longPressTimer.current);
+              longPressTimer.current = window.setTimeout(() => {
+                setQuoteTarget(m);
+                focusComposer();
+              }, 500);
+            }}
+            onTouchEnd={() => window.clearTimeout(longPressTimer.current)}
+            onTouchMove={() => window.clearTimeout(longPressTimer.current)}
+            data-quote-trace={m.traceId}
+          >
+            <AvatarBadge name={m.sender.name} platform={m.platform} size={30} />
+            <div className="bubble-wrap">
+              <div className="bubble" aria-label="原始消息内容">
+                <div className="message-body">{m.body}</div>
 
-              {m.attachments && m.attachments.length > 0 && (
-                <AttachmentList items={m.attachments} label="附件" traceId={m.traceId} field="attachments" />
-              )}
-            </div>
-            <div className="bubble__meta">
-              <span>{formatDateTime(m.createdAt)}</span>
-              {m.type !== 'text' && (
-                <span className="chip chip--type">{TYPE_LABEL[m.type]}</span>
-              )}
-              {m.dueAt && <span className="chip chip--type">截止 {formatDateTime(m.dueAt)}</span>}
-              {m.receivedAs && <IdentityTag role={m.receivedAs} action="receive" short />}
-              <button
-                type="button"
-                className="bubble__reply-btn"
-                aria-label="回复这条消息"
-                onClick={() => {
-                  setQuoteTarget(m);
-                  focusComposer();
-                }}
-              >
-                回复
-              </button>
+                {m.attachments && m.attachments.length > 0 && (
+                  <AttachmentList items={m.attachments} label="附件" traceId={m.traceId} field="attachments" />
+                )}
+              </div>
+              <div className="bubble__meta">
+                <span>{formatDateTime(m.createdAt)}</span>
+                {m.type !== 'text' && (
+                  <span className="chip chip--type">{TYPE_LABEL[m.type]}</span>
+                )}
+                <MessagePriorityChip message={m} />
+                {m.dueAt && <span className="chip chip--type">截止 {formatDateTime(m.dueAt)}</span>}
+                {m.receivedAs && <IdentityTag role={m.receivedAs} action="receive" short />}
+                <button
+                  type="button"
+                  className="bubble__reply-btn"
+                  aria-label="回复这条消息"
+                  onClick={() => {
+                    setQuoteTarget(m);
+                    focusComposer();
+                  }}
+                >
+                  回复
+                </button>
+              </div>
             </div>
           </div>
-        </div>
+        </Dropdown>
       </div>
     );
   };
@@ -806,7 +944,7 @@ export function DetailPanel({
 
             <div className="chat-head__tags">
               <StatusBadge status={message.status} small />
-              <PrioritySelect message={message} />
+              <PrioritySelect message={priorityTarget} />
               {message.needsReview && <span className="chip chip--warn">需人工确认</span>}
               {message.done && <span className="chip chip--done">已完成</span>}
               {message.receivedAs && <IdentityTag role={message.receivedAs} action="receive" />}
@@ -888,7 +1026,7 @@ export function DetailPanel({
                   </div>
                   <div>
                     <dt>平台</dt>
-                    <dd>{PLATFORM_META[message.platform].name}</dd>
+                    <dd>{platformMeta(message.platform).name}</dd>
                   </div>
                   <div>
                     <dt>会话</dt>
@@ -1002,9 +1140,12 @@ onRegenerate={() => void handleRegenerate()}
           />
         )}
         <ForwardModal
-          message={message}
+          message={forwardTarget ?? message}
           open={forwardOpen}
-          onClose={() => setForwardOpen(false)}
+          onClose={() => {
+            setForwardOpen(false);
+            setForwardTarget(null);
+          }}
         />
       </div>
     </div>

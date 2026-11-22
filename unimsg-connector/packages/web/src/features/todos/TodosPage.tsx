@@ -55,6 +55,16 @@ function TodoCard({ todo, onOpen }: { todo: UnifiedMessage; onOpen: (traceId: st
         <p className="todo-card__body">{title}</p>
         <div className="todo-card__foot">
           <StatusBadge status={todo.status} small />
+          {todo.priority === 'urgent' && (
+            <span className="chip chip--priority-flag chip--priority-flag--urgent" title="被标记为紧急，排在待办最前面">
+              紧急
+            </span>
+          )}
+          {todo.priority === 'low' && (
+            <span className="chip chip--priority-flag" title="被标记为不急，排在普通待办之后">
+              不急
+            </span>
+          )}
           {todo.direction === 'out' && <span className="chip chip--type">手动添加</span>}
           {due && !todo.done && (
             <span className={`todo-card__due todo-card__due--${due.tone}`}>

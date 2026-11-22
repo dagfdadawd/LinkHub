@@ -91,4 +91,32 @@ describe('groupTodos', () => {
     expect(groups).toHaveLength(1);
     expect(groups[0].key).toBe('none');
   });
+
+  it('紧急待办单独置顶成组：优先于已逾期，且不再混在截止分组里', () => {
+    const urgent = msg({ priority: 'urgent', dueAt: iso(2026, 11, 12) });
+    const overdue = msg({ dueAt: iso(2026, 11, 2) });
+    const normal = msg({ dueAt: iso(2026, 11, 9) });
+
+    const groups = groupTodos([overdue, normal, urgent], NOW);
+    expect(groups.map((g) => g.key)).toEqual(['urgent', 'overdue', 'week']);
+    expect(groups[0].items.map((i) => i.traceId)).toEqual([urgent.traceId]);
+    expect(groups[0].label).toBe('紧急');
+  });
+
+  it('组内优先级：普通排在「不急」前面，紧急组内按截止时间升序', () => {
+    const urgentLate = msg({ priority: 'urgent', dueAt: iso(2026, 11, 20) });
+    const urgentEarly = msg({ priority: 'urgent', dueAt: iso(2026, 11, 8) });
+    const low = msg({ priority: 'low', dueAt: iso(2026, 11, 8) });
+    const normal = msg({ dueAt: iso(2026, 11, 8) });
+
+    const groups = groupTodos([low, normal, urgentLate, urgentEarly], NOW);
+    const urgentGroup = groups.find((g) => g.key === 'urgent');
+    expect(urgentGroup?.items.map((i) => i.traceId)).toEqual([
+      urgentEarly.traceId,
+      urgentLate.traceId,
+    ]);
+
+    const week = groups.find((g) => g.key === 'week');
+    expect(week?.items.map((i) => i.traceId)).toEqual([normal.traceId, low.traceId]);
+  });
 });

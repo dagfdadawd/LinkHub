@@ -1155,7 +1155,9 @@ export class MessageService {
       throw new Error(`未知优先级：${String(priority)}（可用：urgent / normal / low）`);
     }
     const old = cur.priority ?? 'normal';
-    const m = this.repo.update(id, { priority, prioritySource: 'manual' })!;
+    // 改优先级是元数据操作，不是「消息更新」：不刷新 updatedAt，
+    // 否则收件箱按更新时间排序时这条会话会凭空跳到第一位（用户视角就是「点了只会上移」）。
+    const m = this.repo.update(id, { priority, prioritySource: 'manual' }, { touchUpdatedAt: false })!;
     writeTrace(
       this.repo,
       m,

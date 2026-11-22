@@ -23,6 +23,7 @@ import {
   UserAddOutlined,
 } from '@ant-design/icons';
 import { useAppState } from '../hooks/useAppState';
+import { useUrgentAlerts } from '../hooks/useUrgentAlerts';
 import { store, services } from '../store';
 import {
   clearSession,
@@ -149,6 +150,8 @@ export function AppShell() {
   const compact = useIsCompact();
   const profile = useProfile();
   const prefs = usePreferences();
+  /** 紧急消息提醒：挂在壳上，任何页面都能收到提示音 / 桌面通知 */
+  useUrgentAlerts(state.messages, state.initialized && !state.loading);
   /** 当前登录账号（未登录 = null，此时回退部署令牌，演示模式仍可用） */
   const session = useSession();
   /** 本机记着的全部账号：一个窗口里多开，点一下就换人 */

@@ -17,7 +17,13 @@ const hoisted = vi.hoisted(() => {
     messages: [] as unknown[],
     loading: false,
     error: null as string | null,
-    filters: { keyword: '', onlyReview: false, platform: undefined as Platform | undefined },
+    filters: {
+      keyword: '',
+      onlyReview: false,
+      onlyUnread: false,
+      onlyUrgent: false,
+      platform: undefined as Platform | undefined,
+    },
     accounts: [] as unknown[],
     health: null as null | { received: number },
     connection: 'connected' as 'connected' | 'reconnecting' | 'offline',
@@ -99,7 +105,13 @@ function mockState(patch: Partial<typeof hoisted.state> = {}) {
     messages: [],
     loading: false,
     error: null,
-    filters: { keyword: '', onlyReview: false, platform: undefined as Platform | undefined },
+    filters: {
+      keyword: '',
+      onlyReview: false,
+      onlyUnread: false,
+      onlyUrgent: false,
+      platform: undefined as Platform | undefined,
+    },
     accounts: [],
     health: null,
     connection: 'connected',
@@ -245,7 +257,13 @@ describe('微信按需拉取（4.x）', () => {
     mockState({
       messages: [],
       accounts: ACCOUNTS,
-      filters: { keyword: '', onlyReview: false, platform: Platform.WECHAT },
+      filters: {
+        keyword: '',
+        onlyReview: false,
+        onlyUnread: false,
+        onlyUrgent: false,
+        platform: Platform.WECHAT,
+      },
     });
     renderInboxPage();
 
@@ -276,16 +294,100 @@ describe('收件箱筛选与搜索接线（三栏工作台）', () => {
     expect(store.setFilters).toHaveBeenCalledWith({ keyword: '周报' });
   });
 
-  it('「未读 / 待处理」互斥：点一个会清掉另一个，不叠加条件', async () => {
+  it('「未读 / 待处理 / 紧急」互斥：点一个会清掉另外两个，不叠加条件', async () => {
     const { store } = await import('../../store');
     mockState({ messages: [MESSAGE], accounts: ACCOUNTS });
     renderInboxPage();
 
     fireEvent.click(screen.getByRole('button', { name: '未读' }));
-    // 互斥：开「未读」必须同时关掉「待处理」，否则两个胶囊会一起高亮、条件也会叠成空结果
-    expect(store.setFilters).toHaveBeenCalledWith({ onlyUnread: true, onlyReview: false });
+    // 互斥：开「未读」必须同时关掉「待处理 / 紧急」，否则多个胶囊会一起高亮、条件也会叠成空结果
+    expect(store.setFilters).toHaveBeenCalledWith({
+      onlyUnread: true,
+      onlyReview: false,
+      onlyUrgent: false,
+    });
 
     fireEvent.click(screen.getByRole('button', { name: '待处理' }));
-    expect(store.setFilters).toHaveBeenCalledWith({ onlyReview: true, onlyUnread: false });
+    expect(store.setFilters).toHaveBeenCalledWith({
+      onlyReview: true,
+      onlyUnread: false,
+      onlyUrgent: false,
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /^紧急/ }));
+    expect(store.setFilters).toHaveBeenCalledWith({
+      onlyUrgent: true,
+      onlyUnread: false,
+      onlyReview: false,
+    });
+  });
+
+  it('「紧急」筛选：只显示有紧急待处理消息的会话，并在列表行显示紧急徽标', async () => {
+    const urgentPeer: UnifiedMessage = {
+      ...MESSAGE,
+      traceId: 't-urgent',
+      externalId: 'e-urgent',
+      direction: 'in',
+      body: '这份合同今天必须确认',
+      priority: 'urgent',
+      prioritySource: 'manual',
+      conversation: { id: 'c-urgent', type: 'p2p' },
+      sender: { id: 'u-urgent', name: '郑友佳' },
+    };
+    const normalPeer: UnifiedMessage = {
+      ...MESSAGE,
+      traceId: 't-normal',
+      externalId: 'e-normal',
+      direction: 'in',
+      body: '周报不急',
+      conversation: { id: 'c-normal', type: 'p2p' },
+      sender: { id: 'u-normal', name: '钉钉小王' },
+    };
+    mockState({
+      messages: [urgentPeer, normalPeer],
+      accounts: ACCOUNTS,
+      filters: {
+        keyword: '',
+        onlyReview: false,
+        onlyUnread: false,
+        onlyUrgent: true,
+        platform: undefined,
+      },
+    });
+    renderInboxPage();
+
+    // 紧急会话带「紧急置顶」语义的行；普通会话被筛掉
+    expect(screen.getByRole('button', { name: /紧急置顶/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /钉钉小王/ })).not.toBeInTheDocument();
+    expect(screen.getAllByText('紧急').length).toBeGreaterThan(0);
+  });
+
+  it('紧急会话排在同组最前面（会话内置顶），其余仍按最近消息排序', async () => {
+    const base = { ...MESSAGE, direction: 'in' as const };
+    const urgentOld: UnifiedMessage = {
+      ...base,
+      traceId: 't-a',
+      externalId: 'e-a',
+      priority: 'urgent',
+      conversation: { id: 'c-a', type: 'p2p' },
+      sender: { id: 'u1', name: '紧急的人' },
+      createdAt: '2026-11-20T00:00:00Z',
+      updatedAt: '2026-11-20T00:00:00Z',
+    };
+    const freshNormal: UnifiedMessage = {
+      ...base,
+      traceId: 't-b',
+      externalId: 'e-b',
+      conversation: { id: 'c-b', type: 'p2p' },
+      sender: { id: 'u2', name: '刚发消息的人' },
+      createdAt: '2026-11-21T00:00:00Z',
+      updatedAt: '2026-11-21T00:00:00Z',
+    };
+    mockState({ messages: [urgentOld, freshNormal], accounts: ACCOUNTS });
+    renderInboxPage();
+
+    const rows = [...document.querySelectorAll('.conv-row')];
+    expect(rows[0]?.textContent).toContain('紧急的人');
+    expect(rows[1]?.textContent).toContain('刚发消息的人');
   });
 });

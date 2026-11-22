@@ -2985,6 +2985,16 @@ button {
   color: var(--danger);
 }
 
+/* 紧急待办单独置顶成组：标签/计数都用危险色，一眼知道先处理哪块 */
+.todo-group--urgent .todo-group__label {
+  color: var(--danger);
+}
+
+.todo-group--urgent .todo-group__count {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
 .todo-grid--drawer {
   padding: 2px 18px 18px;
 }
@@ -3793,6 +3803,13 @@ button {
 
 .set-row__control {
   flex: 0 0 auto;
+}
+
+/* 一行里放「试听 + 开关」两个控件：等宽对齐，不挤在一起 */
+.settings__inline-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .set-note {
@@ -8092,6 +8109,15 @@ html.vt-morph .detail {
   box-shadow: inset 0 0 0 2px var(--brand);
 }
 
+/* 紧急会话置顶：左侧一条细红线，解释它为什么排在最前面（不是新消息顶起来的） */
+.conv-row.is-pinned {
+  box-shadow: inset 2px 0 0 var(--danger);
+}
+
+.conv-row.is-pinned:focus-visible {
+  box-shadow: inset 2px 0 0 var(--danger), inset 0 0 0 2px var(--brand);
+}
+
 .conv-row__avatar {
   width: 38px;
   height: 38px;
@@ -8194,6 +8220,23 @@ html.vt-morph .detail {
   font-size: 0.625rem;
   font-weight: 600;
   line-height: 16px;
+}
+
+/* 会话优先级：紧急红 / 不急灰；没有判定不渲染，避免把「未判定」装成「普通」 */
+.conv-row__priority {
+  flex: 0 0 auto;
+  padding: 0 5px;
+  border-radius: var(--r-6);
+  background: var(--surface-3);
+  color: var(--text-2);
+  font-size: 0.625rem;
+  font-weight: 600;
+  line-height: 16px;
+}
+
+.conv-row__priority--urgent {
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 
 .conv-row__badge {
@@ -9008,6 +9051,29 @@ html.vt-morph .detail {
 
 .quick-pill:active {
   transform: scale(0.96);
+}
+
+/* 筛选胶囊：紧急是「先处理哪条」的视图，选中时用危险色，提示这是队列而不是普通筛选 */
+.quick-pill__count {
+  margin-left: 4px;
+  padding: 0 5px;
+  border-radius: var(--r-pill);
+  background: var(--surface-3);
+  color: var(--text-3);
+  font-size: 0.625rem;
+  font-weight: 600;
+  line-height: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.quick-pill--urgent.is-active {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.quick-pill--urgent.is-active .quick-pill__count {
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  color: var(--danger);
 }
 
 /* ---------- 图片附件：缩略图 + 元信息 ---------- */
@@ -10647,6 +10713,19 @@ html.vt-morph .detail {
   background: var(--surface-3);
   border-color: var(--border);
   color: var(--text-2);
+}
+
+/* 气泡里的单条优先级标记：只标紧急 / 不急，普通是默认档不占位置 */
+.chip--priority-flag {
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+}
+
+.chip--priority-flag--urgent {
+  background: var(--danger-soft);
+  border-color: color-mix(in srgb, var(--danger) 32%, transparent);
+  color: var(--danger);
 }
 
 .status-actions {

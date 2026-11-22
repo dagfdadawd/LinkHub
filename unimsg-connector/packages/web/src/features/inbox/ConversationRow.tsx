@@ -2,7 +2,7 @@ import { Platform } from '../../types';
 import { SendOutlined } from '@ant-design/icons';
 import type { Conversation } from '../../utils/conversations';
 import { conversationSnippet } from '../../utils/conversations';
-import { PLATFORM_META, formatRelative } from '../../utils/format';
+import { formatRelative, platformMeta } from '../../utils/format';
 import { PlatformGlyph } from '../../components/PlatformGlyph';
 import { initials } from '../../utils/format';
 
@@ -21,7 +21,7 @@ export function ConversationRow({
   active: boolean;
   onSelect: (traceId: string) => void;
 }) {
-  const meta = PLATFORM_META[conversation.platform];
+  const meta = platformMeta(conversation.platform);
   const isGroup = conversation.conversationType === 'group';
   const isMail = conversation.platform === Platform.MAIL;
   const unread = conversation.unread > 0;
@@ -39,11 +39,13 @@ export function ConversationRow({
 
   return (
     <article
-      className={`conv-row${active ? ' is-active' : ''}${unread ? ' is-unread' : ''}`}
+      className={`conv-row${active ? ' is-active' : ''}${unread ? ' is-unread' : ''}${
+        conversation.priority === 'urgent' ? ' is-pinned' : ''
+      }`}
       role="button"
       tabIndex={0}
       aria-current={active}
-      aria-label={`${unread ? '未读，' : ''}${title}`}
+      aria-label={`${unread ? '未读，' : ''}${conversation.priority === 'urgent' ? '紧急置顶，' : ''}${title}`}
       data-conv={conversation.key}
       onClick={() => onSelect(conversation.lastMessage.traceId)}
       onKeyDown={(e) => {
@@ -75,6 +77,21 @@ export function ConversationRow({
         </div>
 
         <div className="conv-row__bottom">
+          {/* 优先级是「先处理哪条」的判断：紧急给红色徽标，不急给灰色徽标；
+              没有判定就不显示，绝不用「普通」占位假装有结论。 */}
+          {conversation.priority === 'urgent' && (
+            <span
+              className="conv-row__priority conv-row__priority--urgent"
+              title="有未完成的消息被标记为「紧急」：会话置顶显示"
+            >
+              紧急
+            </span>
+          )}
+          {conversation.priority === 'low' && (
+            <span className="conv-row__priority" title="这条会话待处理的消息被标记为「不急」">
+              不急
+            </span>
+          )}
           <span className="conv-row__snippet">{conversationSnippet(conversation)}</span>
           {conversation.needsAction > 0 && (
             <span className="conv-row__flag" title="有需要处理的条目（待确认 / 发送失败）">

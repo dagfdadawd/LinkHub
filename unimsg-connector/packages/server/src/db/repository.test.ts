@@ -66,3 +66,17 @@ test('快照损坏时不阻断启动，退回空状态', () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('update：touchUpdatedAt=false 保留 updatedAt（改优先级不是消息更新）', () => {
+  const repo = new InMemoryRepository();
+  const saved = { ...message('t-meta'), updatedAt: '2020-01-01T00:00:00.000Z' };
+  repo.save(saved);
+
+  const patched = repo.update('t-meta', { priority: 'urgent' }, { touchUpdatedAt: false })!;
+  assert.equal(patched.priority, 'urgent');
+  assert.equal(patched.updatedAt, '2020-01-01T00:00:00.000Z');
+
+  // 默认仍会刷新更新时间：正文/状态变更必须能被「最近更新」看见
+  const touched = repo.update('t-meta', { body: '改了正文' })!;
+  assert.notEqual(touched.updatedAt, '2020-01-01T00:00:00.000Z');
+});

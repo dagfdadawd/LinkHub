@@ -21,7 +21,7 @@ import { useAppState } from '../../hooks/useAppState';
 import { Platform } from '../../types';
 import type { AccountInfo, DingtalkPersonalStatus, MailAccountInfo } from '../../services/api';
 import { store } from '../../store';
-import { PLATFORM_META, formatDateTime, toneStyle } from '../../utils/format';
+import { formatDateTime, platformMeta, toneStyle } from '../../utils/format';
 import { checkEnvRestart } from '../../utils/envRestart';
 import { DrawerSection } from '../../components/DrawerSection';
 import { IdentityTag } from '../../components/IdentityTag';
@@ -296,7 +296,7 @@ function IdentityBlock({
 
       {explainWhy && (
         <div className="identity-block__why">
-          登录你自己的{PLATFORM_META[platform].name}账号后：消息以本人身份接收、回复以本人身份发出，
+          登录你自己的{platformMeta(platform).name}账号后：消息以本人身份接收、回复以本人身份发出，
           不需要把机器人拉进每个群。未登录时自动走机器人通道兜底。
         </div>
       )}
@@ -385,7 +385,7 @@ export function AccountCard({
   onDingtalkConnect?: () => void;
   onDingtalkLogout?: () => void;
 }) {
-  const meta = PLATFORM_META[account.platform];
+  const meta = platformMeta(account.platform);
   const mode = account.mode ? MODE_META[account.mode] : undefined;
   const mailAccounts = account.platform === Platform.MAIL ? account.accounts ?? [] : [];
   const missing = account.missing ?? [];

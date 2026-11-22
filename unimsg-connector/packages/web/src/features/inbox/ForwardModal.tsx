@@ -6,7 +6,7 @@
  */
 import { useEffect, useState } from 'react';
 import { App as AntApp, Form, Input, Modal, Select } from 'antd';
-import { PLATFORM_META } from '../../utils/format';
+import { PLATFORM_META, platformMeta } from '../../utils/format';
 import { Platform } from '../../types';
 import type { UnifiedMessage } from '../../types';
 import { store } from '../../store';
@@ -70,7 +70,7 @@ export function ForwardModal({ message, open, onClose }: ForwardModalProps) {
       destroyOnClose
     >
       <p className="forward-modal__hint">
-        正文会带上「[转发自 {PLATFORM_META[message.platform].name}]」标记，原消息不受影响。
+        正文会带上「[转发自 {platformMeta(message.platform).name}]」标记，原消息不受影响。
       </p>
       <Form form={form} layout="vertical" className="forward-form" preserve={false}>
         <Form.Item

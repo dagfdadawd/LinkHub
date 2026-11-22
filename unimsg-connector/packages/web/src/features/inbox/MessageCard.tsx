@@ -2,7 +2,7 @@ import type { MouseEvent } from 'react';
 import { CheckOutlined, HistoryOutlined, MessageOutlined, RightOutlined } from '@ant-design/icons';
 import { MsgStatus } from '../../types';
 import type { UnifiedMessage } from '../../types';
-import { clamp, formatRelative, isSelfComposedMock, PLATFORM_META } from '../../utils/format';
+import { clamp, formatRelative, isSelfComposedMock, platformMeta } from '../../utils/format';
 import { AvatarBadge } from '../../components/AvatarBadge';
 import { IdentityTag } from '../../components/IdentityTag';
 import { PlatformGlyph } from '../../components/PlatformGlyph';
@@ -91,8 +91,8 @@ export function MessageCard({
         <span
           className="msg-card__glyph"
           style={{
-            background: PLATFORM_META[message.platform].soft,
-            color: PLATFORM_META[message.platform].color,
+            background: platformMeta(message.platform).soft,
+            color: platformMeta(message.platform).color,
           }}
           aria-hidden="true"
         >

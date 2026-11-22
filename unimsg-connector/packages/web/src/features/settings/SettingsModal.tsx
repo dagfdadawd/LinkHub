@@ -33,6 +33,11 @@ import {
   type MotionLevel,
   type SendKey,
 } from './preferences';
+import {
+  playUrgentChime,
+  requestNotificationPermission,
+  showUrgentTestNotification,
+} from '../../utils/urgentAlert';
 
 const MAX_AVATAR_BYTES = 300 * 1024;
 const APP_VERSION = '1.1.0';
@@ -147,6 +152,40 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
     } finally {
       setClaiming(false);
     }
+  }
+
+  /**
+   * 开启 / 关闭紧急桌面通知。
+   *
+   * 权限只能在用户手势里申请 —— 设置页这个开关就是手势，所以放在这里申请；
+   * 用户拒绝后如实告诉去哪里改，不假装已开启。
+   */
+  async function toggleDesktopAlert(checked: boolean): Promise<void> {
+    if (!checked) {
+      patchPreferences({ urgentDesktop: false });
+      return;
+    }
+    const permission = await requestNotificationPermission();
+    if (permission === 'granted') {
+      patchPreferences({ urgentDesktop: true });
+      showUrgentTestNotification();
+      message.success('已开启紧急桌面通知（页面不在前台时提醒）');
+      return;
+    }
+    patchPreferences({ urgentDesktop: false });
+    if (permission === 'unsupported') {
+      message.warning('当前环境不支持桌面通知，已保持关闭');
+    } else if (permission === 'denied') {
+      message.warning('浏览器已拒绝通知权限：请在地址栏左侧的站点权限里允许通知后重试');
+    } else {
+      message.warning('未获得通知权限，桌面通知保持关闭');
+    }
+  }
+
+  /** 试听提示音：用户手势里调用，确保浏览器允许发声 */
+  function previewChime(): void {
+    if (playUrgentChime()) message.success('这就是收到紧急消息时的提示音');
+    else message.warning('当前浏览器不支持 / 暂时无法播放提示音');
   }
 
   // 每次打开都同步为已保存的值，避免上次未提交的编辑残留
@@ -363,6 +402,33 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
                   <Switch
                     checked={prefs.showAiDraft}
                     onChange={(checked) => patchPreferences({ showAiDraft: checked })}
+                  />
+                </Row>
+
+                <div className="set-section__title">紧急提醒</div>
+                <Row
+                  title="紧急提示音"
+                  description="收到判定为「紧急」的入站消息时播放两声提示音；自己手动标的紧急不会再响。"
+                >
+                  <div className="settings__inline-actions">
+                    <Button size="small" onClick={previewChime}>
+                      试听
+                    </Button>
+                    <Switch
+                      checked={prefs.urgentSound}
+                      onChange={(checked) => patchPreferences({ urgentSound: checked })}
+                      aria-label="紧急提示音"
+                    />
+                  </div>
+                </Row>
+                <Row
+                  title="紧急桌面通知"
+                  description="页面不在前台时弹系统通知，点击直达该会话；开启时浏览器会请求通知权限。"
+                >
+                  <Switch
+                    checked={prefs.urgentDesktop}
+                    onChange={(checked) => void toggleDesktopAlert(checked)}
+                    aria-label="紧急桌面通知"
                   />
                 </Row>
               </div>

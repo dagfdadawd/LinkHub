@@ -26,7 +26,11 @@ export interface MessageRepository {
   /** 按 (platform, externalId) 查重，支撑幂等 */
   findByExternal(platform: Platform, externalId: string): UnifiedMessage | undefined;
   list(filter?: { platform?: Platform; status?: MsgStatus }): UnifiedMessage[];
-  update(id: string, patch: Partial<UnifiedMessage>): UnifiedMessage | undefined;
+  update(
+    id: string,
+    patch: Partial<UnifiedMessage>,
+    opts?: { touchUpdatedAt?: boolean },
+  ): UnifiedMessage | undefined;
   /**
    * 批量改（一次落盘）：归属认领、孤儿归零这类「一次动很多条」的操作必须用它。
    * 逐条 update 会每条都全量重写一次快照，N 条消息就是 O(N²) 的同步 IO。
@@ -122,10 +126,24 @@ export class InMemoryRepository implements MessageRepository {
     return items.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
   }
 
-  update(id: string, patch: Partial<UnifiedMessage>): UnifiedMessage | undefined {
+  /**
+   * 更新一条消息。
+   *
+   * `opts.touchUpdatedAt === false` 时保留原 `updatedAt`：优先级这类**元数据**变更
+   * 不是「消息内容更新」，不该刷新更新时间，否则前端按更新时间排序会把会话顶到最前面。
+   */
+  update(
+    id: string,
+    patch: Partial<UnifiedMessage>,
+    opts: { touchUpdatedAt?: boolean } = {},
+  ): UnifiedMessage | undefined {
     const cur = this.byId.get(id);
     if (!cur) return undefined;
-    const next: UnifiedMessage = { ...cur, ...patch, updatedAt: new Date().toISOString() };
+    const next: UnifiedMessage = {
+      ...cur,
+      ...patch,
+      ...(opts.touchUpdatedAt === false ? {} : { updatedAt: new Date().toISOString() }),
+    };
     this.byId.set(id, next);
     this.persist();
     return next;

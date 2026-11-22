@@ -10,7 +10,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Alert, Button, Card, Statistic, Table, Tag } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { ReloadOutlined } from '@ant-design/icons';
-import { PLATFORM_META } from '../../utils/format';
+import { platformMeta } from '../../utils/format';
 import type { Platform, StatsOverview } from '../../types';
 import { store } from '../../store';
 
@@ -41,11 +41,9 @@ export function StatsPage() {
     {
       title: '平台',
       dataIndex: 'platform',
-      render: (p: Platform) => <Tag>{PLATFORM_META[p].name}</Tag>,
+      render: (p: Platform) => <Tag>{platformMeta(p).name}</Tag>,
     },
     { title: '消息总数', dataIndex: 'total', sorter: (a, b) => a.total - b.total },
-    { title: '来信', dataIndex: 'inbound' },
-    { title: '发出', dataIndex: 'outbound' },
     { title: '已回复', dataIndex: 'replied' },
     { title: '待处理', dataIndex: 'pending' },
     { title: '失败', dataIndex: 'failed' },
@@ -72,7 +70,6 @@ export function StatsPage() {
       {totals && (
         <div className="stats-grid">
           <Card size="small"><Statistic title="消息总数" value={totals.messages} /></Card>
-          <Card size="small"><Statistic title="来信" value={totals.inbound} /></Card>
           <Card size="small"><Statistic title="已回复" value={totals.replied} /></Card>
           <Card size="small"><Statistic title="待处理" value={totals.pending} /></Card>
           <Card size="small"><Statistic title="失败" value={totals.failed} valueStyle={{ color: 'var(--danger)' }} /></Card>
@@ -83,16 +80,6 @@ export function StatsPage() {
               value={data.avgHandleSeconds === null ? '暂无样本' : data.avgHandleSeconds}
               {...(data.avgHandleSeconds === null ? {} : { suffix: '秒' })}
             />
-          </Card>
-          <Card size="small"><Statistic title="死信" value={data.dlq} /></Card>
-          <Card size="small">
-            <Statistic
-              title="真实 / 模拟发送"
-              value={`${data.delivery.real} / ${data.delivery.mock}`}
-            />
-          </Card>
-          <Card size="small">
-            <Statistic title="自动回复规则 / 命中" value={`${data.rules.total} / ${data.rules.hits}`} />
           </Card>
         </div>
       )}

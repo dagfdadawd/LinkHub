@@ -1,6 +1,6 @@
 import type { CSSProperties, ReactNode } from 'react';
 import type { Platform } from '../types';
-import { PLATFORM_META, initials } from '../utils/format';
+import { initials, platformMeta } from '../utils/format';
 
 export function AvatarBadge({
   name,
@@ -18,7 +18,7 @@ export function AvatarBadge({
    */
   icon?: ReactNode;
 }) {
-  const meta = PLATFORM_META[platform];
+  const meta = platformMeta(platform);
   return (
     <span
       className={`avatar-badge${icon ? ' avatar-badge--icon' : ''}`}

@@ -14,7 +14,7 @@ import type { ColumnsType } from 'antd/es/table';
 import { PlusOutlined } from '@ant-design/icons';
 import { Platform } from '../../types';
 import type { AutoRule, AutoRuleInput } from '../../types';
-import { PLATFORM_META, formatDateTime } from '../../utils/format';
+import { PLATFORM_META, formatDateTime, platformMeta } from '../../utils/format';
 import { store } from '../../store';
 
 export function AutoReplyPage() {
@@ -114,7 +114,7 @@ export function AutoReplyPage() {
       title: '平台',
       dataIndex: 'platform',
       width: 110,
-      render: (p?: Platform) => (p ? <Tag>{PLATFORM_META[p].name}</Tag> : <Tag>全部平台</Tag>),
+      render: (p?: Platform) => (p ? <Tag>{platformMeta(p).name}</Tag> : <Tag>全部平台</Tag>),
     },
     {
       title: '关键词',

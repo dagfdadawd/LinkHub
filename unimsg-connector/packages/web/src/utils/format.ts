@@ -62,6 +62,18 @@ export const PLATFORM_META: Record<Platform, PlatformTone> = {
   [Platform.WECHAT]: { name: '微信', short: '微', ...tone('#09bb07') },
 };
 
+/**
+ * 数据驱动场景的平台展示兜底：存量数据 / 旧后端可能带有不在 Platform 枚举里的
+ * 平台值（如改名前的 'wecom'），裸索引 PLATFORM_META 拿到 undefined 后读属性
+ * 会把整棵组件树渲染崩（白屏）。platform 来自消息、会话、账号等运行时数据时
+ * 一律走这里；只有写死枚举值的地方才允许直接索引 PLATFORM_META。
+ */
+export function platformMeta(platform: string): PlatformTone {
+  const meta = PLATFORM_META[platform as Platform];
+  if (meta) return meta;
+  return { name: platform || '未知平台', short: '?', ...tone('#8c8c8c') };
+}
+
 /** 状态机展示元信息（color 给色点，ink 给文字） */
 export interface StatusTone extends TagTone {
   label: string;

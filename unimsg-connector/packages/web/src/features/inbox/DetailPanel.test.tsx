@@ -380,3 +380,103 @@ describe('DetailPanel 附件下载', () => {
     expect(screen.queryByRole('button', { name: /下载 本地文件\.pdf/ })).toBeNull();
   });
 });
+
+describe('DetailPanel 会话优先级', () => {
+  const inboundUrgent: UnifiedMessage = {
+    ...FAILED,
+    traceId: 't-in-urgent',
+    direction: 'in',
+    status: MsgStatus.RECEIVED,
+    body: '这份合同今天必须确认',
+    priority: 'urgent',
+    prioritySource: 'manual',
+    failureReason: undefined,
+    reply: undefined,
+    createdAt: '2026-11-19T02:00:00.000Z',
+    updatedAt: '2026-11-19T02:00:00.000Z',
+  };
+  const outLater: UnifiedMessage = {
+    ...FAILED,
+    traceId: 't-out-later',
+    direction: 'out',
+    status: MsgStatus.SYNCED,
+    body: '好的',
+    failureReason: undefined,
+    reply: undefined,
+    createdAt: '2026-11-19T02:05:00.000Z',
+    updatedAt: '2026-11-19T02:05:00.000Z',
+  };
+
+  it('顶部优先级取会话里待处理消息的最紧急值，不跟着选中的出站消息走', () => {
+    render(
+      <MemoryRouter>
+        <AntApp>
+          <DetailPanel message={outLater} thread={[inboundUrgent, outLater]} />
+        </AntApp>
+      </MemoryRouter>,
+    );
+
+    // 选中的是自己后来发的那条普通消息，但会话里还有未完成的紧急来信 → 顶部必须显示紧急
+    expect(screen.getByTestId('priority-select')).toHaveTextContent('紧急');
+  });
+});
+
+describe('DetailPanel 右键菜单', () => {
+  const inbound: UnifiedMessage = {
+    ...FAILED,
+    traceId: 't-ctx-1',
+    direction: 'in',
+    status: MsgStatus.RECEIVED,
+    body: '周五前交周报',
+    failureReason: undefined,
+    reply: undefined,
+  };
+
+  it('右键消息给出引用 / 待办 / 优先级 / 完成 / 复制 / 转发，点「加入待办」按被右键的消息执行', async () => {
+    const markTodo = vi.spyOn(store, 'markTodo').mockResolvedValue({ ...inbound, type: 'todo' });
+    render(
+      <MemoryRouter>
+        <AntApp>
+          <DetailPanel message={inbound} thread={[inbound]} />
+        </AntApp>
+      </MemoryRouter>,
+    );
+
+    const bubble = document.querySelector('.bubble-row--in');
+    expect(bubble).not.toBeNull();
+    fireEvent.contextMenu(bubble!);
+
+    expect(await screen.findByText('引用回复')).toBeInTheDocument();
+    expect(screen.getByText('加入待办')).toBeInTheDocument();
+    expect(screen.getByText('优先级')).toBeInTheDocument();
+    expect(screen.getByText('标记完成')).toBeInTheDocument();
+    expect(screen.getByText('复制正文')).toBeInTheDocument();
+    expect(screen.getByText('转发到其他平台')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('加入待办'));
+    await waitFor(() => expect(markTodo).toHaveBeenCalledWith('t-ctx-1'));
+  });
+
+  it('右键 → 优先级 → 紧急：改的是右键那一条消息', async () => {
+    const setPriority = vi.spyOn(store, 'setPriority').mockResolvedValue({
+      message: { ...inbound, priority: 'urgent', prioritySource: 'manual' },
+      old: 'normal',
+      source: 'manual',
+    });
+    render(
+      <MemoryRouter>
+        <AntApp>
+          <DetailPanel message={inbound} thread={[inbound]} />
+        </AntApp>
+      </MemoryRouter>,
+    );
+
+    fireEvent.contextMenu(document.querySelector('.bubble-row--in')!);
+    const submenuTitle = await screen.findByText('优先级');
+    fireEvent.mouseEnter(submenuTitle);
+    const urgentItem = await screen.findByText('紧急');
+    fireEvent.click(urgentItem);
+
+    await waitFor(() => expect(setPriority).toHaveBeenCalledWith('t-ctx-1', 'urgent'));
+  });
+});

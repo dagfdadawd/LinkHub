@@ -18,7 +18,7 @@ import { ArrowRightOutlined, PlayCircleOutlined, RocketOutlined } from '@ant-des
 import type { AccountInfo } from '../services/api';
 import type { RealtimeStatus } from '../services/realtime';
 import { Platform } from '../types';
-import { PLATFORM_META } from '../utils/format';
+import { platformMeta } from '../utils/format';
 import { humanizeMissingKeys } from '../features/connect/appConfigFields';
 import { FIRST_RUN_DISMISS_KEY } from '../utils/onboarding';
 
@@ -205,7 +205,7 @@ export function FirstRunGuide({
           <span className="first-run-guide__modes-label">当前通道</span>
           {PLATFORM_ORDER.map((platform) => {
             const account = accounts.find((item) => item.platform === platform);
-            const meta = PLATFORM_META[platform];
+            const meta = platformMeta(platform);
             const modeMeta = account?.mode ? MODE_META[account.mode] : undefined;
             return (
               <span
@@ -230,13 +230,13 @@ export function FirstRunGuide({
               <ul>
                 {adminPlatforms.map((item) => (
                   <li key={item.platform}>
-                    {PLATFORM_META[item.platform].name}：{item.count} 项待配置（{item.names.join('、')}）
+                    {platformMeta(item.platform).name}：{item.count} 项待配置（{item.names.join('、')}）
                     ——需要企业管理员在平台后台开通；也可以把「连接账号」里的清单发给管理员。
                   </li>
                 ))}
                 {selfServicePlatforms.length > 0 ? (
                   <li>
-                    {selfServicePlatforms.map((item) => PLATFORM_META[item.platform].name).join('、')}
+                    {selfServicePlatforms.map((item) => platformMeta(item.platform).name).join('、')}
                     ：可以自己添加/登录（打开「连接账号」按卡片操作即可；邮箱只需授权码，钉钉需企业已开启 CLI 访问）。
                   </li>
                 ) : null}

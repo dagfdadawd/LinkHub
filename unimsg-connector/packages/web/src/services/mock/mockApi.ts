@@ -437,6 +437,8 @@ export class MockApi implements DemoApi {
       { priority, prioritySource: 'manual' },
       'priority',
       `${old}→${priority}（人工纠正${cur.prioritySource ? `，原判定来源 ${cur.prioritySource}` : ''}）`,
+      // 与真实后端同语义：改优先级不刷新 updatedAt
+      { touchUpdatedAt: false },
     );
     return { message: m, old, source: 'manual' };
   }
@@ -943,10 +945,17 @@ export class MockApi implements DemoApi {
     patch: Partial<UnifiedMessage>,
     event: string,
     detail?: string,
+    opts: { touchUpdatedAt?: boolean } = {},
   ): UnifiedMessage {
     const cur = this.messages.get(id);
     if (!cur) throw new Error(`message not found: ${id}`);
-    const next: UnifiedMessage = { ...cur, ...patch, updatedAt: new Date().toISOString() };
+    const at = new Date().toISOString();
+    // 优先级等元数据变更保留原 updatedAt，避免把会话按「最近消息」顶到列表第一位
+    const next: UnifiedMessage = {
+      ...cur,
+      ...patch,
+      ...(opts.touchUpdatedAt === false ? {} : { updatedAt: at }),
+    };
     this.messages.set(id, next);
 
     const log = this.traces.get(id) ?? [];
@@ -956,7 +965,7 @@ export class MockApi implements DemoApi {
       status: next.status,
       event,
       detail,
-      at: next.updatedAt,
+      at,
     });
     this.traces.set(id, log);
 
